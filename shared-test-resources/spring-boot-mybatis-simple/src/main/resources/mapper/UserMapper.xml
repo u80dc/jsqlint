@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="cn.jnu.zhangcs.jsqlint.analysis.fixture.springbootmybatis.mapper.UserMapper">
+
+    <sql id="baseSelectFields">
+        id, username, email, status, age, created_at, updated_at
+    </sql>
+
+    <sql id="baseFrom">
+        FROM users
+    </sql>
+
+    <sql id="criteriaWhere">
+        <where>
+            <if test="status != null and status != ''">
+                AND status = #{status}
+            </if>
+            <if test="minAge != null">
+                AND age &gt;= #{minAge}
+            </if>
+            <if test="maxAge != null">
+                AND age &lt;= #{maxAge}
+            </if>
+            <if test="ids != null and ids.size() &gt; 0">
+                AND id IN
+                <foreach collection="ids" item="id" open="(" separator="," close=")">
+                    #{id}
+                </foreach>
+            </if>
+            <if test="keywords != null and keywords.size() &gt; 0">
+                AND (
+                <foreach collection="keywords" item="keyword" separator=" OR ">
+                    username LIKE CONCAT('%', #{keyword}, '%')
+                    OR email LIKE CONCAT('%', #{keyword}, '%')
+                </foreach>
+                )
+            </if>
+        </where>
+    </sql>
+
+    <sql id="orderByClause">
+        <choose>
+            <when test="orderBy == 'age'">
+                ORDER BY age
+            </when>
+            <when test="orderBy == 'email'">
+                ORDER BY email
+            </when>
+            <when test="orderBy == 'username'">
+                ORDER BY username
+            </when>
+            <otherwise>
+                ORDER BY id
+            </otherwise>
+        </choose>
+        <choose>
+            <when test="descending">
+                DESC
+            </when>
+            <otherwise>
+                ASC
+            </otherwise>
+        </choose>
+    </sql>
+
+    <select id="searchUsingXml"
+            parameterType="cn.jnu.zhangcs.jsqlint.analysis.fixture.springbootmybatis.model.dto.UserSearchDTO"
+            resultType="cn.jnu.zhangcs.jsqlint.analysis.fixture.springbootmybatis.entity.User">
+        <bind name="activeStatus" value="'ACTIVE'"/>
+        SELECT
+        <include refid="baseSelectFields"/>
+        <include refid="baseFrom"/>
+        <choose>
+            <when test="status != null and status != ''">
+                <include refid="criteriaWhere"/>
+            </when>
+            <otherwise>
+                WHERE status = #{activeStatus}
+            </otherwise>
+        </choose>
+        <include refid="orderByClause"/>
+    </select>
+
+    <update id="updateUsingXml"
+            parameterType="cn.jnu.zhangcs.jsqlint.analysis.fixture.springbootmybatis.entity.User">
+        UPDATE users
+        <set>
+            <if test="username != null and username != ''">username = #{username},</if>
+            <if test="email != null and email != ''">email = #{email},</if>
+            <if test="status != null and status != ''">status = #{status},</if>
+            <if test="age != null">age = #{age},</if>
+            updated_at = CURRENT_TIMESTAMP
+        </set>
+        WHERE id = #{id}
+    </update>
+
+    <select id="countUsingXml"
+            parameterType="cn.jnu.zhangcs.jsqlint.analysis.fixture.springbootmybatis.model.dto.UserSearchDTO"
+            resultType="long">
+        SELECT COUNT(*)
+        <include refid="baseFrom"/>
+        <include refid="criteriaWhere"/>
+    </select>
+
+    <delete id="resetData">
+        TRUNCATE TABLE users
+    </delete>
+</mapper>
