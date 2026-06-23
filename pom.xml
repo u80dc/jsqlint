@@ -9,6 +9,7 @@
     <modules>
         <module>jsqlint-common</module>
         <module>jsqlint-analysis</module>
+        <module>jsqlint-audit</module>
         <module>jsqlint-server</module>
         <module>jsqlint-test</module>
     </modules>
@@ -25,6 +26,7 @@
         <junit.version>6.0.3</junit.version>
         <jspecify.version>1.0.0</jspecify.version>
         <lombok.version>1.18.44</lombok.version>
+        <drools.version>9.44.0.Final</drools.version>
     </properties>
 
     <dependencyManagement>
@@ -66,6 +68,14 @@
                 <groupId>ch.qos.logback</groupId>
                 <artifactId>logback-parent</artifactId>
                 <version>${logback.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <!-- Source: https://mvnrepository.com/artifact/org.drools/drools-bom -->
+            <dependency>
+                <groupId>org.drools</groupId>
+                <artifactId>drools-bom</artifactId>
+                <version>${drools.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
