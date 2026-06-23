@@ -12,44 +12,29 @@
     <packaging>jar</packaging>
 
     <properties>
-        <spring-boot.version>4.0.6</spring-boot.version>
-        <jjwt.version>0.13.0</jjwt.version>
-        <mybatis-plus.version>3.5.16</mybatis-plus.version>
-        <mysql.version>9.7.0</mysql.version>
+
 
     </properties>
 
     <dependencyManagement>
-        <dependencies>
-            <!-- Source: https://mvnrepository.com/artifact/org.springframework.boot/spring-boot-dependencies -->
-            <dependency>
-                <groupId>org.springframework.boot</groupId>
-                <artifactId>spring-boot-dependencies</artifactId>
-                <version>${spring-boot.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-            <!-- Source: https://mvnrepository.com/artifact/io.jsonwebtoken/jjwt-bom -->
-            <dependency>
-                <groupId>io.jsonwebtoken</groupId>
-                <artifactId>jjwt-bom</artifactId>
-                <version>${jjwt.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-        </dependencies>
+
     </dependencyManagement>
 
     <dependencies>
         <dependency>
             <groupId>cn.jnu.zhangcs</groupId>
             <artifactId>jsqlint-analysis</artifactId>
-            <version>${project.version}</version>
+            <version>${revision}</version>
+        </dependency>
+        <dependency>
+            <groupId>cn.jnu.zhangcs</groupId>
+            <artifactId>jsqlint-audit</artifactId>
+            <version>${revision}</version>
         </dependency>
         <dependency>
             <groupId>cn.jnu.zhangcs</groupId>
             <artifactId>jsqlint-common</artifactId>
-            <version>${project.version}</version>
+            <version>${revision}</version>
         </dependency>
         <!-- Spring Boot Web -->
         <dependency>
