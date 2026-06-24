@@ -25,7 +25,6 @@ class ProviderSqlAnalyzerTest {
     void setUp() {
         List<AnalysisInputLocation> locations = new ArrayList<>();
         locations.add(new JrtFileSystemAnalysisInputLocation());
-//        locations.add(PathBasedAnalysisInputLocation.create(Path.of("target/classes").toAbsolutePath(), SourceType.Application));
         locations.add(PathBasedAnalysisInputLocation.create(Path.of("target/test-classes").toAbsolutePath(), SourceType.Application));
         JavaView view = new MutableJavaView(locations);
         analyzer = new ProviderSqlAnalyzer(view);
