@@ -17,6 +17,8 @@ import java.util.regex.Pattern;
  * <p>渲染器会计算动态 SQL 标签使用的 OGNL 表达式的实用子集，并替换为以下函数推断出的示例值：
  * {@link cn.jnu.zhangcs.jsqlint.analysis.parameter.infer.ParameterValueInferencer}.
  * 需要注意，渲染出来的样例SQL用于分析/审计，而非执行.
+ *
+ * @author zhangcs
  */
 public final class SqlNodeRenderer {
 
@@ -26,7 +28,7 @@ public final class SqlNodeRenderer {
     }
 
     /**
-     * Render one possible SQL using caller-supplied parameter values.
+     * 根据参数进行渲染.
      */
     public static RenderedSql render(SqlNode node, Map<String, ?> parameters) {
         RenderContext context = new RenderContext(parameters);
@@ -34,13 +36,6 @@ public final class SqlNodeRenderer {
         return new RenderedSql(sql, context.snapshot(), context.diagnostics());
     }
 
-    /**
-     * Render all SQL variants produced by parameter value inference results.
-     *
-     * <p>Each {@link ParameterValueInferenceResult} may contain multiple possible
-     * values. This method computes their cartesian product and renders the SQL
-     * once per parameter combination.
-     */
     public static List<RenderedSql> render(
             SqlNode node,
             Collection<ParameterValueInferenceResult> inferenceResults) {
