@@ -1,0 +1,6 @@
+package org.springframework.boot;
+
+public interface CommandLineRunner {
+
+    void run(String... args) throws Exception;
+}
