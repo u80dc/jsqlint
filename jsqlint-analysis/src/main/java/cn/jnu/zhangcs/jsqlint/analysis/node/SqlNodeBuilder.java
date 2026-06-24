@@ -8,11 +8,10 @@ import java.util.regex.Pattern;
 /**
  * SQL 节点解析器
  * <p>
- *     将 MyBatis 动态 SQL 字符串解析为 SqlNode 节点树
+ *     将动态 SQL 字符串解析为 SqlNode 节点树
  * </p>
  *
  * @author zhangcs
- * @since 1.0.0
  */
 public class SqlNodeBuilder {
 

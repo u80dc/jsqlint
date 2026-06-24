@@ -5,6 +5,8 @@ import lombok.RequiredArgsConstructor;
 
 /**
  * SET 节点（UPDATE 语句中的 SET）
+ *
+ * @author zhangcs
  */
 @Getter
 @RequiredArgsConstructor

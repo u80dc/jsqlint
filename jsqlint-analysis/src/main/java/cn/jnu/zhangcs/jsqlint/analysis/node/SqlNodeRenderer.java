@@ -12,12 +12,11 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Renders parsed MyBatis-style {@link SqlNode} trees into possible SQL strings.
+ * 将解析后的动态SQL风格的 {@link SqlNode} 树渲染成可能的 SQL 字符串.
  *
- * <p>The renderer evaluates a pragmatic subset of OGNL expressions used by
- * dynamic SQL tags and substitutes sample values inferred by
+ * <p>渲染器会计算动态 SQL 标签使用的 OGNL 表达式的实用子集，并替换为以下函数推断出的示例值：
  * {@link cn.jnu.zhangcs.jsqlint.analysis.parameter.infer.ParameterValueInferencer}.
- * It is intended for analysis/audit, not for executing SQL.
+ * 需要注意，渲染出来的样例SQL用于分析/审计，而非执行.
  */
 public final class SqlNodeRenderer {
 

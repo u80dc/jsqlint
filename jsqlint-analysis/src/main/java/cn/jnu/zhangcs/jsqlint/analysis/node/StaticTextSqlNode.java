@@ -4,6 +4,8 @@ import lombok.Getter;
 
 /**
  * 静态文本节点（不包含动态表达式）
+ *
+ * @author zhangcs
  */
 @Getter
 public class StaticTextSqlNode implements SqlNode {

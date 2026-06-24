@@ -7,6 +7,8 @@ import java.util.List;
 
 /**
  * CHOOSE (WHEN/OTHERWISE) 节点
+ *
+ * @author zhangcs
  */
 @Getter
 @RequiredArgsConstructor

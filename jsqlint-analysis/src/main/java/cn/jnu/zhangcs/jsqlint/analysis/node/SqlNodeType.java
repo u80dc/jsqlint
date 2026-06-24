@@ -2,6 +2,8 @@ package cn.jnu.zhangcs.jsqlint.analysis.node;
 
 /**
  * SqlNode 类型枚举
+ *
+ * @author zhangcs
  */
 public enum SqlNodeType {
     MIXED,

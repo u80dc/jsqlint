@@ -5,6 +5,8 @@ import lombok.RequiredArgsConstructor;
 
 /**
  * TRIM 节点
+ *
+ * @author zhangcs
  */
 @Getter
 @RequiredArgsConstructor

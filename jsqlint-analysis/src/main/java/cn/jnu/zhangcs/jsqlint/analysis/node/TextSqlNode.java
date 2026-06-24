@@ -4,6 +4,8 @@ import lombok.Getter;
 
 /**
  * 包含 OGNL 表达式的文本节点
+ *
+ * @author zhangcs
  */
 @Getter
 public class TextSqlNode implements SqlNode {
