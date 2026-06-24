@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+
+<mapper namespace="cn.jnu.zhangcs.jsqlint.analysis.fixture.bookmanagement.mapper.AuthorMapper">
+
+    <sql id="baseSelectFields">
+        id, name, country, status, created_at, updated_at
+    </sql>
+
+    <sql id="baseFrom">
+        FROM authors
+    </sql>
+
+    <sql id="criteriaWhere">
+        <where>
+            <if test="status != null and status != ''">
+                AND status = #{status}
+            </if>
+            <if test="country != null and country != ''">
+                AND country = #{country}
+            </if>
+            <if test="ids != null and ids.size() &gt; 0">
+                AND id IN
+                <foreach collection="ids" item="id" open="(" separator="," close=")">
+                    #{id}
+                </foreach>
+            </if>
+            <if test="keywords != null and keywords.size() &gt; 0">
+                AND (
+                <foreach collection="keywords" item="keyword" separator=" OR ">
+                    name LIKE CONCAT('%', #{keyword}, '%')
+                    OR country LIKE CONCAT('%', #{keyword}, '%')
+                </foreach>
+                )
+            </if>
+        </where>
+    </sql>
+
+    <select id="searchUsingXml"
+            parameterType="cn.jnu.zhangcs.jsqlint.analysis.fixture.bookmanagement.dto.AuthorSearchDTO"
+            resultType="cn.jnu.zhangcs.jsqlint.analysis.fixture.bookmanagement.entity.Author">
+        SELECT
+        <include refid="baseSelectFields"/>
+        <include refid="baseFrom"/>
+        <include refid="criteriaWhere"/>
+        <choose>
+            <when test="orderBy == 'name'">
+                ORDER BY name
+            </when>
+            <when test="orderBy == 'country'">
+                ORDER BY country
+            </when>
+            <otherwise>
+                ORDER BY id
+            </otherwise>
+        </choose>
+        <choose>
+            <when test="descending">
+                DESC
+            </when>
+            <otherwise>
+                ASC
+            </otherwise>
+        </choose>
+    </select>
+
+    <select id="countUsingXml"
+            parameterType="cn.jnu.zhangcs.jsqlint.analysis.fixture.bookmanagement.dto.AuthorSearchDTO"
+            resultType="long">
+        SELECT COUNT(*)
+        <include refid="baseFrom"/>
+        <include refid="criteriaWhere"/>
+    </select>
+</mapper>
