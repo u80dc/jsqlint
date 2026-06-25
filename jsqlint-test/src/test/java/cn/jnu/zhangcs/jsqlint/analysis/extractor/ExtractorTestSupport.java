@@ -2,7 +2,9 @@ package cn.jnu.zhangcs.jsqlint.analysis.extractor;
 
 import cn.jnu.zhangcs.jsqlint.analysis.AnalyzeResult;
 import cn.jnu.zhangcs.jsqlint.analysis.StatementType;
+import cn.jnu.zhangcs.jsqlint.analysis.parameter.ParameterAnalysisService;
 import cn.jnu.zhangcs.jsqlint.analysis.parameter.trace.ParameterTraceAnalyzer;
+import cn.jnu.zhangcs.jsqlint.analysis.pipeline.SqlStatementAssembler;
 import sootup.callgraph.EnhancedCallGraph;
 import sootup.core.inputlocation.AnalysisInputLocation;
 import sootup.core.model.SourceType;
@@ -18,11 +20,6 @@ import java.util.Locale;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-/**
- * SQL提取测试支持
- *
- * @author zhangcs
- */
 public final class ExtractorTestSupport {
 
     private ExtractorTestSupport() {
@@ -35,8 +32,25 @@ public final class ExtractorTestSupport {
 
         JavaView view = new MutableJavaView(locations);
         EnhancedCallGraph graph = EnhancedCallGraph.initialize(view);
-        ParameterTraceAnalyzer analyzer = new ParameterTraceAnalyzer(view, graph);
-        return new SqlExtractorContext(source, view, graph, analyzer);
+        return new SqlExtractorContext(source, view, graph);
+    }
+
+    public static List<AnalyzeResult.SqlStatementResult> assemble(
+            SqlExtractorContext context,
+            SqlExtractionResult result) {
+
+        ParameterTraceAnalyzer analyzer = new ParameterTraceAnalyzer(context.view(), context.graph());
+        SqlStatementAssembler assembler = new SqlStatementAssembler(new ParameterAnalysisService(analyzer));
+        return result.statements().stream()
+                .map(assembler::assemble)
+                .toList();
+    }
+
+    public static List<AnalyzeResult.SqlStatementResult> assemble(SqlExtractionResult result) {
+        SqlStatementAssembler assembler = new SqlStatementAssembler();
+        return result.statements().stream()
+                .map(assembler::assemble)
+                .toList();
     }
 
     public static void assertSql(

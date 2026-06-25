@@ -8,10 +8,11 @@ import cn.jnu.zhangcs.jsqlint.analysis.node.SqlNode;
 import cn.jnu.zhangcs.jsqlint.analysis.node.SqlNodeBuilder;
 import cn.jnu.zhangcs.jsqlint.analysis.node.SqlNodeRenderer;
 import cn.jnu.zhangcs.jsqlint.analysis.node.SqlNodeUtils;
-import cn.jnu.zhangcs.jsqlint.analysis.parameter.infer.InferredParameterValue;
 import cn.jnu.zhangcs.jsqlint.analysis.parameter.infer.ParameterValueInferenceResult;
-import cn.jnu.zhangcs.jsqlint.analysis.parameter.infer.ParameterValueInferencer;
-import cn.jnu.zhangcs.jsqlint.analysis.parameter.trace.*;
+import cn.jnu.zhangcs.jsqlint.analysis.parameter.infer.ValueModelStringResolver;
+import cn.jnu.zhangcs.jsqlint.analysis.parameter.trace.MethodParameterRef;
+import cn.jnu.zhangcs.jsqlint.analysis.parameter.trace.ValueModel;
+import cn.jnu.zhangcs.jsqlint.analysis.parameter.trace.ValueModelResolver;
 import sootup.core.jimple.common.constant.StringConstant;
 import sootup.core.jimple.common.expr.AbstractInvokeExpr;
 import sootup.core.jimple.common.stmt.JAssignStmt;
@@ -28,8 +29,7 @@ import java.util.stream.Collectors;
 
 public final class SqlExtractionSupport {
 
-    private static final ParameterValueInferencer SQL_VALUE_INFERENCER =
-            new ParameterValueInferencer(SqlExtractionSupport::sampleExternalValue);
+    private static final ValueModelStringResolver STRING_VALUE_RESOLVER = new ValueModelStringResolver();
 
     private SqlExtractionSupport() {
     }
@@ -38,7 +38,7 @@ public final class SqlExtractionSupport {
             SqlExtractorContext context,
             Function<MethodSignature, Optional<SqlCallTarget>> targetMatcher) {
 
-        List<AnalyzeResult.SqlStatementResult> statements = new ArrayList<>();
+        List<SqlStatement> statements = new ArrayList<>();
         context.view()
                 .getClasses()
                 .filter(SootClass::isApplicationClass)
@@ -50,7 +50,7 @@ public final class SqlExtractionSupport {
     private static void extractCallSites(
             SootMethod method,
             Function<MethodSignature, Optional<SqlCallTarget>> targetMatcher,
-            List<AnalyzeResult.SqlStatementResult> statements) {
+            List<SqlStatement> statements) {
 
         if (!method.hasBody()) {
             return;
@@ -85,7 +85,7 @@ public final class SqlExtractionSupport {
                 continue;
             }
 
-            AnalyzeResult.SqlStatementResult statement = buildCallSiteStatement(
+            SqlStatement statement = buildCallSiteStatement(
                     method,
                     stmt,
                     i,
@@ -115,75 +115,12 @@ public final class SqlExtractionSupport {
             int statementIndex) {
 
         ValueModel model = resolver.resolve(invoke.getArg(sqlArgumentIndex), statementIndex);
-        Optional<String> rawString = rawString(model);
-        if (rawString.isPresent() && !rawString.get().isBlank()) {
-            return Optional.of(new SqlValue(rawString.get(), model, List.of()));
-        }
-
-        ParameterTraceResult traceResult = new ParameterTraceResult(
-                MethodParameterRef.of(invoke.getMethodSignature(), sqlArgumentIndex),
-                List.of(new CallTrace(List.of(), model)),
-                List.of());
-        ParameterValueInferenceResult inference = SQL_VALUE_INFERENCER.infer(traceResult);
-        List<String> diagnostics = new ArrayList<>(inference.diagnostics());
-
-        for (InferredParameterValue value : inference.possibleValues()) {
-            if (value.value() instanceof String rawSql && !rawSql.isBlank()) {
-                return Optional.of(new SqlValue(rawSql, model, diagnostics));
-            }
-        }
-
-        diagnostics.add("Unable to resolve SQL argument: " + model.display());
-        return Optional.empty();
+        MethodParameterRef target = MethodParameterRef.of(invoke.getMethodSignature(), sqlArgumentIndex);
+        return STRING_VALUE_RESOLVER.resolve(model, target)
+                .map(value -> new SqlValue(value.value(), model, value.diagnostics()));
     }
 
-    public static Optional<String> rawString(ValueModel model) {
-        if (model == null) {
-            return Optional.empty();
-        }
-        return switch (model) {
-            case ValueModel.LiteralValue literal -> Optional.ofNullable(literal.value());
-            case ValueModel.ConcatValue concat -> rawConcat(concat);
-            case ValueModel.CastValue cast -> rawString(cast.value());
-            case ValueModel.ParameterValue parameter ->
-                    Optional.of(String.valueOf(sampleExternalValue(parameter.type(), parameter.name())));
-            case ValueModel.InvokeValue invoke -> rawInvoke(invoke);
-            case ValueModel.FieldValue ignored -> Optional.empty();
-            case ValueModel.ArrayValue ignored -> Optional.empty();
-            case ValueModel.ObjectValue ignored -> Optional.empty();
-            case ValueModel.LocalValue ignored -> Optional.empty();
-            case ValueModel.UnknownValue ignored -> Optional.empty();
-        };
-    }
-
-    private static Optional<String> rawConcat(ValueModel.ConcatValue concat) {
-        StringBuilder builder = new StringBuilder();
-        for (ValueModel part : concat.parts()) {
-            Optional<String> value = rawString(part);
-            if (value.isEmpty()) {
-                return Optional.empty();
-            }
-            builder.append(value.get());
-        }
-        return Optional.of(builder.toString());
-    }
-
-    private static Optional<String> rawInvoke(ValueModel.InvokeValue invoke) {
-        String className = invoke.method().getDeclClassType().getFullyQualifiedName();
-        String methodName = invoke.method().getName();
-
-        if ("toString".equals(methodName) && invoke.receiver() != null) {
-            return rawString(invoke.receiver());
-        }
-        if ("valueOf".equals(methodName)
-                && "java.lang.String".equals(className)
-                && !invoke.arguments().isEmpty()) {
-            return rawString(invoke.arguments().getFirst());
-        }
-        return Optional.empty();
-    }
-
-    public static AnalyzeResult.SqlStatementResult buildCallSiteStatement(
+    public static SqlStatement buildCallSiteStatement(
             SootMethod method,
             Stmt stmt,
             int statementIndex,
@@ -202,9 +139,6 @@ public final class SqlExtractionSupport {
             return null;
         }
 
-        List<SqlNodeRenderer.RenderedSql> renderedSqls = SqlNodeRenderer.render(sqlNode, List.of());
-        List<String> diagnostics = collectSqlDiagnostics(sqlValue.diagnostics(), renderedSqls);
-
         MethodSignature caller = method.getSignature();
         Map<String, Object> extra = new LinkedHashMap<>(target.extra());
         extra.put("sqlTarget", target.displayName());
@@ -219,22 +153,19 @@ public final class SqlExtractionSupport {
                 target.tags(),
                 extra);
 
-        return AnalyzeResult.SqlStatementResult.builder()
-                .statementId(callSiteStatementId(caller, target.kind(), invoke.getMethodSignature(), statementIndex))
-                .statementType(statementType)
-                .sourceType(target.sourceType())
-                .location(sourceLocation(caller, caller.getDeclClassType().getFullyQualifiedName()))
-                .rawSql(rawSql)
-                .sqlNode(sqlNode)
-                .dynamic(sqlNode.isDynamic())
-                .parameterInferences(Collections.emptyList())
-                .renderedSqls(renderedSqls)
-                .diagnostics(diagnostics)
-                .metadata(metadata)
-                .build();
+        return new SqlStatement(
+                callSiteStatementId(caller, target.kind(), invoke.getMethodSignature(), statementIndex),
+                statementType,
+                target.sourceType(),
+                sourceLocation(caller, caller.getDeclClassType().getFullyQualifiedName()),
+                rawSql,
+                sqlNode,
+                List.of(),
+                sqlValue.diagnostics(),
+                metadata);
     }
 
-    public static AnalyzeResult.SqlStatementResult buildStaticStatement(
+    public static SqlStatement buildStaticStatement(
             SootMethod method,
             String statementId,
             SqlSourceType sourceType,
@@ -258,8 +189,6 @@ public final class SqlExtractionSupport {
             return null;
         }
 
-        List<SqlNodeRenderer.RenderedSql> renderedSqls = SqlNodeRenderer.render(sqlNode, List.of());
-        List<String> diagnostics = collectSqlDiagnostics(List.of(), renderedSqls);
         AnalyzeResult.Metadata metadata = metadata(
                 0,
                 Collections.emptyList(),
@@ -267,19 +196,16 @@ public final class SqlExtractionSupport {
                 tags,
                 extra);
 
-        return AnalyzeResult.SqlStatementResult.builder()
-                .statementId(statementId)
-                .statementType(statementType)
-                .sourceType(sourceType)
-                .location(sourceLocation(method.getSignature(), sourceFile))
-                .rawSql(sql)
-                .sqlNode(sqlNode)
-                .dynamic(sqlNode.isDynamic())
-                .parameterInferences(Collections.emptyList())
-                .renderedSqls(renderedSqls)
-                .diagnostics(diagnostics)
-                .metadata(metadata)
-                .build();
+        return new SqlStatement(
+                statementId,
+                statementType,
+                sourceType,
+                sourceLocation(method.getSignature(), sourceFile),
+                sql,
+                sqlNode,
+                List.of(),
+                List.of(),
+                metadata);
     }
 
     public static AnalyzeResult.Metadata metadata(

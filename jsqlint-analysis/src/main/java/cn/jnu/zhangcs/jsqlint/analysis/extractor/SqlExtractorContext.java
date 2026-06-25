@@ -1,6 +1,5 @@
 package cn.jnu.zhangcs.jsqlint.analysis.extractor;
 
-import cn.jnu.zhangcs.jsqlint.analysis.parameter.trace.ParameterTraceAnalyzer;
 import sootup.callgraph.EnhancedCallGraph;
 import sootup.java.core.views.JavaView;
 
@@ -13,13 +12,11 @@ import java.util.Objects;
 public record SqlExtractorContext(
         Path source,
         JavaView view,
-        EnhancedCallGraph graph,
-        ParameterTraceAnalyzer parameterTraceAnalyzer) {
+        EnhancedCallGraph graph) {
 
     public SqlExtractorContext {
         Objects.requireNonNull(source, "source");
         Objects.requireNonNull(view, "view");
         Objects.requireNonNull(graph, "graph");
-        Objects.requireNonNull(parameterTraceAnalyzer, "parameterTraceAnalyzer");
     }
 }

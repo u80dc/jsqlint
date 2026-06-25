@@ -4,10 +4,7 @@ import cn.jnu.zhangcs.jsqlint.analysis.AnalyzeResult;
 import cn.jnu.zhangcs.jsqlint.analysis.SourceLocation;
 import cn.jnu.zhangcs.jsqlint.analysis.SqlSourceType;
 import cn.jnu.zhangcs.jsqlint.analysis.StatementType;
-import cn.jnu.zhangcs.jsqlint.analysis.extractor.SqlExtractionResult;
-import cn.jnu.zhangcs.jsqlint.analysis.extractor.SqlExtractionSupport;
-import cn.jnu.zhangcs.jsqlint.analysis.extractor.SqlExtractor;
-import cn.jnu.zhangcs.jsqlint.analysis.extractor.SqlExtractorContext;
+import cn.jnu.zhangcs.jsqlint.analysis.extractor.*;
 import cn.jnu.zhangcs.jsqlint.analysis.ibatis.annotation.provider.ProviderSqlStatement;
 import cn.jnu.zhangcs.jsqlint.analysis.ibatis.annotation.resolver.MapperResolver;
 import cn.jnu.zhangcs.jsqlint.analysis.ibatis.annotation.resolver.MappingResolver;
@@ -17,10 +14,7 @@ import cn.jnu.zhangcs.jsqlint.analysis.ibatis.xml.XmlMapper;
 import cn.jnu.zhangcs.jsqlint.analysis.ibatis.xml.XmlMapperParser;
 import cn.jnu.zhangcs.jsqlint.analysis.node.SqlNode;
 import cn.jnu.zhangcs.jsqlint.analysis.node.SqlNodeBuilder;
-import cn.jnu.zhangcs.jsqlint.analysis.node.SqlNodeRenderer;
-import cn.jnu.zhangcs.jsqlint.analysis.parameter.infer.ParameterValueInferenceResult;
-import cn.jnu.zhangcs.jsqlint.analysis.parameter.infer.ParameterValueInferencer;
-import cn.jnu.zhangcs.jsqlint.analysis.parameter.trace.ParameterTraceResult;
+import cn.jnu.zhangcs.jsqlint.analysis.parameter.trace.MethodParameterRef;
 import cn.jnu.zhangcs.jsqlint.analysis.util.FileUtils;
 import lombok.extern.slf4j.Slf4j;
 import sootup.core.signatures.MethodSignature;
@@ -36,7 +30,7 @@ import java.util.stream.Collectors;
 import static cn.jnu.zhangcs.jsqlint.analysis.ibatis.annotation.AnnotationUtils.*;
 
 /**
- * 从 MyBatis 映射器注释、提供程序和 XML 映射器文件中提取 SQL.
+ * SQL提取，MyBatis 处理实现
  *
  * @author zhangcs
  */
@@ -51,7 +45,7 @@ public final class MybatisSqlExtractor implements SqlExtractor {
     @Override
     public SqlExtractionResult extract(SqlExtractorContext context) {
         List<String> diagnostics = new ArrayList<>();
-        List<AnalyzeResult.SqlStatementResult> statements = new ArrayList<>();
+        List<SqlStatement> statements = new ArrayList<>();
 
         Set<JavaSootClass> mappers = MapperResolver.resolve(context.view());
         if (mappers.isEmpty()) {
@@ -76,13 +70,13 @@ public final class MybatisSqlExtractor implements SqlExtractor {
             SqlExtractorContext context,
             JavaSootClass mapper,
             Map<String, XmlMapper> xmlMappers,
-            List<AnalyzeResult.SqlStatementResult> statements,
+            List<SqlStatement> statements,
             List<String> diagnostics) {
 
         String className = mapper.getName();
         for (JavaSootMethod method : mapper.getMethods()) {
             log.debug("{}#{}", className, method.getName());
-            AnalyzeResult.SqlStatementResult statement = extractStatement(context, method, xmlMappers);
+            SqlStatement statement = extractStatement(context, method, xmlMappers);
             if (statement == null) {
                 String message = "SQL解析失败: " + SqlExtractionSupport.statementId(method.getSignature());
                 log.warn(message);
@@ -93,7 +87,7 @@ public final class MybatisSqlExtractor implements SqlExtractor {
         }
     }
 
-    private AnalyzeResult.SqlStatementResult extractStatement(
+    private SqlStatement extractStatement(
             SqlExtractorContext context,
             JavaSootMethod method,
             Map<String, XmlMapper> xmlMappers) {
@@ -102,7 +96,6 @@ public final class MybatisSqlExtractor implements SqlExtractor {
         String className = method.getDeclaringClassType().getFullyQualifiedName();
         String methodName = method.getName();
 
-        List<ParameterValueInferenceResult> parameters = inferParameters(context, method);
         SqlSourceType sourceType = SqlSourceType.UNKNOWN;
         SqlNode sqlNode = null;
         String rawSql = null;
@@ -148,8 +141,6 @@ public final class MybatisSqlExtractor implements SqlExtractor {
             return null;
         }
 
-        List<SqlNodeRenderer.RenderedSql> sqls = SqlNodeRenderer.render(sqlNode, parameters);
-        List<String> statementDiagnostics = SqlExtractionSupport.collectParameterDiagnostics(parameters, sqls);
         MethodSignature implSig = MapperImplBuilder.getImpl(method);
         Set<MethodSignature> callers = context.graph().callSourcesTo(implSig);
         List<String> callerNames = callers.stream()
@@ -172,32 +163,25 @@ public final class MybatisSqlExtractor implements SqlExtractor {
                 parameterTypes,
                 sourceFile);
 
-        return AnalyzeResult.SqlStatementResult.builder()
-                .statementId(SqlExtractionSupport.statementId(method.getSignature()))
-                .location(location)
-                .sourceType(sourceType)
-                .rawSql(rawSql)
-                .sqlNode(sqlNode)
-                .dynamic(sqlNode.isDynamic())
-                .parameterInferences(parameters)
-                .renderedSqls(sqls)
-                .statementType(statementType)
-                .diagnostics(statementDiagnostics)
-                .metadata(metadata)
-                .build();
+        return new SqlStatement(
+                SqlExtractionSupport.statementId(method.getSignature()),
+                statementType,
+                sourceType,
+                location,
+                rawSql,
+                sqlNode,
+                parameterTargets(implSig),
+                List.of(),
+                metadata);
     }
 
-    private List<ParameterValueInferenceResult> inferParameters(SqlExtractorContext context, JavaSootMethod method) {
-        List<ParameterValueInferenceResult> parameters = new ArrayList<>();
-        ParameterValueInferencer inferencer = new ParameterValueInferencer();
-        MethodSignature signature = method.getSignature();
+    private List<MethodParameterRef> parameterTargets(MethodSignature signature) {
         int count = signature.getParameterCount();
+        List<MethodParameterRef> targets = new ArrayList<>(count);
         for (int i = 0; i < count; i++) {
-            ParameterTraceResult result = context.parameterTraceAnalyzer().analyze(MapperImplBuilder.getImpl(method), i);
-            log.info("->@p{} {}", i, result);
-            parameters.add(inferencer.infer(result));
+            targets.add(MethodParameterRef.of(signature, i));
         }
-        return parameters;
+        return targets;
     }
 
     private StatementType providerStatementType(AnnotationUsage annotation) {

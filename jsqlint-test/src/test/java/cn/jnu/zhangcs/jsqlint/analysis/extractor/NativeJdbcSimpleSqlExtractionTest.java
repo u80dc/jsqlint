@@ -12,28 +12,22 @@ import org.junit.jupiter.api.io.TempDir;
 import java.nio.file.Path;
 import java.util.List;
 
-import static cn.jnu.zhangcs.jsqlint.analysis.extractor.ExtractorTestSupport.assertSql;
-import static cn.jnu.zhangcs.jsqlint.analysis.extractor.ExtractorTestSupport.context;
+import static cn.jnu.zhangcs.jsqlint.analysis.extractor.ExtractorTestSupport.*;
 import static org.junit.jupiter.api.Assertions.*;
 
-/**
- * 原生JDBC定义SQL提取测试
- *
- * @author zhangcs
- */
 class NativeJdbcSimpleSqlExtractionTest {
 
     @TempDir
-    static Path tempDir;
+    Path tempDir;
 
     @Test
     @Timeout(60)
-    void testExtract() throws Exception {
-        // 编译
+    void extractsNativeJdbcSqlFromNativeJdbcSimpleFixture() throws Exception {
         Path source = new FixtureProjectCompiler(tempDir).compile("native-jdbc-simple");
 
-        SqlExtractionResult result = new NativeJdbcSqlExtractor().extract(context(source));
-        List<SqlStatementResult> statements = result.statements();
+        var context = context(source);
+        SqlExtractionResult result = new NativeJdbcSqlExtractor().extract(context);
+        List<SqlStatementResult> statements = assemble(context, result);
 
         assertAll(
                 () -> assertEquals(11, statements.size(), () -> "Expected SQL statements from native-jdbc-simple, got " + statements.size()),

@@ -20,6 +20,19 @@ import java.util.Optional;
 @Repository
 public interface UserRepository extends JpaRepository<User, Long> {
 
+    List<User> findByStatusOrderByCreatedAtDesc(String status);
+
+    List<User> findByStatusAndAgeGreaterThanEqual(String status, Integer minAge);
+
+    Optional<User> findFirstByEmail(String email);
+
+    long countByStatus(String status);
+
+    boolean existsByUsername(String username);
+
+    @Transactional
+    void deleteByEmail(String email);
+
     @Query("select u from User u where u.username = :username")
     Optional<User> findByUsernameQuery(@Param("username") String username);
 
@@ -45,4 +58,10 @@ public interface UserRepository extends JpaRepository<User, Long> {
     @Modifying
     @NativeQuery("DELETE FROM users WHERE status = ?1")
     int deleteNativeByStatus(String status);
+
+    List<User> findXmlByStatus(@Param("status") String status);
+
+    long countXmlByStatus(@Param("status") String status);
+
+    List<User> findNativeXmlByEmailDomain(String domain);
 }

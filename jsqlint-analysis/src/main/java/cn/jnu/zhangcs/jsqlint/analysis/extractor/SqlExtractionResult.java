@@ -1,11 +1,9 @@
 package cn.jnu.zhangcs.jsqlint.analysis.extractor;
 
-import cn.jnu.zhangcs.jsqlint.analysis.AnalyzeResult;
-
 import java.util.List;
 
 public record SqlExtractionResult(
-        List<AnalyzeResult.SqlStatementResult> statements,
+        List<SqlStatement> statements,
         List<String> diagnostics) {
 
     public SqlExtractionResult {

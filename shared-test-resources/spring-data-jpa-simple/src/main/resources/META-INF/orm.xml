@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<entity-mappings xmlns="https://jakarta.ee/xml/ns/persistence/orm"
+                 xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                 xsi:schemaLocation="https://jakarta.ee/xml/ns/persistence/orm https://jakarta.ee/xml/ns/persistence/orm/orm_3_1.xsd"
+                 version="3.1">
+
+    <named-query name="User.findXmlByStatus">
+        <query>
+            <![CDATA[
+            select u from User u
+            where u.status = :status
+            order by u.updatedAt desc
+            ]]>
+        </query>
+    </named-query>
+
+    <named-query name="User.countXmlByStatus">
+        <query>
+            <![CDATA[
+            select count(u) from User u
+            where u.status = :status
+            ]]>
+        </query>
+    </named-query>
+
+    <named-native-query name="User.findNativeXmlByEmailDomain"
+                        result-class="cn.jnu.zhangcs.jsqlint.analysis.fixture.jpa.entity.User">
+        <query>
+            <![CDATA[
+            SELECT id, username, email, status, age, created_at, updated_at
+            FROM users
+            WHERE email LIKE CONCAT('%', ?1)
+            ORDER BY id DESC
+            ]]>
+        </query>
+    </named-native-query>
+
+</entity-mappings>

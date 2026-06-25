@@ -1,7 +1,9 @@
 package cn.jnu.zhangcs.jsqlint.analysis.extractor;
 
 /**
- * Framework-specific SQL extraction entry point.
+ * SQL 提取器接口.
+ *
+ * @author zhangcs
  */
 public interface SqlExtractor {
 

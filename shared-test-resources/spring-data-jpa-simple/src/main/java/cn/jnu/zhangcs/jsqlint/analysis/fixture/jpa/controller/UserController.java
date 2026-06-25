@@ -78,6 +78,48 @@ public class UserController {
         return queryService.countNativeByStatusUsingLiteral(status);
     }
 
+    @GetMapping("/derived/by-status")
+    public List<UserVO> derivedByStatus(@RequestParam("status") String status) {
+        return toVOs(repository.findByStatusOrderByCreatedAtDesc(status));
+    }
+
+    @GetMapping("/derived/by-status-age")
+    public List<UserVO> derivedByStatusAndAge(
+            @RequestParam("status") String status,
+            @RequestParam("minAge") Integer minAge) {
+        return toVOs(repository.findByStatusAndAgeGreaterThanEqual(status, minAge));
+    }
+
+    @GetMapping("/derived/by-email")
+    public UserVO derivedByEmail(@RequestParam("email") String email) {
+        return UserVO.from(repository.findFirstByEmail(email).orElse(null));
+    }
+
+    @GetMapping("/derived/count")
+    public long derivedCount(@RequestParam("status") String status) {
+        return repository.countByStatus(status);
+    }
+
+    @GetMapping("/derived/exists")
+    public boolean derivedExists(@RequestParam("username") String username) {
+        return repository.existsByUsername(username);
+    }
+
+    @GetMapping("/xml/by-status")
+    public List<UserVO> xmlByStatus(@RequestParam("status") String status) {
+        return toVOs(repository.findXmlByStatus(status));
+    }
+
+    @GetMapping("/xml/count")
+    public long xmlCount(@RequestParam("status") String status) {
+        return repository.countXmlByStatus(status);
+    }
+
+    @GetMapping("/xml/native/by-domain")
+    public List<UserVO> xmlNativeByDomain(@RequestParam("domain") String domain) {
+        return toVOs(repository.findNativeXmlByEmailDomain(domain));
+    }
+
     @PostMapping
     public UserVO create(@RequestBody UserCreateDTO request) {
         return UserVO.from(repository.save(toUser(request)));
@@ -103,6 +145,11 @@ public class UserController {
     @DeleteMapping("/by-statuses")
     public int deleteByStatuses(@RequestBody UserStatusDeleteDTO request) {
         return queryService.deleteNativeByStatuses(request.getStatuses(), request.isRequireInactive());
+    }
+
+    @DeleteMapping("/derived/by-email")
+    public void derivedDeleteByEmail(@RequestParam("email") String email) {
+        repository.deleteByEmail(email);
     }
 
     private UserSearchDTO criteria(

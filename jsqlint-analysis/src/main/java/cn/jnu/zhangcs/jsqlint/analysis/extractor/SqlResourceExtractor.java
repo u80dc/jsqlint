@@ -1,12 +1,10 @@
 package cn.jnu.zhangcs.jsqlint.analysis.extractor;
 
-import cn.jnu.zhangcs.jsqlint.analysis.AnalyzeResult;
 import cn.jnu.zhangcs.jsqlint.analysis.SourceLocation;
 import cn.jnu.zhangcs.jsqlint.analysis.SqlSourceType;
 import cn.jnu.zhangcs.jsqlint.analysis.StatementType;
 import cn.jnu.zhangcs.jsqlint.analysis.node.SqlNode;
 import cn.jnu.zhangcs.jsqlint.analysis.node.SqlNodeBuilder;
-import cn.jnu.zhangcs.jsqlint.analysis.node.SqlNodeRenderer;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -37,7 +35,7 @@ public final class SqlResourceExtractor implements SqlExtractor {
             return SqlExtractionResult.empty();
         }
 
-        List<AnalyzeResult.SqlStatementResult> statements = new ArrayList<>();
+        List<SqlStatement> statements = new ArrayList<>();
         List<String> diagnostics = new ArrayList<>();
         for (Path sqlFile : sqlFiles(source, diagnostics)) {
             extractSqlFile(source, sqlFile, statements, diagnostics);
@@ -76,7 +74,7 @@ public final class SqlResourceExtractor implements SqlExtractor {
     private void extractSqlFile(
             Path source,
             Path sqlFile,
-            List<AnalyzeResult.SqlStatementResult> statements,
+            List<SqlStatement> statements,
             List<String> diagnostics) {
 
         String relativePath = normalizePath(source.relativize(sqlFile));
@@ -91,7 +89,7 @@ public final class SqlResourceExtractor implements SqlExtractor {
         List<ResourceSqlStatement> resourceStatements = splitStatements(content);
         for (int i = 0; i < resourceStatements.size(); i++) {
             ResourceSqlStatement resourceStatement = resourceStatements.get(i);
-            AnalyzeResult.SqlStatementResult statement = buildResourceStatement(
+            SqlStatement statement = buildResourceStatement(
                     relativePath,
                     i + 1,
                     resourceStatement);
@@ -101,7 +99,7 @@ public final class SqlResourceExtractor implements SqlExtractor {
         }
     }
 
-    private AnalyzeResult.SqlStatementResult buildResourceStatement(
+    private SqlStatement buildResourceStatement(
             String relativePath,
             int statementIndex,
             ResourceSqlStatement resourceStatement) {
@@ -117,35 +115,31 @@ public final class SqlResourceExtractor implements SqlExtractor {
             return null;
         }
 
-        List<SqlNodeRenderer.RenderedSql> renderedSqls = SqlNodeRenderer.render(sqlNode, List.of());
         Map<String, Object> extra = new LinkedHashMap<>();
         extra.put("resourcePath", relativePath);
         extra.put("statementIndex", statementIndex);
 
-        return AnalyzeResult.SqlStatementResult.builder()
-                .statementId("resource:" + relativePath + "#" + statementIndex)
-                .statementType(statementType)
-                .sourceType(SqlSourceType.RESOURCE_SQL)
-                .location(SourceLocation.of(
+        return new SqlStatement(
+                "resource:" + relativePath + "#" + statementIndex,
+                statementType,
+                SqlSourceType.RESOURCE_SQL,
+                SourceLocation.of(
                         "<resource>",
                         relativePath,
                         "sql",
                         List.of(),
                         relativePath,
-                        resourceStatement.lineNumber()))
-                .rawSql(rawSql)
-                .sqlNode(sqlNode)
-                .dynamic(sqlNode.isDynamic())
-                .parameterInferences(List.of())
-                .renderedSqls(renderedSqls)
-                .diagnostics(SqlExtractionSupport.collectSqlDiagnostics(List.of(), renderedSqls))
-                .metadata(SqlExtractionSupport.metadata(
+                        resourceStatement.lineNumber()),
+                rawSql,
+                sqlNode,
+                List.of(),
+                List.of(),
+                SqlExtractionSupport.metadata(
                         0,
                         List.of(),
                         sqlNode,
                         List.of(name(), "sql-file"),
-                        extra))
-                .build();
+                        extra));
     }
 
     static List<ResourceSqlStatement> splitStatements(String content) {
