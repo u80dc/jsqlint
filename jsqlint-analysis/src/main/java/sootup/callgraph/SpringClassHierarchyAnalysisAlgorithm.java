@@ -13,7 +13,7 @@ import java.util.Optional;
 import java.util.Set;
 
 /**
- * 基于Spring语义的类层次分析（CHA）调用图算法实现
+ * 基于Spring语义的类层次分析调用图算法（CHA）实现
  *
  * @author zhangcs
  */
