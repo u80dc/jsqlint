@@ -5,11 +5,6 @@ import lombok.Getter;
 
 import java.util.List;
 
-/**
- * 项目版本步骤类型
- *
- * @author zhangcs
- */
 @Getter
 public enum ProjectVersionStepType {
 

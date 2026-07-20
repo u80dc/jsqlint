@@ -3,11 +3,6 @@ package cn.jnu.zhangcs.jsqlint.server.common.enums;
 import com.baomidou.mybatisplus.annotation.EnumValue;
 import lombok.Getter;
 
-/**
- * 项目版本步骤状态
- *
- * @author zhangcs
- */
 @Getter
 public enum ProjectVersionStepStatus {
 

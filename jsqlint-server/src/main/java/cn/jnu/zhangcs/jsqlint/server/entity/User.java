@@ -1,12 +1,13 @@
 package cn.jnu.zhangcs.jsqlint.server.entity;
 
+import cn.jnu.zhangcs.jsqlint.server.common.enums.Role;
 import com.baomidou.mybatisplus.annotation.*;
 import lombok.Data;
 
 import java.time.LocalDateTime;
 
 /**
- * 用户实体
+ * 用户实体，对应 jsl_user 表
  *
  * @author zhangcs
  */
