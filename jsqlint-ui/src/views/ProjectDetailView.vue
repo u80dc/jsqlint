@@ -1,0 +1,2451 @@
+<template>
+  <div class="project-detail">
+    <!-- 顶部菜单栏 -->
+    <div class="top-menu">
+      <el-tabs v-model="activeTab" class="main-tabs" @tab-change="handleTabChange">
+        <el-tab-pane :label="t('projectDetail.tabs.overview')" name="overview" />
+        <el-tab-pane :label="t('projectDetail.tabs.projectSql')" name="projectSql" />
+        <el-tab-pane :label="t('projectDetail.tabs.report')" name="sql" />
+        <el-tab-pane :label="t('projectDetail.tabs.rules')" name="rules" />
+        <el-tab-pane :label="t('projectDetail.tabs.whitelist')" name="whitelist" />
+        <el-tab-pane :label="t('projectDetail.tabs.members')" name="members" />
+        <el-tab-pane :label="t('projectDetail.tabs.logs')" name="logs" />
+      </el-tabs>
+      <div class="top-actions">
+        <el-tooltip :content="t('projectDetail.actions.pull')" placement="bottom">
+          <el-button text @click="handlePullProject" class="top-action-btn">
+            <el-icon><Download /></el-icon>
+          </el-button>
+        </el-tooltip>
+        <el-tooltip :content="t('projectDetail.actions.compile')" placement="bottom">
+          <el-button text @click="handleCompile" class="top-action-btn">
+            <el-icon><Tools /></el-icon>
+          </el-button>
+        </el-tooltip>
+        <el-tooltip :content="t('projectDetail.actions.analyze')" placement="bottom">
+          <el-button text @click="handleAnalyze" class="top-action-btn">
+            <el-icon><DataAnalysis /></el-icon>
+          </el-button>
+        </el-tooltip>
+        <el-tooltip :content="t('projectDetail.actions.audit')" placement="bottom">
+          <el-button text @click="handleReview" class="top-action-btn">
+            <el-icon><CircleCheck /></el-icon>
+          </el-button>
+        </el-tooltip>
+        <el-tooltip :content="t('projectDetail.actions.generateReport')" placement="bottom">
+          <el-button text @click="handleGenerateReport" class="top-action-btn">
+            <el-icon><Document /></el-icon>
+          </el-button>
+        </el-tooltip>
+      </div>
+    </div>
+
+    <!-- 概览页 -->
+    <div v-show="activeTab === 'overview'" class="overview-layout">
+      <!-- 左侧：项目信息 + 版本操作 + 版本列表 -->
+      <div class="left-panel">
+        <!-- 项目信息卡片 -->
+        <el-card v-loading="loading" class="detail-card">
+          <template #header>
+            <div class="card-header">
+              <span class="project-name">{{ project?.name }}</span>
+            </div>
+          </template>
+
+          <div class="info-list">
+              <div class="info-item">
+                <span class="info-label">{{ t('projectDetail.overview.gitUrl') }}</span>
+                <span class="info-value git-url">{{ projectGitRef }}</span>
+              </div>
+
+            <div class="info-item">
+              <span class="info-label">{{ t('projectDetail.overview.description') }}</span>
+              <span class="info-value">{{ project?.description || '-' }}</span>
+            </div>
+
+
+            <div class="info-item">
+              <span class="info-label">{{ t('projectDetail.overview.credential') }}</span>
+              <div class="info-value credential-info">
+                <template v-if="project?.credentialName">
+                  <span class="credential-name" @click="showCredentialDialog">
+                    <el-tooltip v-if="project.credentialVisibility !== 0" :content="t('projectDetail.credentials.private')" placement="top">
+                      <el-icon><Lock /></el-icon>
+                    </el-tooltip>
+                    <el-tooltip v-else :content="t('projectDetail.credentials.public')" placement="top">
+                      <svg class="globe-icon" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+                        <path fill="none" stroke="currentColor" stroke-width="24" d="M512 64C282.667 64 96 282.667 96 512s186.667 448 416 448 416-186.667 416-448S741.333 64 512 64zm0 64c194.667 0 352 157.333 352 352s-157.333 352-352 352-352-157.333-352-352 157.333-352 352-352zM144 512h736M512 144v736"/>
+                      </svg>
+                    </el-tooltip>
+                    {{ project.credentialName }}
+                  </span>
+                  <span class="credential-detail">
+                     @ {{ project.credentialCreatorName || '-' }}
+                  </span>
+                </template>
+                <template v-else>
+                  <span class="no-credential" @click="showCredentialDialog">
+                    {{ t('projectDetail.credentials.unset') }}
+                  </span>
+                </template>
+              </div>
+            </div>
+
+            <div class="info-item">
+              <span class="info-label">{{ t('projectDetail.overview.creator') }}</span>
+              <span class="info-value">{{ project?.creatorName || '-' }}</span>
+            </div>
+            <div class="info-item">
+              <span class="info-label">{{ t('projectDetail.overview.createTime') }}</span>
+              <span class="info-value">{{ formatDate(project?.createTime) }}</span>
+            </div>
+
+          </div>
+        </el-card>
+
+        <!-- 项目状态步骤条 -->
+        <el-card v-loading="statusLoading" class="status-card">
+          <div class="status-card-content">
+            <el-tooltip :content="executionRunning ? '停止' : '运行'" placement="top">
+              <button
+                class="execution-toggle"
+                :class="{ 'is-running': executionRunning }"
+                :disabled="executionSubmitting"
+                type="button"
+                @click="toggleExecution"
+              >
+                <el-icon v-if="executionRunning"><Close /></el-icon>
+                <el-icon v-else><VideoPlay /></el-icon>
+              </button>
+            </el-tooltip>
+            <ExecutionSteps :steps="projectSteps" />
+          </div>
+        </el-card>
+
+        <!-- 版本列表 -->
+        <el-card class="version-list-card">
+          <template #header>
+            <div class="version-list-header">
+              <span class="section-title">{{ t('projectDetail.overview.versionList') }}</span>
+              <el-tooltip :content="t('common.refresh')" placement="top">
+                <el-button text @click="loadVersions" class="refresh-btn">
+                  <el-icon><Refresh /></el-icon>
+                </el-button>
+              </el-tooltip>
+            </div>
+          </template>
+            <el-table :data="displayVersions" size="small" class="version-table">
+            <el-table-column prop="ref" :label="t('projectDetail.overview.ref')" width="120" />
+            <el-table-column prop="commitId" label="COMMIT ID" width="130" show-overflow-tooltip>
+              <template #default="{ row }">
+                {{ row.commitId || '-' }}
+              </template>
+            </el-table-column>
+            <el-table-column prop="commitMessage" :label="t('projectDetail.overview.commitMessage')" min-width="200" show-overflow-tooltip>
+              <template #default="{ row }">
+                {{ row.commitMessage || '-' }}
+              </template>
+            </el-table-column>
+            <el-table-column prop="operationTime" :label="t('projectDetail.overview.createTime')" width="160">
+              <template #default="{ row }">
+                {{ formatDate(row.operationTime) }}
+              </template>
+            </el-table-column>
+            <el-table-column prop="overallStatusName" :label="t('projectDetail.overview.pullStatus')" width="90">
+              <template #default="{ row }">
+                <el-tooltip :content="row.message" :disabled="!row.message" placement="top">
+                  <el-tag
+                    :type="getStatusTagType(row.overallStatus)"
+                    size="small"
+                  >
+                    {{ row.overallStatusName || '-' }}
+                  </el-tag>
+                </el-tooltip>
+              </template>
+            </el-table-column>
+            <el-table-column prop="operatorName" :label="t('projectDetail.overview.operator')" width="100" />
+            <el-table-column :label="t('projectDetail.overview.operation')" width="140" align="center" fixed="right">
+              <template #default="{ row }">
+                <span class="version-actions">
+                  <el-tooltip v-if="canViewVersionSql(row)" :content="t('projectDetail.overview.viewSqlTip')" placement="top">
+                    <span class="version-action-text" @click="handleViewVersionSql(row)">
+                      {{ t('projectDetail.overview.viewSql') }}
+                    </span>
+                  </el-tooltip>
+                  <el-tooltip v-if="canViewVersionReport(row)" :content="t('projectDetail.overview.viewReportTip')" placement="top">
+                    <span class="version-action-text" @click="handleViewVersionReport(row)">
+                      {{ t('projectDetail.overview.viewReport') }}
+                    </span>
+                  </el-tooltip>
+                  <span v-if="!canViewVersionSql(row) && !canViewVersionReport(row)" class="version-action-empty">-</span>
+                </span>
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-card>
+      </div>
+
+      <!-- 右侧：统计图表 -->
+      <div v-loading="overviewLoading" class="right-panel">
+        <!-- 评级 & 关键指标卡片 -->
+        <div class="metrics-cards">
+          <el-card class="metric-card rating-card">
+            <div class="metric-content">
+              <div class="metric-label">{{ t('projectDetail.overview.projectScore') }}</div>
+              <div class="metric-value score-value">{{ projectScore.score }}</div>
+              <div class="rating-badge" :class="'rating-' + projectScore.rating.toLowerCase()">
+                {{ projectScore.rating }}
+              </div>
+            </div>
+          </el-card>
+          <el-card class="metric-card">
+            <div class="metric-content">
+              <div class="metric-label">{{ t('projectDetail.overview.sqlHealthRate') }}</div>
+              <div class="metric-value">{{ projectScore.complianceRate }}<span class="metric-unit">%</span></div>
+              <div class="metric-trend" :class="projectScore.complianceTrend >= 0 ? 'up' : 'down'">
+                <el-icon><Top v-if="projectScore.complianceTrend >= 0" /><Bottom v-else /></el-icon>
+                {{ Math.abs(projectScore.complianceTrend) }}%
+              </div>
+            </div>
+          </el-card>
+          <el-card class="metric-card">
+            <div class="metric-content">
+              <div class="metric-label">{{ t('projectDetail.overview.issueSqlRate') }}</div>
+              <div class="metric-value warning">{{ projectScore.slowSqlRate }}<span class="metric-unit">%</span></div>
+              <div class="metric-trend" :class="projectScore.slowSqlTrend <= 0 ? 'up' : 'down'">
+                <el-icon><Bottom v-if="projectScore.slowSqlTrend <= 0" /><Top v-else /></el-icon>
+                {{ Math.abs(projectScore.slowSqlTrend) }}%
+              </div>
+            </div>
+          </el-card>
+          <el-card class="metric-card">
+            <div class="metric-content">
+              <div class="metric-label">{{ t('projectDetail.overview.fixRate') }}</div>
+              <div class="metric-value success">{{ projectScore.fixRate }}<span class="metric-unit">%</span></div>
+              <div class="metric-trend" :class="projectScore.fixTrend >= 0 ? 'up' : 'down'">
+                <el-icon><Top v-if="projectScore.fixTrend >= 0" /><Bottom v-else /></el-icon>
+                {{ Math.abs(projectScore.fixTrend) }}%
+              </div>
+            </div>
+          </el-card>
+        </div>
+
+        <!-- SQL 占比 + 四维得分 -->
+        <div class="charts-row">
+          <el-card class="chart-card">
+            <template #header>
+              <span class="section-title">{{ t('projectDetail.overview.sqlRatio') }}</span>
+            </template>
+            <div ref="pieChartRef" class="chart"></div>
+          </el-card>
+
+          <el-card class="chart-card radar-card">
+            <template #header>
+              <span class="section-title">{{ t('projectDetail.overview.radarScore') }}</span>
+            </template>
+            <div ref="radarChartRef" class="chart"></div>
+          </el-card>
+        </div>
+
+        <!-- 失分构成 -->
+        <div class="charts-row single-chart-row">
+          <el-card class="chart-card pie-card">
+            <template #header>
+              <span class="section-title">{{ t('projectDetail.overview.loseScore') }}</span>
+            </template>
+            <div ref="loseScoreChartRef" class="chart"></div>
+          </el-card>
+        </div>
+
+        <!-- 趋势分析 -->
+        <div class="charts-row trend-row">
+          <el-card class="chart-card trend-card">
+            <template #header>
+              <span class="section-title">{{ t('projectDetail.overview.trend') }}</span>
+            </template>
+            <div ref="lineChartRef" class="chart"></div>
+          </el-card>
+        </div>
+      </div>
+    </div>
+
+    <ProjectReportPanel
+      v-show="activeTab === 'sql'"
+      :loading="reportLoading"
+      :report="projectReport"
+      @download="handleDownloadReport"
+    />
+
+    <div v-show="activeTab === 'projectSql'" class="content-page project-sql-page">
+      <el-card>
+        <div class="project-sql-toolbar">
+          <div class="project-sql-summary">
+            <span>{{ t('projectDetail.projectSql.latestVersion') }}</span>
+            <strong>{{ projectSqlVersionLabel }}</strong>
+            <span class="project-sql-count">{{ t('projectDetail.projectSql.total', { count: projectSqlList.length }) }}</span>
+          </div>
+          <el-button :loading="projectSqlLoading" @click="loadProjectSql">
+            <el-icon><Refresh /></el-icon>
+            {{ t('common.refresh') }}
+          </el-button>
+        </div>
+        <el-table :data="projectSqlList" v-loading="projectSqlLoading" size="small" class="project-sql-table" stripe>
+          <el-table-column prop="statementId" :label="t('projectDetail.projectSql.statementId')" min-width="220" show-overflow-tooltip />
+          <el-table-column prop="statementType" :label="t('projectDetail.projectSql.statementType')" width="100" align="center">
+            <template #default="{ row }">{{ row.statementType || '-' }}</template>
+          </el-table-column>
+          <el-table-column :label="t('projectDetail.projectSql.sql')" min-width="260" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.rawSql || '-' }}</template>
+          </el-table-column>
+          <el-table-column prop="sourceType" :label="t('projectDetail.projectSql.sourceType')" width="130" align="center">
+            <template #default="{ row }">{{ row.sourceType || '-' }}</template>
+          </el-table-column>
+          <el-table-column :label="t('projectDetail.projectSql.location')" min-width="180" show-overflow-tooltip>
+            <template #default="{ row }">{{ formatSqlLocation(row) }}</template>
+          </el-table-column>
+          <el-table-column :label="t('projectDetail.projectSql.mapper')" min-width="180" show-overflow-tooltip>
+            <template #default="{ row }">{{ formatSqlMapper(row) }}</template>
+          </el-table-column>
+          <el-table-column :label="t('projectDetail.projectSql.dynamic')" width="90" align="center">
+            <template #default="{ row }">
+              <el-tag :type="row.isDynamic ? 'warning' : 'info'" size="small">
+                {{ row.isDynamic ? t('common.yes') : t('common.no') }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="paramCount" :label="t('projectDetail.projectSql.paramCount')" width="90" align="center">
+            <template #default="{ row }">{{ row.paramCount ?? 0 }}</template>
+          </el-table-column>
+          <el-table-column :label="t('projectDetail.projectSql.operation')" width="120" align="center" fixed="right">
+            <template #default="{ row }">
+              <span class="action-btn" @click="handleViewSqlConstruction(row)">
+                {{ t('projectDetail.report.constructionDetail') }}
+              </span>
+            </template>
+          </el-table-column>
+        </el-table>
+      </el-card>
+    </div>
+
+    <!-- 审核规则页 -->
+    <div v-show="activeTab === 'rules'" class="content-page">
+      <el-card>
+        <div class="filter-toolbar">
+          <div class="rule-filters">
+            <el-input
+              v-model="ruleKeyword"
+              :placeholder="t('projectDetail.rules.searchPlaceholder')"
+              clearable
+              @keyup.enter="handleSearchRules"
+            >
+              <template #prefix>
+                <el-icon><Search /></el-icon>
+              </template>
+            </el-input>
+            <el-select
+              v-model="ruleCategory"
+              :placeholder="t('projectDetail.rules.category')"
+              clearable
+              class="rule-filter-select"
+              @change="handleSearchRules"
+            >
+              <el-option :label="t('projectDetail.rules.categoryQuality')" value="SQL_QUALITY" />
+              <el-option :label="t('projectDetail.rules.categorySecurity')" value="SECURITY" />
+              <el-option :label="t('projectDetail.rules.categoryPerformance')" value="PERFORMANCE" />
+            </el-select>
+            <el-select
+              v-model="ruleEnabled"
+              :placeholder="t('projectDetail.rules.status')"
+              clearable
+              class="rule-filter-select"
+              @change="handleSearchRules"
+            >
+              <el-option :label="t('common.enable')" :value="true" />
+              <el-option :label="t('common.disable')" :value="false" />
+            </el-select>
+            <el-button type="primary" @click="handleSearchRules">{{ t('common.search') }}</el-button>
+            <el-button @click="handleResetRules">{{ t('common.reset') }}</el-button>
+          </div>
+          <div class="filter-toolbar__actions">
+            <el-button type="primary" @click="handleAddProjectRule">
+              <el-icon><Plus /></el-icon>
+              {{ t('projectDetail.rules.addProjectRule') }}
+            </el-button>
+          </div>
+        </div>
+        <el-table :data="ruleList" v-loading="ruleLoading" size="small" class="rules-table" stripe>
+          <el-table-column prop="name" :label="t('projectDetail.rules.ruleName')" min-width="150" show-overflow-tooltip />
+          <el-table-column prop="code" :label="t('projectDetail.rules.ruleCode')" min-width="150" show-overflow-tooltip />
+          <el-table-column prop="categoryDescription" :label="t('projectDetail.rules.category')" width="110" align="center" />
+          <el-table-column prop="severityDescription" :label="t('projectDetail.rules.severity')" width="90" align="center">
+            <template #default="{ row }">
+              <el-tag :type="getSeverityType(row.severity)" size="small">
+                {{ row.severityDescription || row.severity }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="description" :label="t('projectDetail.rules.description')" min-width="200" show-overflow-tooltip />
+          <el-table-column prop="suggestion" :label="t('projectDetail.rules.suggestion')" min-width="180" show-overflow-tooltip />
+          <el-table-column prop="enabled" :label="t('projectDetail.rules.status')" width="90" align="center">
+            <template #default="{ row }">
+              <el-switch v-model="row.enabledFlag" @change="(val: boolean) => handleToggleRule(row, val)" />
+            </template>
+          </el-table-column>
+          <el-table-column prop="createUserName" :label="t('projectDetail.rules.creator')" width="100" align="center" />
+          <el-table-column prop="updateTime" :label="t('projectDetail.rules.updateTime')" width="170" align="center">
+            <template #default="{ row }">
+              {{ formatDate(row.updateTime) }}
+            </template>
+          </el-table-column>
+          <el-table-column :label="t('projectDetail.rules.operation')" width="130" align="center" fixed="right">
+            <template #default="{ row }">
+              <span class="action-btn" @click="handleEditProjectRule(row)">{{ t('common.edit') }}</span>
+              <span class="action-btn action-btn--danger" @click="handleDeleteProjectRule(row)">{{ t('common.delete') }}</span>
+            </template>
+          </el-table-column>
+        </el-table>
+        <div v-if="ruleTotal > 0" class="rules-pagination">
+          <el-pagination
+            v-model:current-page="ruleCurrentPage"
+            v-model:page-size="rulePageSize"
+            :page-sizes="[10, 20, 50]"
+            :total="ruleTotal"
+            layout="total, sizes, prev, pager, next"
+            background
+            @current-change="loadRules"
+            @size-change="handleRulePageSizeChange"
+          />
+        </div>
+      </el-card>
+    </div>
+
+    <div v-show="activeTab === 'whitelist'" class="content-page whitelist-page">
+      <el-card>
+        <div class="whitelist-toolbar">
+          <div class="whitelist-summary">
+            <span class="section-title">{{ t('projectDetail.whitelist.title') }}</span>
+            <span class="whitelist-count">{{ t('projectDetail.whitelist.total', { count: whitelistTotal }) }}</span>
+          </div>
+          <el-button :loading="whitelistLoading" @click="loadWhitelist">
+            <el-icon><Refresh /></el-icon>
+            {{ t('common.refresh') }}
+          </el-button>
+        </div>
+        <el-table :data="whitelistList" v-loading="whitelistLoading" size="small" class="whitelist-table" stripe>
+          <el-table-column prop="sqlSample" :label="t('projectDetail.whitelist.sql')" min-width="280" show-overflow-tooltip />
+          <el-table-column prop="ruleName" :label="t('projectDetail.whitelist.rule')" min-width="160" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.ruleName || row.ruleId || '-' }}</template>
+          </el-table-column>
+          <el-table-column prop="sqlFingerprint" :label="t('projectDetail.whitelist.fingerprint')" min-width="220" show-overflow-tooltip />
+          <el-table-column prop="reason" :label="t('projectDetail.whitelist.reason')" min-width="180" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.reason || '-' }}</template>
+          </el-table-column>
+          <el-table-column prop="createUserName" :label="t('projectDetail.whitelist.creator')" width="120" align="center">
+            <template #default="{ row }">{{ row.createUserName || '-' }}</template>
+          </el-table-column>
+          <el-table-column prop="createTime" :label="t('projectDetail.whitelist.createTime')" width="170" align="center">
+            <template #default="{ row }">{{ formatDate(row.createTime) }}</template>
+          </el-table-column>
+          <el-table-column :label="t('projectDetail.whitelist.operation')" width="110" align="center" fixed="right">
+            <template #default="{ row }">
+              <span class="action-btn action-btn--danger" @click="handleRemoveWhitelist(row)">
+                {{ t('projectDetail.whitelist.remove') }}
+              </span>
+            </template>
+          </el-table-column>
+        </el-table>
+        <div v-if="whitelistTotal > 0" class="whitelist-pagination">
+          <el-pagination
+            v-model:current-page="whitelistCurrentPage"
+            v-model:page-size="whitelistPageSize"
+            :page-sizes="[10, 20, 50]"
+            :total="whitelistTotal"
+            layout="total, sizes, prev, pager, next"
+            background
+            @current-change="loadWhitelist"
+            @size-change="handleWhitelistPageSizeChange"
+          />
+        </div>
+      </el-card>
+    </div>
+
+    <el-dialog
+      v-model="ruleDialogVisible"
+      :title="ruleDialogTitle"
+      width="720px"
+      align-center
+      @close="handleRuleDialogClose"
+    >
+      <el-form ref="ruleFormRef" :model="ruleForm" :rules="ruleFormRules" label-width="110px">
+        <el-form-item :label="t('projectDetail.rules.ruleName')" prop="name">
+          <el-input v-model="ruleForm.name" :placeholder="t('projectDetail.rules.namePlaceholder')" />
+        </el-form-item>
+        <el-form-item :label="t('projectDetail.rules.ruleCode')" prop="code">
+          <el-input v-model="ruleForm.code" :placeholder="t('projectDetail.rules.codePlaceholder')" />
+        </el-form-item>
+        <el-form-item :label="t('projectDetail.rules.category')" prop="category">
+          <el-select v-model="ruleForm.category" :placeholder="t('projectDetail.rules.categoryPlaceholder')" style="width: 100%">
+            <el-option :label="t('projectDetail.rules.categoryQuality')" value="SQL_QUALITY" />
+            <el-option :label="t('projectDetail.rules.categorySecurity')" value="SECURITY" />
+            <el-option :label="t('projectDetail.rules.categoryPerformance')" value="PERFORMANCE" />
+          </el-select>
+        </el-form-item>
+        <el-form-item :label="t('projectDetail.rules.severity')" prop="severity">
+          <el-select v-model="ruleForm.severity" :placeholder="t('projectDetail.rules.severityPlaceholder')" style="width: 100%">
+            <el-option :label="t('severity.critical')" value="critical" />
+            <el-option :label="t('severity.high')" value="high" />
+            <el-option :label="t('severity.warning')" value="warning" />
+            <el-option :label="t('severity.info')" value="info" />
+          </el-select>
+        </el-form-item>
+        <el-form-item :label="t('projectDetail.rules.status')" prop="enabled">
+          <el-switch v-model="ruleForm.enabled" />
+        </el-form-item>
+        <el-form-item :label="t('projectDetail.rules.description')" prop="description">
+          <el-input v-model="ruleForm.description" type="textarea" :rows="2" :placeholder="t('projectDetail.rules.descriptionPlaceholder')" />
+        </el-form-item>
+        <el-form-item :label="t('projectDetail.rules.suggestion')" prop="suggestion">
+          <el-input v-model="ruleForm.suggestion" type="textarea" :rows="2" :placeholder="t('projectDetail.rules.suggestionPlaceholder')" />
+        </el-form-item>
+        <el-form-item :label="t('projectDetail.rules.droolsContent')" prop="droolsContent">
+          <el-input
+            v-model="ruleForm.droolsContent"
+            type="textarea"
+            :rows="9"
+            :placeholder="t('projectDetail.rules.droolsPlaceholder')"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="ruleDialogVisible = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" :loading="ruleSubmitLoading" @click="handleSubmitProjectRule">{{ t('common.confirm') }}</el-button>
+      </template>
+    </el-dialog>
+
+    <ProjectMembersPanel
+      v-show="activeTab === 'members'"
+      :active="activeTab === 'members'"
+      :is-project-admin="isProjectAdmin"
+      :project-id="projectId"
+    />
+
+    <ProjectLogsPanel
+      v-show="activeTab === 'logs'"
+      :active="activeTab === 'logs'"
+      :project-id="projectId"
+    />
+
+    <!-- 凭证选择对话框 -->
+    <el-dialog v-model="credentialDialogVisible" :title="t('projectDetail.credentials.selectTitle')" width="500px">
+      <el-select
+        v-model="selectedCredentialId"
+        filterable
+        :placeholder="t('projectDetail.credentials.selectPlaceholder')"
+        style="width: 100%"
+      >
+        <el-option
+          :value="-1"
+          :label="t('projectDetail.credentials.none')"
+        />
+        <el-option
+          v-for="cred in availableCredentials"
+          :key="cred.id"
+          :label="cred.name"
+          :value="cred.id"
+        >
+          <div class="credential-option">
+            <span>
+              <el-tooltip v-if="cred.visibility !== 0" :content="t('projectDetail.credentials.private')" placement="top">
+                <el-icon><Lock /></el-icon>
+              </el-tooltip>
+              <el-tooltip v-else :content="t('projectDetail.credentials.public')" placement="top">
+                <svg class="globe-icon" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+                  <path fill="none" stroke="currentColor" stroke-width="24" d="M512 64C282.667 64 96 282.667 96 512s186.667 448 416 448 416-186.667 416-448S741.333 64 512 64zm0 64c194.667 0 352 157.333 352 352s-157.333 352-352 352-352-157.333-352-352 157.333-352 352-352zM144 512h736M512 144v736"/>
+                </svg>
+              </el-tooltip>
+              {{ cred.name }}
+            </span>
+            <span class="credential-option-detail">{{ t('projectDetail.overview.creator') }}: {{ cred.createUserName }}</span>
+          </div>
+        </el-option>
+      </el-select>
+      <template #footer>
+        <el-button @click="credentialDialogVisible = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" :loading="savingCredential" @click="handleSaveCredential">{{ t('common.confirm') }}</el-button>
+      </template>
+    </el-dialog>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { useRoute, useRouter } from 'vue-router'
+import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
+import { Lock, Download, DataAnalysis, Search, CircleCheck, Refresh, Plus, Top, Bottom, Tools, Document, VideoPlay, Close } from '@element-plus/icons-vue'
+import * as echarts from 'echarts'
+import ProjectLogsPanel from '@/components/project/ProjectLogsPanel.vue'
+import ProjectMembersPanel from '@/components/project/ProjectMembersPanel.vue'
+import ProjectReportPanel from '@/components/project/ProjectReportPanel.vue'
+import ExecutionSteps, { type ExecutionStep, type ExecutionStepStatus } from '@/components/project/ExecutionSteps.vue'
+import { analyzeProject, auditProject, compileProject, executeProject, generateReportProject, getProject, getProjectCredentials, getProjectStatus, getProjectVersions, syncProject, updateProjectCredential, type CredentialVO, type ProjectVO, type ProjectVersionStepVO, type ProjectVersionVO } from '@/api/project'
+import type { AuditRuleVO } from '@/api/auditRule'
+import { checkIsProjectAdmin } from '@/api/projectMember'
+import { createProjectAuditRule, deleteProjectAuditRule, getProjectAuditRules, toggleProjectAuditRule, updateProjectAuditRule } from '@/api/projectAuditRule'
+import { downloadProjectReportPdf, getProjectReport, type ProjectReportVO } from '@/api/projectReport'
+import {
+  getProjectOverviewIssueCategories,
+  getProjectOverviewIssueRectificationRate,
+  getProjectOverviewIssueSqlRate,
+  getProjectOverviewScore,
+  getProjectOverviewSql,
+  getProjectOverviewSqlQualityTrend
+} from '@/api/projectOverview'
+import { getSqlStatementsByProjectAndVersion, type SqlStatementVO } from '@/api/sqlStatement'
+import { deleteSqlWhitelist, getSqlWhitelistList, type SqlWhitelistVO } from '@/api/sqlWhitelist'
+import { useUserStore } from '@/stores/user'
+
+const route = useRoute()
+const router = useRouter()
+const userStore = useUserStore()
+const { t, locale } = useI18n()
+
+const loading = ref(false)
+const statusLoading = ref(false)
+const reportLoading = ref(false)
+const projectSqlLoading = ref(false)
+const overviewLoading = ref(false)
+const project = ref<ProjectVO | null>(null)
+const versions = ref<ProjectVersionVO[]>([])
+const projectReport = ref<ProjectReportVO | null>(null)
+const projectSqlList = ref<SqlStatementVO[]>([])
+const projectSqlVersion = ref<ProjectVersionVO | null>(null)
+const isProjectAdmin = ref(false)
+const executionRunning = ref(false)
+const executionSubmitting = ref(false)
+const STATUS_REFRESH_INTERVAL = 10000
+let statusRefreshTimer: ReturnType<typeof setInterval> | null = null
+let statusRefreshing = false
+
+const projectDetailTabs = ['overview', 'projectSql', 'sql', 'rules', 'whitelist', 'members', 'logs']
+
+const getRouteTab = () => {
+  const tab = typeof route.query.tab === 'string' ? route.query.tab : ''
+  return projectDetailTabs.includes(tab) ? tab : 'overview'
+}
+
+const getRouteVersionId = () => {
+  const versionId = typeof route.query.versionId === 'string' ? Number(route.query.versionId) : 0
+  return Number.isFinite(versionId) && versionId > 0 ? versionId : undefined
+}
+
+// 顶部菜单当前激活的标签
+const activeTab = ref(getRouteTab())
+
+// 图表引用
+const pieChartRef = ref<HTMLElement>()
+const lineChartRef = ref<HTMLElement>()
+const radarChartRef = ref<HTMLElement>()
+const loseScoreChartRef = ref<HTMLElement>()
+let pieChart: echarts.ECharts | null = null
+let lineChart: echarts.ECharts | null = null
+let radarChart: echarts.ECharts | null = null
+let loseScoreChart: echarts.ECharts | null = null
+
+// 项目状态步骤条
+const createDefaultProjectSteps = (): ExecutionStep[] => [
+  { key: 'pull', label: t('projectDetail.steps.pull'), status: 'pending' },
+  { key: 'compile', label: t('projectDetail.steps.compile'), status: 'pending' },
+  { key: 'scan', label: t('projectDetail.steps.scan'), status: 'pending' },
+  { key: 'audit', label: t('projectDetail.steps.audit'), status: 'pending' },
+  { key: 'report', label: t('projectDetail.steps.report'), status: 'pending' }
+]
+
+const projectSteps = ref<ExecutionStep[]>(createDefaultProjectSteps())
+
+// SQL 统计数据（环形图）
+const sqlTypeStats = ref<Array<{ name: string, value: number }>>([])
+
+// 项目评分数据
+const projectScore = ref({
+  score: 0,
+  rating: 'D',
+  complianceRate: 0,
+  complianceTrend: 0,
+  slowSqlRate: 0,
+  slowSqlTrend: 0,
+  fixRate: 0,
+  fixTrend: 0
+})
+
+// 雷达图数据（思维得分）
+const radarData = ref({
+  compliance: 0,
+  performance: 0,
+  security: 0,
+  fixImplementation: 0
+})
+
+// 失分饼图数据
+const loseScoreData = ref({
+  securityDeduction: 0,
+  performanceDeduction: 0,
+  qualityDeduction: 0,
+  otherDeduction: 0
+})
+
+// 趋势数据（折线图）
+const trendData = ref({
+  versions: [] as string[],
+  total: [] as number[],
+  critical: [] as number[],
+  high: [] as number[],
+  warning: [] as number[]
+})
+
+// 审核规则相关
+const ruleKeyword = ref('')
+const ruleCategory = ref('')
+const ruleEnabled = ref<boolean | null | ''>(null)
+const ruleLoading = ref(false)
+const ruleSubmitLoading = ref(false)
+const ruleDialogVisible = ref(false)
+const ruleIsEdit = ref(false)
+const currentRuleId = ref(0)
+const ruleCurrentPage = ref(1)
+const rulePageSize = ref(10)
+const ruleTotal = ref(0)
+const ruleList = ref<AuditRuleVO[]>([])
+const ruleFormRef = ref<FormInstance>()
+
+interface ProjectRuleForm {
+  name: string
+  code: string
+  description: string
+  suggestion: string
+  severity: string
+  category: string
+  droolsContent: string
+  enabled: boolean
+}
+
+const ruleForm = reactive<ProjectRuleForm>({
+  name: '',
+  code: '',
+  description: '',
+  suggestion: '',
+  severity: 'warning',
+  category: 'SQL_QUALITY',
+  droolsContent: '',
+  enabled: true
+})
+
+const ruleFormRules = computed<FormRules<ProjectRuleForm>>(() => ({
+  name: [{ required: true, message: t('projectDetail.rules.nameRequired'), trigger: 'blur' }],
+  code: [
+    { required: true, message: t('projectDetail.rules.codeRequired'), trigger: 'blur' },
+    { pattern: /^[A-Z_][A-Z0-9_]*$/, message: t('projectDetail.rules.codePattern'), trigger: 'blur' }
+  ],
+  severity: [{ required: true, message: t('projectDetail.rules.severityRequired'), trigger: 'change' }],
+  category: [{ required: true, message: t('projectDetail.rules.categoryRequired'), trigger: 'change' }],
+  droolsContent: [{ required: true, message: t('projectDetail.rules.droolsRequired'), trigger: 'blur' }]
+}))
+
+const ruleDialogTitle = computed(() => ruleIsEdit.value
+  ? t('projectDetail.rules.editProjectRule')
+  : t('projectDetail.rules.addProjectRule'))
+
+// SQL 白名单相关
+const whitelistLoading = ref(false)
+const whitelistList = ref<SqlWhitelistVO[]>([])
+const whitelistCurrentPage = ref(1)
+const whitelistPageSize = ref(10)
+const whitelistTotal = ref(0)
+
+const loadWhitelist = async () => {
+  whitelistLoading.value = true
+  try {
+    const result = await getSqlWhitelistList(projectId, {
+      page: whitelistCurrentPage.value,
+      pageSize: whitelistPageSize.value
+    })
+    whitelistList.value = result.list || []
+    whitelistTotal.value = Number(result.total || 0)
+  } catch {
+    whitelistList.value = []
+    whitelistTotal.value = 0
+    ElMessage.error(t('projectDetail.messages.loadWhitelistError'))
+  } finally {
+    whitelistLoading.value = false
+  }
+}
+
+const handleWhitelistPageSizeChange = () => {
+  whitelistCurrentPage.value = 1
+  loadWhitelist()
+}
+
+const handleRemoveWhitelist = async (row: SqlWhitelistVO) => {
+  try {
+    await ElMessageBox.confirm(
+      t('projectDetail.messages.removeWhitelistConfirm'),
+      t('projectDetail.messages.removeWhitelistTitle'),
+      {
+        type: 'warning',
+        confirmButtonText: t('projectDetail.whitelist.remove'),
+        cancelButtonText: t('common.cancel')
+      }
+    )
+    await deleteSqlWhitelist(projectId, row.id)
+    ElMessage.success(t('projectDetail.messages.removeWhitelistSuccess'))
+    if (whitelistList.value.length === 1 && whitelistCurrentPage.value > 1) {
+      whitelistCurrentPage.value -= 1
+    }
+    await loadWhitelist()
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') {
+      ElMessage.error(t('projectDetail.messages.removeWhitelistError'))
+    }
+  }
+}
+
+const getSeverityType = (severity: string) => {
+  switch (severity?.toLowerCase()) {
+    case 'critical': return 'danger'
+    case 'high': return 'warning'
+    case 'warning': return 'warning'
+    default: return 'info'
+  }
+}
+
+const handleAddProjectRule = () => {
+  ruleIsEdit.value = false
+  resetRuleForm()
+  ruleDialogVisible.value = true
+}
+
+const handleEditProjectRule = (row: AuditRuleVO) => {
+  ruleIsEdit.value = true
+  currentRuleId.value = row.id
+  ruleForm.name = row.name
+  ruleForm.code = row.code
+  ruleForm.description = row.description || ''
+  ruleForm.suggestion = row.suggestion || ''
+  ruleForm.severity = row.severity
+  ruleForm.category = row.category
+  ruleForm.droolsContent = row.droolsContent
+  ruleForm.enabled = row.enabled === 1
+  ruleDialogVisible.value = true
+}
+
+const handleSearchRules = () => {
+  ruleCurrentPage.value = 1
+  loadRules()
+}
+
+const handleResetRules = () => {
+  ruleKeyword.value = ''
+  ruleCategory.value = ''
+  ruleEnabled.value = null
+  handleSearchRules()
+}
+
+const handleRulePageSizeChange = () => {
+  ruleCurrentPage.value = 1
+  loadRules()
+}
+
+const handleToggleRule = async (row: AuditRuleVO, enabled: boolean) => {
+  try {
+    await toggleProjectAuditRule(projectId, row.id, enabled)
+    row.enabled = enabled ? 1 : 0
+    row.enabledFlag = enabled
+    ElMessage.success(t('projectDetail.messages.toggleRuleSuccess', {
+      action: enabled ? t('common.enable') : t('common.disable'),
+      name: row.name
+    }))
+  } catch {
+    row.enabledFlag = !enabled
+  }
+}
+
+const loadRules = async () => {
+  ruleLoading.value = true
+  try {
+    const params: {
+      page: number
+      pageSize: number
+      name?: string
+      category?: string
+      enabled?: boolean
+    } = {
+      page: ruleCurrentPage.value,
+      pageSize: rulePageSize.value
+    }
+    if (ruleKeyword.value) {
+      params.name = ruleKeyword.value
+    }
+    if (ruleCategory.value) {
+      params.category = ruleCategory.value
+    }
+    if (typeof ruleEnabled.value === 'boolean') {
+      params.enabled = ruleEnabled.value
+    }
+
+    const data = await getProjectAuditRules(projectId, params)
+    ruleList.value = data.list.map(rule => ({
+      ...rule,
+      enabledFlag: rule.enabled === 1
+    }))
+    ruleTotal.value = data.total
+  } catch {
+    ElMessage.error(t('projectDetail.messages.loadRulesError'))
+  } finally {
+    ruleLoading.value = false
+  }
+}
+
+const handleRuleDialogClose = () => {
+  resetRuleForm()
+}
+
+const resetRuleForm = () => {
+  ruleForm.name = ''
+  ruleForm.code = ''
+  ruleForm.description = ''
+  ruleForm.suggestion = ''
+  ruleForm.severity = 'warning'
+  ruleForm.category = 'SQL_QUALITY'
+  ruleForm.droolsContent = ''
+  ruleForm.enabled = true
+  currentRuleId.value = 0
+  ruleFormRef.value?.clearValidate()
+}
+
+const handleSubmitProjectRule = async () => {
+  const valid = await ruleFormRef.value?.validate().catch(() => false)
+  if (!valid) {
+    return
+  }
+
+  try {
+    ruleSubmitLoading.value = true
+    if (ruleIsEdit.value) {
+      await updateProjectAuditRule(projectId, currentRuleId.value, {
+        name: ruleForm.name,
+        code: ruleForm.code,
+        description: ruleForm.description,
+        suggestion: ruleForm.suggestion,
+        severity: ruleForm.severity,
+        category: ruleForm.category,
+        droolsContent: ruleForm.droolsContent,
+        enabled: ruleForm.enabled
+      })
+      ElMessage.success(t('projectDetail.messages.updateRuleSuccess'))
+    } else {
+      await createProjectAuditRule(projectId, {
+        name: ruleForm.name,
+        code: ruleForm.code,
+        description: ruleForm.description,
+        suggestion: ruleForm.suggestion,
+        severity: ruleForm.severity,
+        category: ruleForm.category,
+        droolsContent: ruleForm.droolsContent,
+        enabled: ruleForm.enabled
+      })
+      ElMessage.success(t('projectDetail.messages.createRuleSuccess'))
+    }
+    ruleDialogVisible.value = false
+    loadRules()
+  } catch (error) {
+    if (error !== false) {
+      ElMessage.error(ruleIsEdit.value
+        ? t('projectDetail.messages.updateRuleError')
+        : t('projectDetail.messages.createRuleError'))
+    }
+  } finally {
+    ruleSubmitLoading.value = false
+  }
+}
+
+const handleDeleteProjectRule = async (row: AuditRuleVO) => {
+  try {
+    await ElMessageBox.confirm(
+      t('projectDetail.messages.deleteRuleConfirm', { name: row.name }),
+      t('projectDetail.messages.deleteRuleTitle'),
+      {
+        type: 'warning',
+        confirmButtonText: t('common.delete'),
+        cancelButtonText: t('common.cancel')
+      }
+    )
+    await deleteProjectAuditRule(projectId, row.id)
+    ElMessage.success(t('projectDetail.messages.deleteRuleSuccess'))
+    if (ruleList.value.length === 1 && ruleCurrentPage.value > 1) {
+      ruleCurrentPage.value -= 1
+    }
+    loadRules()
+  } catch (error) {
+    if (error !== 'cancel' && error !== 'close') {
+      ElMessage.error(t('projectDetail.messages.deleteRuleError'))
+    }
+  }
+}
+
+// 标签页切换处理
+const handleTabChange = (tabName: string) => {
+  activeTab.value = tabName
+  router.replace({
+    path: route.path,
+    query: tabName === 'overview' ? {} : { tab: tabName }
+  })
+  if (tabName === 'whitelist') {
+    loadWhitelist()
+  }
+}
+
+const formatReportFileTime = (date?: string) => {
+  if (!date) {
+    return t('projectDetail.messages.unknownTime')
+  }
+  const parsed = new Date(date)
+  if (Number.isNaN(parsed.getTime())) {
+    return date.replace(/[\\/:*?"<>|\s]+/g, '-')
+  }
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return [
+    parsed.getFullYear(),
+    pad(parsed.getMonth() + 1),
+    pad(parsed.getDate())
+  ].join('-') + '_' + [
+    pad(parsed.getHours()),
+    pad(parsed.getMinutes()),
+    pad(parsed.getSeconds())
+  ].join('-')
+}
+
+// 版本列表显示逻辑
+const displayVersions = computed(() => {
+  return versions.value.slice(0, 5)
+})
+
+const projectSqlVersionLabel = computed(() => {
+  if (!projectSqlVersion.value) {
+    return t('projectDetail.projectSql.noAnalyzedVersion')
+  }
+  const version = projectSqlVersion.value
+  const ref = version.ref || '-'
+  const commit = version.commitId ? version.commitId.slice(0, 8) : '-'
+  return `${ref} / ${commit}`
+})
+
+const projectGitRef = computed(() => {
+  if (!project.value?.gitUrl) {
+    return '-'
+  }
+  return project.value.ref ? `${project.value.gitUrl}#${project.value.ref}` : project.value.gitUrl
+})
+
+// 凭证相关
+const credentialDialogVisible = ref(false)
+const selectedCredentialId = ref<number | null>(null)
+const availableCredentials = ref<CredentialVO[]>([])
+const savingCredential = ref(false)
+
+const projectId = Number(route.params.id)
+
+const loadProject = async () => {
+  loading.value = true
+  try {
+    project.value = await getProject(projectId)
+    await loadVersions()
+    await loadProjectStatus()
+    if (activeTab.value === 'projectSql') {
+      await loadProjectSql()
+    } else if (activeTab.value === 'sql') {
+      await loadProjectReport()
+    } else if (activeTab.value === 'whitelist') {
+      await loadWhitelist()
+    }
+  } catch {
+    ElMessage.error(t('projectDetail.messages.loadProjectError'))
+  } finally {
+    loading.value = false
+  }
+}
+
+const loadVersions = async () => {
+  try {
+    versions.value = await getProjectVersions(projectId)
+  } catch {
+    versions.value = []
+  }
+}
+
+const toggleExecution = async () => {
+  if (executionRunning.value) {
+    executionRunning.value = false
+    return
+  }
+
+  executionSubmitting.value = true
+  try {
+    const submitted = await executeProject(projectId)
+    if (submitted) {
+      await loadVersions()
+      await loadProjectStatus()
+      executionRunning.value = true
+    } else {
+      ElMessage.error(t('projectDetail.messages.executeError'))
+    }
+  } catch {
+    ElMessage.error(t('projectDetail.messages.executeError'))
+  } finally {
+    executionSubmitting.value = false
+  }
+}
+
+const getAnalyzedVersionCandidates = () => {
+  const reachedSqlScan = versions.value.filter(version => (version.currentStep ?? -1) >= 2)
+  return reachedSqlScan.length > 0 ? reachedSqlScan : versions.value
+}
+
+const findVersion = (versionId?: number) => {
+  if (!versionId) {
+    return null
+  }
+  return versions.value.find(version => version.id === versionId) || null
+}
+
+const switchProjectDetailTab = (tabName: string, versionId?: number) => {
+  activeTab.value = tabName
+  router.replace({
+    path: route.path,
+    query: {
+      tab: tabName,
+      ...(versionId ? { versionId: String(versionId) } : {})
+    }
+  })
+}
+
+const canViewVersionReport = (row: ProjectVersionVO) => {
+  return (row.currentStep ?? -1) === 4 && row.overallStatus === 2
+}
+
+const canViewVersionSql = (row: ProjectVersionVO) => {
+  const currentStep = row.currentStep ?? -1
+  return currentStep > 2 || (currentStep === 2 && row.overallStatus === 2)
+}
+
+const handleViewVersionSql = (row: ProjectVersionVO) => {
+  switchProjectDetailTab('projectSql', row.id)
+}
+
+const handleViewVersionReport = (row: ProjectVersionVO) => {
+  switchProjectDetailTab('sql', row.id)
+}
+
+const loadProjectSql = async (versionId = getRouteVersionId()) => {
+  projectSqlLoading.value = true
+  try {
+    if (versions.value.length === 0) {
+      await loadVersions()
+    }
+
+    if (versionId) {
+      projectSqlVersion.value = findVersion(versionId)
+      projectSqlList.value = await getSqlStatementsByProjectAndVersion(projectId, versionId)
+      return
+    }
+
+    for (const version of getAnalyzedVersionCandidates()) {
+      const list = await getSqlStatementsByProjectAndVersion(projectId, version.id)
+      if (list.length > 0) {
+        projectSqlVersion.value = version
+        projectSqlList.value = list
+        return
+      }
+    }
+
+    projectSqlList.value = []
+    projectSqlVersion.value = null
+  } catch {
+    projectSqlList.value = []
+    projectSqlVersion.value = null
+    ElMessage.error(t('projectDetail.projectSql.loadError'))
+  } finally {
+    projectSqlLoading.value = false
+  }
+}
+
+const formatSqlLocation = (row: SqlStatementVO) => {
+  if (!row.sourceFile) {
+    return '-'
+  }
+  return row.sourceLine ? `${row.sourceFile}:${row.sourceLine}` : row.sourceFile
+}
+
+const formatSqlMapper = (row: SqlStatementVO) => {
+  if (!row.mapperClass && !row.mapperMethod) {
+    return '-'
+  }
+  if (!row.mapperClass) {
+    return row.mapperMethod || '-'
+  }
+  return row.mapperMethod ? `${row.mapperClass}.${row.mapperMethod}` : row.mapperClass
+}
+
+const handleViewSqlConstruction = (row: SqlStatementVO) => {
+  router.push({
+    path: `/workspace/sql-statements/${row.id}/construction`,
+    query: {
+      projectId: String(projectId),
+      fromTab: 'projectSql',
+      title: formatSqlMapper(row) !== '-' ? formatSqlMapper(row) : row.statementId
+    }
+  })
+}
+
+const getProjectStepLabel = (step: ProjectVersionStepVO) => {
+  switch (step.stepCode) {
+    case 'SYNC_CODE':
+      return t('projectDetail.steps.pull')
+    case 'COMPILE_CHECK':
+      return t('projectDetail.steps.compile')
+    case 'SQL_SCAN':
+      return t('projectDetail.steps.scan')
+    case 'RULE_AUDIT':
+      return t('projectDetail.steps.audit')
+    case 'GENERATE_REPORT':
+      return t('projectDetail.steps.report')
+    default:
+      return step.stepName || '-'
+  }
+}
+
+const getProjectStepStatus = (status?: number): ExecutionStepStatus => {
+  switch (status) {
+    case 1:
+      return 'running'
+    case 2:
+      return 'success'
+    case 3:
+      return 'failed'
+    default:
+      return 'pending'
+  }
+}
+
+const loadProjectStatus = async (silent = false) => {
+  if (statusRefreshing) {
+    return
+  }
+  statusRefreshing = true
+  if (!silent) {
+    statusLoading.value = true
+  }
+  try {
+    const data = await getProjectStatus(projectId)
+    const steps = data.steps || []
+    projectSteps.value = steps.length > 0
+      ? [...steps]
+        .sort((a, b) => a.stepOrder - b.stepOrder)
+        .map(step => ({
+          key: step.stepCode || String(step.stepType),
+          label: getProjectStepLabel(step),
+          status: getProjectStepStatus(step.status)
+        }))
+      : createDefaultProjectSteps()
+    executionRunning.value = steps.some(step => step.status === 1)
+  } catch {
+    projectSteps.value = createDefaultProjectSteps()
+  } finally {
+    if (!silent) {
+      statusLoading.value = false
+    }
+    statusRefreshing = false
+  }
+}
+
+// 版本列表操作按钮处理函数
+const handlePullProject = async () => {
+  try {
+    await syncProject(projectId)
+    ElMessage.success(t('projectDetail.messages.syncSubmitted'))
+    await loadVersions()
+    await loadProjectStatus()
+  } catch {
+    ElMessage.error(t('projectDetail.messages.syncError'))
+  }
+}
+
+const handleCompile = async () => {
+  try {
+    await compileProject(projectId)
+    ElMessage.success(t('projectDetail.messages.compileSubmitted'))
+    await loadProjectStatus()
+  } catch {
+    ElMessage.error(t('projectDetail.messages.compileError'))
+  }
+}
+
+const handleAnalyze = async () => {
+  try {
+    const result = await analyzeProject(projectId)
+    if (!result || result.success !== false) {
+      ElMessage.success(result.message || t('projectDetail.messages.analyzeSubmitted'))
+      await loadProjectStatus()
+    } else {
+      ElMessage.error(result.message || t('projectDetail.messages.analyzeFailed'))
+    }
+  } catch {
+    ElMessage.error(t('projectDetail.messages.analyzeError'))
+  }
+}
+
+const handleReview = async () => {
+  try {
+    await auditProject(projectId)
+    ElMessage.success(t('projectDetail.messages.auditSubmitted'))
+    await loadVersions()
+    await loadProjectStatus()
+  } catch {
+    ElMessage.error(t('projectDetail.messages.auditError'))
+  }
+}
+
+const handleGenerateReport = async () => {
+  try {
+    await generateReportProject(projectId)
+    ElMessage.success(t('projectDetail.messages.reportSubmitted'))
+    await loadVersions()
+    await loadProjectStatus()
+    await loadProjectReport()
+  } catch {
+    ElMessage.error(t('projectDetail.messages.reportError'))
+  }
+}
+
+const loadProjectReport = async (versionId = getRouteVersionId()) => {
+  reportLoading.value = true
+  try {
+    const report = await getProjectReport(projectId, versionId)
+    projectReport.value = report || null
+  } catch {
+    projectReport.value = null
+  } finally {
+    reportLoading.value = false
+  }
+}
+
+const handleDownloadReport = async () => {
+  if (!projectReport.value) {
+    return
+  }
+  try {
+    const blob = await downloadProjectReportPdf(projectId, projectReport.value.versionId)
+    const projectName = (project.value?.name || 'project').replace(/[\\/:*?"<>|]/g, '_')
+    const fileName = `${projectName}-${formatReportFileTime(projectReport.value.generatedTime)}.pdf`
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = fileName
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    URL.revokeObjectURL(url)
+  } catch {
+    ElMessage.error(t('projectDetail.messages.downloadReportError'))
+  }
+}
+
+const loadCredentials = async () => {
+  try {
+    availableCredentials.value = await getProjectCredentials()
+  } catch {
+    availableCredentials.value = []
+  }
+}
+
+const showCredentialDialog = async () => {
+  await loadCredentials()
+  selectedCredentialId.value = project.value?.credentialId ?? -1
+  credentialDialogVisible.value = true
+}
+
+const handleSaveCredential = async () => {
+  savingCredential.value = true
+  try {
+    const credId = selectedCredentialId.value === -1 ? null : selectedCredentialId.value
+    project.value = await updateProjectCredential(projectId, credId)
+    credentialDialogVisible.value = false
+    ElMessage.success(t('projectDetail.messages.credentialUpdateSuccess'))
+  } catch {
+    ElMessage.error(t('projectDetail.messages.credentialUpdateError'))
+  } finally {
+    savingCredential.value = false
+  }
+}
+
+const checkAdmin = async () => {
+  if (userStore.userId === 0) return
+  try {
+    isProjectAdmin.value = await checkIsProjectAdmin(projectId, userStore.userId)
+  } catch {
+    isProjectAdmin.value = false
+  }
+}
+
+const formatDate = (date?: string) => {
+  if (!date) return '-'
+  return new Date(date).toLocaleString(locale.value)
+}
+
+const getStatusTagType = (status?: number) => {
+  switch (status) {
+    case 0: return 'info'
+    case 1: return 'warning'
+    case 2: return 'success'
+    case 3: return 'danger'
+    default: return 'info'
+  }
+}
+
+const startStatusRefresh = () => {
+  if (statusRefreshTimer) {
+    return
+  }
+  statusRefreshTimer = setInterval(() => {
+    loadProjectStatus(true)
+  }, STATUS_REFRESH_INTERVAL)
+}
+
+const stopStatusRefresh = () => {
+  if (!statusRefreshTimer) {
+    return
+  }
+  clearInterval(statusRefreshTimer)
+  statusRefreshTimer = null
+}
+
+watch(() => [route.query.tab, route.query.versionId], () => {
+  const nextTab = getRouteTab()
+  const versionId = getRouteVersionId()
+  activeTab.value = nextTab
+  if (nextTab === 'sql') {
+    loadProjectReport(versionId)
+  } else if (nextTab === 'projectSql') {
+    loadProjectSql(versionId)
+  } else if (nextTab === 'whitelist') {
+    loadWhitelist()
+  }
+})
+
+onMounted(() => {
+  loadProject()
+  checkAdmin()
+  initCharts()
+  loadProjectOverview()
+  loadRules()
+  startStatusRefresh()
+})
+
+onUnmounted(() => {
+  stopStatusRefresh()
+  pieChart?.dispose()
+  lineChart?.dispose()
+  radarChart?.dispose()
+  loseScoreChart?.dispose()
+})
+
+// 初始化图表
+const initCharts = () => {
+  nextTick(() => {
+    if (pieChartRef.value) {
+      pieChart = echarts.init(pieChartRef.value)
+      updatePieChart()
+    }
+    if (lineChartRef.value) {
+      lineChart = echarts.init(lineChartRef.value)
+      updateLineChart()
+    }
+    if (radarChartRef.value) {
+      radarChart = echarts.init(radarChartRef.value)
+      updateRadarChart()
+    }
+    if (loseScoreChartRef.value) {
+      loseScoreChart = echarts.init(loseScoreChartRef.value)
+      updateLoseScoreChart()
+    }
+  })
+}
+
+// 更新环形图
+const updatePieChart = () => {
+  if (!pieChart) return
+  const option: echarts.EChartsOption = {
+    tooltip: {
+      trigger: 'item',
+      formatter: '{b}: {c} ({d}%)',
+      extraCssText: 'max-width: 200px; word-wrap: break-word; white-space: normal;'
+    },
+    legend: {
+      orient: 'horizontal',
+      bottom: 0,
+      left: 'center',
+      itemWidth: 10,
+      itemHeight: 10,
+      textStyle: {
+        color: '#64748b',
+        fontSize: 12
+      },
+      itemGap: 16
+    },
+    color: ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#94a3b8'],
+    series: [
+      {
+        name: t('projectDetail.chart.sqlRatio'),
+        type: 'pie',
+        radius: ['40%', '65%'],
+        center: ['50%', '45%'],
+        avoidLabelOverlap: false,
+        itemStyle: {
+          borderRadius: 6,
+          borderColor: '#fff',
+          borderWidth: 2
+        },
+        label: {
+          show: false
+        },
+        emphasis: {
+          label: {
+            show: true,
+            fontSize: 14,
+            fontWeight: 'bold'
+          }
+        },
+        data: sqlTypeStats.value
+      }
+    ]
+  }
+  pieChart.setOption(option)
+}
+
+// 更新折线图
+const updateLineChart = () => {
+  if (!lineChart) return
+  const option: echarts.EChartsOption = {
+    tooltip: {
+      trigger: 'axis'
+    },
+    legend: {
+      bottom: 0,
+      itemWidth: 14,
+      itemHeight: 8,
+      textStyle: {
+        color: '#64748b',
+        fontSize: 12
+      },
+      itemGap: 16
+    },
+    color: ['#3b82f6', '#ef4444', '#f59e0b', '#8b5cf6'],
+    grid: {
+      left: 60,
+      right: 30,
+      top: 20,
+      bottom: 70
+    },
+    xAxis: {
+      type: 'category',
+      data: trendData.value.versions,
+      axisLine: {
+        lineStyle: { color: '#e2e8f0' }
+      },
+      axisLabel: {
+        color: '#64748b',
+        fontSize: 11,
+        rotate: 0,
+        formatter: (value: string) => value.replace(/\s+/, '\n')
+      }
+    },
+    yAxis: {
+      type: 'value',
+      axisLine: { show: false },
+      splitLine: { lineStyle: { color: '#f1f5f9' } },
+      axisLabel: { color: '#64748b', fontSize: 11 }
+    },
+    series: [
+      {
+        name: t('projectDetail.chart.totalSql'),
+        type: 'line',
+        smooth: true,
+        data: trendData.value.total,
+        lineStyle: { width: 2 },
+        itemStyle: { color: '#3b82f6' }
+      },
+      {
+        name: t('severity.critical'),
+        type: 'line',
+        smooth: true,
+        data: trendData.value.critical,
+        lineStyle: { width: 2 },
+        itemStyle: { color: '#ef4444' }
+      },
+      {
+        name: t('severity.high'),
+        type: 'line',
+        smooth: true,
+        data: trendData.value.high,
+        lineStyle: { width: 2 },
+        itemStyle: { color: '#f59e0b' }
+      },
+      {
+        name: t('projectDetail.chart.warningSql'),
+        type: 'line',
+        smooth: true,
+        data: trendData.value.warning,
+        lineStyle: { width: 2 },
+        itemStyle: { color: '#8b5cf6' }
+      }
+    ]
+  }
+  lineChart.setOption(option)
+}
+
+// 更新雷达图
+const updateRadarChart = () => {
+  if (!radarChart) return
+  const option: echarts.EChartsOption = {
+    tooltip: {
+      trigger: 'item'
+    },
+    radar: {
+      indicator: [
+        { name: t('projectDetail.chart.healthScore'), max: 100 },
+        { name: t('projectDetail.chart.performanceScore'), max: 100 },
+        { name: t('projectDetail.chart.securityScore'), max: 100 },
+        { name: t('projectDetail.chart.fixImplementation'), max: 100 }
+      ],
+      center: ['50%', '55%'],
+      radius: '70%',
+      axisName: {
+        color: '#64748b',
+        fontSize: 12
+      },
+      splitArea: {
+        areaStyle: {
+          color: ['rgba(59, 130, 246, 0.02)', 'rgba(59, 130, 246, 0.04)', 'rgba(59, 130, 246, 0.06)', 'rgba(59, 130, 246, 0.08)']
+        }
+      },
+      axisLine: {
+        lineStyle: { color: '#e2e8f0' }
+      },
+      splitLine: {
+        lineStyle: { color: '#e2e8f0' }
+      }
+    },
+    series: [
+      {
+        type: 'radar',
+        data: [
+          {
+            value: [
+              radarData.value.compliance,
+              radarData.value.performance,
+              radarData.value.security,
+              radarData.value.fixImplementation
+            ],
+            name: t('projectDetail.chart.dimensionScore'),
+            areaStyle: {
+              color: 'rgba(59, 130, 246, 0.2)'
+            },
+            lineStyle: {
+              color: '#3b82f6',
+              width: 2
+            },
+            itemStyle: {
+              color: '#3b82f6'
+            }
+          }
+        ]
+      }
+    ]
+  }
+  radarChart.setOption(option)
+}
+
+// 更新失分饼图
+const updateLoseScoreChart = () => {
+  if (!loseScoreChart) return
+  const option: echarts.EChartsOption = {
+    tooltip: {
+      trigger: 'item',
+      formatter: `{b}: {c}${t('projectDetail.chart.pointUnit')} ({d}%)`
+    },
+    legend: {
+      orient: 'horizontal',
+      bottom: 0,
+      left: 'center',
+      itemWidth: 10,
+      itemHeight: 10,
+      textStyle: {
+        color: '#64748b',
+        fontSize: 11
+      },
+      itemGap: 12
+    },
+    color: ['#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'],
+    series: [
+      {
+        name: t('projectDetail.chart.loseScore'),
+        type: 'pie',
+        radius: ['45%', '70%'],
+        center: ['50%', '45%'],
+        avoidLabelOverlap: false,
+        itemStyle: {
+          borderRadius: 4,
+          borderColor: '#fff',
+          borderWidth: 2
+        },
+        label: {
+          show: false
+        },
+        emphasis: {
+          label: {
+            show: true,
+            fontSize: 12,
+            fontWeight: 'bold'
+          }
+        },
+        data: [
+          { value: loseScoreData.value.securityDeduction, name: t('projectDetail.chart.securityDeduction') },
+          { value: loseScoreData.value.performanceDeduction, name: t('projectDetail.chart.performanceDeduction') },
+          { value: loseScoreData.value.qualityDeduction, name: t('projectDetail.chart.qualityDeduction') },
+          { value: loseScoreData.value.otherDeduction, name: t('projectDetail.chart.otherDeduction') }
+        ]
+      }
+    ]
+  }
+  loseScoreChart.setOption(option)
+}
+
+const toNumber = (value?: number | string | null) => {
+  const numeric = Number(value ?? 0)
+  return Number.isFinite(numeric) ? numeric : 0
+}
+
+const toPercent = (value?: number | string | null) => {
+  return Math.max(0, Math.min(100, Number(toNumber(value).toFixed(2))))
+}
+
+const scoreByIssueRate = (count: number, total: number) => {
+  if (total <= 0) {
+    return 100
+  }
+  return Math.max(0, Math.min(100, Number((100 - (count * 100 / total)).toFixed(2))))
+}
+
+const getSqlTypeLabel = (sqlType?: string) => {
+  switch ((sqlType || '').toUpperCase()) {
+    case 'SELECT':
+      return t('projectDetail.chart.selectSql')
+    case 'INSERT':
+      return t('projectDetail.chart.insertSql')
+    case 'UPDATE':
+      return t('projectDetail.chart.updateSql')
+    case 'DELETE':
+      return t('projectDetail.chart.deleteSql')
+    default:
+      return sqlType || t('projectDetail.chart.otherSql')
+  }
+}
+
+const formatTrendVersionLabel = (item: { operationTime?: string, ref?: string, commitId?: string, versionId?: number }) => {
+  if (item.operationTime) {
+    const parsed = new Date(item.operationTime)
+    if (!Number.isNaN(parsed.getTime())) {
+      return parsed.toLocaleString(locale.value)
+    }
+    return item.operationTime
+  }
+  return item.versionId ? `#${item.versionId}` : '-'
+}
+
+const updateOverviewCharts = async () => {
+  await nextTick()
+  updatePieChart()
+  updateLineChart()
+  updateRadarChart()
+  updateLoseScoreChart()
+}
+
+const loadProjectOverview = async () => {
+  overviewLoading.value = true
+  try {
+    const [sqlOverview, issueCategories, rectificationRate, issueSqlRate, scoreOverview, sqlQualityTrend] = await Promise.all([
+      getProjectOverviewSql(projectId),
+      getProjectOverviewIssueCategories(projectId),
+      getProjectOverviewIssueRectificationRate(projectId),
+      getProjectOverviewIssueSqlRate(projectId),
+      getProjectOverviewScore(projectId),
+      getProjectOverviewSqlQualityTrend(projectId)
+    ])
+
+    const totalSqlCount = scoreOverview.totalSqlCount || issueSqlRate.latestTotalSqlCount || sqlOverview.totalSqlCount || 0
+    const issueRate = toPercent(issueSqlRate.issueSqlRate)
+    const healthRate = toPercent(100 - issueRate)
+    const issueRateTrend = issueSqlRate.trend === 'UP'
+      ? toPercent(issueSqlRate.increaseRate)
+      : issueSqlRate.trend === 'DOWN'
+        ? -toPercent(issueSqlRate.decreaseRate)
+        : 0
+    const healthTrend = issueSqlRate.trend === 'DOWN'
+      ? toPercent(issueSqlRate.decreaseRate)
+      : issueSqlRate.trend === 'UP'
+        ? -toPercent(issueSqlRate.increaseRate)
+        : 0
+    const fixTrend = rectificationRate.trend === 'DOWN'
+      ? toPercent(rectificationRate.decreaseRate)
+      : rectificationRate.trend === 'UP'
+        ? -toPercent(rectificationRate.increaseRate)
+        : 0
+
+    projectScore.value = {
+      score: scoreOverview.score ?? 0,
+      rating: scoreOverview.rating || 'D',
+      complianceRate: healthRate,
+      complianceTrend: healthTrend,
+      slowSqlRate: issueRate,
+      slowSqlTrend: issueRateTrend,
+      fixRate: toPercent(rectificationRate.rectificationRate),
+      fixTrend
+    }
+
+    radarData.value = {
+      compliance: healthRate,
+      performance: scoreByIssueRate(issueCategories.performanceSqlCount || 0, totalSqlCount),
+      security: scoreByIssueRate(issueCategories.securitySqlCount || 0, totalSqlCount),
+      fixImplementation: toPercent(rectificationRate.rectificationRate)
+    }
+
+    loseScoreData.value = {
+      securityDeduction: (issueCategories.securitySqlCount || 0) * 4,
+      performanceDeduction: (issueCategories.performanceSqlCount || 0) * 3,
+      qualityDeduction: (issueCategories.qualitySqlCount || 0) * 2,
+      otherDeduction: issueCategories.otherSqlCount || 0
+    }
+
+    sqlTypeStats.value = (sqlOverview.typeCounts || []).map(item => ({
+      name: getSqlTypeLabel(item.sqlType),
+      value: item.count || 0
+    }))
+
+    const trendItems = sqlQualityTrend.items || []
+    trendData.value = {
+      versions: trendItems.map(formatTrendVersionLabel),
+      total: trendItems.map(item => item.totalSqlCount || 0),
+      critical: trendItems.map(item => item.criticalSqlCount || 0),
+      high: trendItems.map(item => item.highSqlCount || 0),
+      warning: trendItems.map(item => item.warningSqlCount || 0)
+    }
+
+    await updateOverviewCharts()
+  } catch {
+    ElMessage.error(t('dashboard.loadError'))
+  } finally {
+    overviewLoading.value = false
+  }
+}
+</script>
+
+<style lang="scss" scoped>
+.project-detail {
+  padding: 0px;
+}
+
+.top-menu {
+  background: #fff;
+  border-bottom: 1px solid #e2e8f0;
+  margin-bottom: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-right: 16px;
+
+  .main-tabs {
+    :deep(.el-tabs__header) {
+      margin: 0;
+      padding: 0 16px;
+    }
+
+    :deep(.el-tabs__nav-wrap::after) {
+      display: none;
+    }
+
+    :deep(.el-tabs__item) {
+      font-size: 15px;
+      height: 48px;
+      line-height: 48px;
+    }
+  }
+
+  .top-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+
+    .top-action-btn {
+      padding: 8px;
+      color: #64748b;
+
+      .el-icon {
+        font-size: 18px;
+      }
+
+      &:hover {
+        color: #3b82f6;
+      }
+    }
+  }
+}
+
+.overview-layout {
+  display: flex;
+  gap: 16px;
+}
+
+.left-panel {
+  flex: 1;
+  min-width: 0;
+
+  .detail-card {
+    margin-bottom: 0;
+
+    :deep(.el-card) {
+      border-radius: 0 !important;
+    }
+
+    :deep(.el-card__header) {
+      border-radius: 0;
+    }
+
+    :deep(.el-card__body) {
+      border-radius: 0;
+    }
+  }
+
+  .status-card {
+    margin-bottom: 16px;
+
+    :deep(.el-card__body) {
+      padding: 20px 16px;
+    }
+
+    .status-card-content {
+      display: flex;
+      align-items: flex-start;
+      gap: 16px;
+      min-width: 0;
+    }
+
+    .execution-toggle {
+      width: 36px;
+      height: 36px;
+      border: 0;
+      border-radius: 50%;
+      background: #ecfdf5;
+      color: #10b981;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      cursor: pointer;
+      transition: all 0.18s ease;
+
+      .el-icon {
+        font-size: 18px;
+      }
+
+      &:hover {
+        background: #d1fae5;
+        color: #059669;
+      }
+
+      &:disabled {
+        cursor: not-allowed;
+        opacity: 0.6;
+      }
+
+      &.is-running {
+        background: #fef2f2;
+        color: #ef4444;
+
+        &:hover {
+          background: #fee2e2;
+          color: #dc2626;
+        }
+      }
+    }
+
+    :deep(.execution-steps) {
+      flex: 1;
+      min-width: 0;
+    }
+  }
+
+  .version-list-card {
+    :deep(.el-card__body) {
+      padding: 16px;
+    }
+
+    .version-list-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+
+      .refresh-btn {
+        padding: 4px;
+        color: #64748b;
+
+        &:hover {
+          color: #3b82f6;
+        }
+
+        .el-icon {
+          font-size: 16px;
+        }
+      }
+    }
+
+    .version-actions {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      white-space: nowrap;
+    }
+
+    .version-action-text {
+      color: inherit;
+      cursor: pointer;
+      font: inherit;
+      font-weight: inherit;
+      line-height: inherit;
+    }
+  }
+}
+
+.right-panel {
+  width: 860px;
+  flex-shrink: 0;
+
+  .metrics-cards {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+    margin-bottom: 16px;
+
+    .metric-card {
+      .metric-content {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        padding: 8px 0;
+
+        .metric-label {
+          font-size: 12px;
+          color: #64748b;
+          margin-bottom: 6px;
+        }
+
+        .metric-value {
+          font-size: 26px;
+          font-weight: 700;
+          color: #1e293b;
+          line-height: 1.2;
+
+          .metric-unit {
+            font-size: 14px;
+            font-weight: 500;
+            margin-left: 2px;
+          }
+
+          &.warning {
+            color: #f59e0b;
+          }
+
+          &.success {
+            color: #10b981;
+          }
+        }
+
+        .metric-trend {
+          display: flex;
+          align-items: center;
+          gap: 2px;
+          font-size: 11px;
+          margin-top: 4px;
+
+          .el-icon {
+            font-size: 12px;
+          }
+
+          &.up {
+            color: #10b981;
+          }
+
+          &.down {
+            color: #ef4444;
+          }
+        }
+      }
+
+      :deep(.el-card__body) {
+        padding: 12px;
+      }
+    }
+
+    .rating-card {
+      .metric-content {
+        position: relative;
+
+        .score-value {
+          font-size: 32px;
+        }
+
+        .rating-badge {
+          position: absolute;
+          top: 0;
+          right: 0;
+          width: 28px;
+          height: 28px;
+          border-radius: 6px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-size: 14px;
+          font-weight: 700;
+          color: #fff;
+
+          &.rating-s {
+            background: linear-gradient(135deg, #10b981, #059669);
+          }
+
+          &.rating-a {
+            background: linear-gradient(135deg, #22c55e, #16a34a);
+          }
+
+          &.rating-b {
+            background: linear-gradient(135deg, #3b82f6, #2563eb);
+          }
+
+          &.rating-c {
+            background: linear-gradient(135deg, #f59e0b, #d97706);
+          }
+
+          &.rating-d {
+            background: linear-gradient(135deg, #ef4444, #dc2626);
+          }
+        }
+      }
+    }
+  }
+
+  .charts-row {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 12px;
+    margin-bottom: 16px;
+
+    &.single-chart-row,
+    &.trend-row {
+      grid-template-columns: 1fr;
+    }
+
+    &:last-child {
+      margin-bottom: 0;
+    }
+  }
+
+  .chart-card {
+    margin-bottom: 0;
+
+    &.radar-card,
+    &.pie-card {
+      .chart {
+        height: 200px;
+      }
+    }
+
+    &.trend-card {
+      .chart {
+        height: 320px;
+      }
+    }
+
+    :deep(.el-card__body) {
+      padding: 16px;
+    }
+
+    .chart {
+      width: 100%;
+      height: 200px;
+    }
+  }
+}
+
+.content-page {
+  .el-card {
+    min-height: 400px;
+
+    :deep(.el-card__body) {
+      min-height: 300px;
+      padding: 16px;
+    }
+  }
+
+  .rule-filters {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+
+    :deep(.el-input) {
+      width: 220px;
+    }
+
+    :deep(.el-icon) {
+      color: #94a3b8;
+    }
+  }
+
+  .rule-filter-select {
+    width: 150px;
+  }
+
+  .rules-table {
+    width: 100%;
+  }
+
+  .rules-pagination,
+  .whitelist-pagination {
+    display: flex;
+    justify-content: flex-end;
+    padding-top: 16px;
+  }
+
+  @media (max-width: 900px) {
+    .rule-filters {
+      align-items: stretch;
+      flex-direction: column;
+
+      :deep(.el-input),
+      .rule-filter-select,
+      .el-button {
+        width: 100%;
+      }
+    }
+  }
+}
+
+.whitelist-page {
+  .whitelist-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 14px;
+  }
+
+  .whitelist-summary {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  .whitelist-count {
+    color: #94a3b8;
+    font-size: 13px;
+  }
+
+  .whitelist-table {
+    width: 100%;
+  }
+}
+
+.project-sql-page {
+  .project-sql-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 14px;
+  }
+
+  .project-sql-summary {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    min-width: 0;
+    color: #64748b;
+    font-size: 13px;
+
+    strong {
+      color: #1e293b;
+      font-weight: 600;
+      word-break: break-all;
+    }
+  }
+
+  .project-sql-count {
+    color: #94a3b8;
+  }
+
+  .project-sql-table {
+    width: 100%;
+  }
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+
+  .project-name {
+    flex: 1;
+    font-size: 18px;
+    font-weight: 600;
+    color: #1e293b;
+  }
+
+  .pull-btn {
+    padding: 4px;
+    color: #64748b;
+
+    .el-icon {
+      font-size: 18px;
+    }
+
+    &:hover {
+      color: #3b82f6;
+    }
+  }
+
+  .section-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: #1e293b;
+  }
+
+}
+
+.info-list {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.info-item {
+  display: flex;
+  align-items: flex-start;
+
+  .info-label {
+    width: 80px;
+    flex-shrink: 0;
+    font-size: 14px;
+    color: #64748b;
+  }
+
+  .info-value {
+    flex: 1;
+    font-size: 14px;
+    color: #1e293b;
+    word-break: break-all;
+
+    &.git-url {
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 13px;
+      color: #3b82f6;
+      background: #f1f5f9;
+      padding: 8px 12px;
+      border-radius: 6px;
+    }
+  }
+}
+
+.credential-info {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+
+  .credential-name {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    color: #3b82f6;
+    cursor: pointer;
+
+    &:hover {
+      color: #2563eb;
+
+      .credential-action {
+        text-decoration: underline;
+      }
+    }
+
+    .el-icon {
+      color: #64748b;
+    }
+  }
+
+  .credential-detail {
+    color: #94a3b8;
+    font-size: 12px;
+  }
+
+  .no-credential {
+    color: #64748b;
+    cursor: pointer;
+
+    &:hover {
+      color: #3b82f6;
+
+      .credential-action {
+        text-decoration: underline;
+      }
+    }
+  }
+
+  .credential-action {
+    color: #94a3b8;
+    font-size: 13px;
+    margin-left: 2px;
+  }
+}
+
+.credential-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 12px;
+
+  .credential-option-detail {
+    color: #94a3b8;
+    font-size: 12px;
+  }
+}
+
+.globe-icon {
+  width: 16px;
+  height: 16px;
+  vertical-align: middle;
+  margin-right: 6px;
+  color: #64748b;
+}
+</style>

@@ -1,0 +1,443 @@
+// ============================================
+// JSQLint Admin Theme - Design System Tokens
+// ============================================
+
+// Primary Colors
+@use "sass:color";
+
+$primary-color: #3b82f6;
+$primary-hover: #2563eb;
+$primary-light: #dbeafe;
+
+// Success Colors
+$success-color: #10b981;
+$success-light: #d1fae5;
+
+// Warning Colors
+$warning-color: #f59e0b;
+$warning-light: #fef3c7;
+
+// Danger Colors
+$danger-color: #ef4444;
+$danger-light: #fee2e2;
+
+// Background Colors
+$bg-page: #f4f6f9;
+$bg-card: #ffffff;
+$bg-sidebar: #1e293b;
+$bg-sidebar-active: rgba(59, 130, 246, 0.15);
+$bg-header: #ffffff;
+
+// Text Colors
+$text-primary: #1e293b;
+$text-secondary: #64748b;
+$text-placeholder: #94a3b8;
+$text-sidebar: #94a3b8;
+$text-sidebar-active: #ffffff;
+$text-inverse: #ffffff;
+
+// Border Colors
+$border-color: #e2e8f0;
+$border-light: #f1f5f9;
+
+// Shadow
+$shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+$shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+$shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+$shadow-card: 0 1px 3px rgba(0, 0, 0, 0.05);
+
+// Border Radius
+$radius-sm: 6px;
+$radius-md: 8px;
+$radius-lg: 12px;
+$radius-xl: 16px;
+
+// Spacing
+$spacing-xs: 4px;
+$spacing-sm: 8px;
+$spacing-md: 16px;
+$spacing-lg: 24px;
+$spacing-xl: 32px;
+
+// Layout
+$sidebar-width: 240px;
+$sidebar-collapsed-width: 72px;
+$header-height: 64px;
+
+// Transitions
+$transition-fast: 0.15s ease;
+$transition-base: 0.2s ease;
+$transition-slow: 0.3s ease;
+
+// ============================================
+// Global Reset & Base Styles
+// ============================================
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#app {
+  height: 100%;
+}
+
+// ============================================
+// Element Plus Theme Overrides
+// ============================================
+
+// Card
+.el-card {
+  border: none !important;
+  border-radius: $radius-lg !important;
+  box-shadow: $shadow-card !important;
+  transition: box-shadow $transition-base !important;
+
+  &:hover {
+    box-shadow: $shadow-md !important;
+  }
+
+  .el-card__header {
+    padding: $spacing-md $spacing-lg !important;
+    border-bottom: 1px solid $border-light !important;
+    font-weight: 600 !important;
+    color: $text-primary !important;
+  }
+
+  .el-card__body {
+    padding: $spacing-lg !important;
+  }
+}
+
+// ProjectDetailView 页面中的卡片无圆角
+.project-detail {
+  .el-card,
+  .el-card.is-bordered {
+    border-radius: 0 !important;
+  }
+}
+
+// Button
+.el-button {
+  border-radius: $radius-md !important;
+  font-weight: 500 !important;
+  transition: all $transition-fast !important;
+
+  &--primary {
+    background: $primary-color !important;
+    border-color: $primary-color !important;
+
+    &:hover {
+      background: $primary-hover !important;
+      border-color: $primary-hover !important;
+    }
+  }
+}
+
+// Input
+.el-input {
+  .el-input__wrapper {
+    border-radius: $radius-md !important;
+    box-shadow: 0 0 0 1px $border-color !important;
+    transition: all $transition-fast !important;
+    padding: 12px 16px !important;
+
+    &:hover {
+      box-shadow: 0 0 0 1px #cbd5e1 !important;
+    }
+
+    &.is-focus {
+      box-shadow: 0 0 0 2px rgba($primary-color, 0.3) !important;
+    }
+  }
+}
+
+// Select
+.el-select {
+  .el-select__wrapper {
+    border-radius: $radius-md !important;
+    min-height: 40px !important;
+  }
+}
+
+// Form
+.el-form-item__label {
+  color: $text-secondary !important;
+  font-weight: 500 !important;
+}
+
+.el-form-item__error {
+  font-size: 12px !important;
+}
+
+// Table
+.el-table {
+  --el-table-border-color: #{$border-light};
+  --el-table-header-bg-color: #{$bg-page};
+  border-radius: $radius-md !important;
+  overflow: hidden !important;
+
+  th.el-table__cell {
+    font-weight: 600 !important;
+    color: $text-secondary !important;
+    font-size: 13px !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.5px !important;
+  }
+
+  td.el-table__cell {
+    padding: 16px 0 !important;
+  }
+
+  tr:hover > td.el-table__cell {
+    background: $bg-page !important;
+  }
+}
+
+// Dialog
+.el-dialog {
+  border-radius: $radius-xl !important;
+
+  .el-dialog__header {
+    padding: $spacing-lg $spacing-lg $spacing-md !important;
+    border-bottom: 1px solid $border-light !important;
+    margin: 0 !important;
+  }
+
+  .el-dialog__body {
+    padding: $spacing-lg !important;
+  }
+
+  .el-dialog__footer {
+    padding: $spacing-md $spacing-lg !important;
+    border-top: 1px solid $border-light !important;
+  }
+}
+
+// Tag
+.el-tag {
+  border-radius: $radius-sm !important;
+  font-weight: 500 !important;
+}
+
+// Dropdown
+.el-dropdown-menu {
+  border-radius: $radius-lg !important;
+  box-shadow: $shadow-lg !important;
+  border: none !important;
+  padding: $spacing-sm !important;
+
+  .el-dropdown-menu__item {
+    border-radius: $radius-sm !important;
+    margin: 2px 0 !important;
+    padding: 8px 12px !important;
+
+    &:hover {
+      background: $bg-page !important;
+    }
+  }
+}
+
+// Message
+.el-message {
+  border-radius: $radius-lg !important;
+  box-shadow: $shadow-lg !important;
+}
+
+// ============================================
+// Utility Classes
+// ============================================
+
+.text-primary {
+  color: $text-primary;
+}
+
+.text-secondary {
+  color: $text-secondary;
+}
+
+.text-success {
+  color: $success-color;
+}
+
+.text-warning {
+  color: $warning-color;
+}
+
+.text-danger {
+  color: $danger-color;
+}
+
+.bg-page {
+  background: $bg-page;
+}
+
+.mt-sm { margin-top: $spacing-sm; }
+.mt-md { margin-top: $spacing-md; }
+.mt-lg { margin-top: $spacing-lg; }
+
+.mb-sm { margin-bottom: $spacing-sm; }
+.mb-md { margin-bottom: $spacing-md; }
+.mb-lg { margin-bottom: $spacing-lg; }
+
+// ============================================
+// 列表筛选工具条
+// ============================================
+.filter-toolbar {
+  --filter-control-height: 36px;
+
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: $spacing-md;
+  padding: 12px $spacing-md;
+  margin-bottom: $spacing-md;
+  background: #f8fafc;
+  border: 1px solid $border-color;
+  border-radius: $radius-md;
+
+  .filter-form,
+  .rule-filters {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .el-form--inline {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px 12px;
+
+    .el-form-item {
+      margin-right: 0;
+      margin-bottom: 0;
+    }
+  }
+
+  .el-form-item__label {
+    padding: 0 8px 0 0 !important;
+    height: var(--filter-control-height) !important;
+    line-height: var(--filter-control-height) !important;
+  }
+
+  .el-form-item__content {
+    min-height: var(--filter-control-height) !important;
+    align-items: center;
+  }
+
+  .el-input {
+    .el-input__wrapper {
+      height: var(--filter-control-height) !important;
+      min-height: var(--filter-control-height) !important;
+      padding: 0 12px !important;
+    }
+  }
+
+  .el-select {
+    .el-select__wrapper {
+      height: var(--filter-control-height) !important;
+      min-height: var(--filter-control-height) !important;
+      padding: 4px 12px !important;
+    }
+  }
+
+  .el-button {
+    height: var(--filter-control-height) !important;
+    padding: 0 16px !important;
+  }
+
+  .el-radio-group {
+    height: var(--filter-control-height);
+
+    .el-radio-button__inner {
+      height: var(--filter-control-height) !important;
+      line-height: calc(var(--filter-control-height) - 2px) !important;
+      padding: 0 14px !important;
+    }
+  }
+
+  &__actions,
+  &__meta {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+    gap: $spacing-sm;
+  }
+
+  &__meta {
+    color: $text-secondary;
+    font-size: 14px;
+    white-space: nowrap;
+  }
+}
+
+@media (max-width: 900px) {
+  .filter-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+
+    &__actions,
+    &__meta {
+      justify-content: flex-start;
+      flex-wrap: wrap;
+    }
+  }
+}
+
+// ============================================
+// 表格操作按钮
+// ============================================
+.action-btn {
+  color: $primary-color;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1;
+  transition: color 0.15s ease;
+  margin: 0 6px;
+  white-space: nowrap;
+
+  &:hover {
+    color: $primary-hover;
+  }
+
+  &--success {
+    color: $success-color;
+
+    &:hover {
+      color: color.adjust($success-color, $lightness: -10%);
+    }
+  }
+
+  &--warning {
+    color: $warning-color;
+
+    &:hover {
+      color: color.adjust($warning-color, $lightness: -10%);
+    }
+  }
+
+  &--info {
+    color: $text-secondary;
+
+    &:hover {
+      color: $text-primary;
+    }
+  }
+
+  &--danger {
+    color: $danger-color;
+
+    &:hover {
+      color: color.adjust($danger-color, $lightness: -10%);
+    }
+  }
+}

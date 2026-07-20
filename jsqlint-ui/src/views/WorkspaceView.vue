@@ -1,0 +1,157 @@
+<template>
+  <div class="workspace">
+    <el-row :gutter="20">
+      <el-col :span="24">
+        <el-card>
+          <template #header>
+            <div class="card-header">
+              <span>{{ t('layout.appName') }}</span>
+            </div>
+          </template>
+          <div class="workspace-content">
+            <el-row :gutter="20">
+              <el-col :span="6">
+                <div class="quick-access" @click="navigateTo('/workspace/projects')">
+                  <el-icon class="icon"><Collection /></el-icon>
+                  <span class="text">项目管理</span>
+                </div>
+              </el-col>
+              <el-col :span="6">
+                <div class="quick-access" @click="navigateTo('/workspace/inspection')">
+                  <el-icon class="icon"><Monitor /></el-icon>
+                  <span class="text">自动巡检</span>
+                </div>
+              </el-col>
+              <el-col :span="6">
+                <div class="quick-access" @click="navigateTo('/workspace/alert')">
+                  <el-icon class="icon"><Bell /></el-icon>
+                  <span class="text">告警配置</span>
+                </div>
+              </el-col>
+              <el-col :span="6" v-if="userInfo.role === 'ROLE_ADMIN'">
+                <div class="quick-access" @click="navigateTo('/users')">
+                  <el-icon class="icon"><Setting /></el-icon>
+                  <span class="text">系统管理</span>
+                </div>
+              </el-col>
+            </el-row>
+          </div>
+        </el-card>
+      </el-col>
+    </el-row>
+
+    <el-row :gutter="20" style="margin-top: 20px;">
+      <el-col :span="12">
+        <el-card>
+          <template #header>
+            <span>最近活动</span>
+          </template>
+          <el-empty description="暂无最近活动" />
+        </el-card>
+      </el-col>
+      <el-col :span="12">
+        <el-card>
+          <template #header>
+            <span>系统状态</span>
+          </template>
+          <div class="status-list">
+            <div class="status-item">
+              <span class="label">服务状态</span>
+              <el-tag type="success">正常</el-tag>
+            </div>
+            <div class="status-item">
+              <span class="label">数据库连接</span>
+              <el-tag type="success">已连接</el-tag>
+            </div>
+            <div class="status-item">
+              <span class="label">扫描引擎</span>
+              <el-tag type="success">就绪</el-tag>
+            </div>
+          </div>
+        </el-card>
+      </el-col>
+    </el-row>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed } from 'vue'
+import { useRouter } from 'vue-router'
+import { useI18n } from 'vue-i18n'
+import { Collection, Monitor, Bell, Setting } from '@element-plus/icons-vue'
+import { useUserStore } from '@/stores/user'
+
+const router = useRouter()
+const userStore = useUserStore()
+const { t } = useI18n()
+
+const userInfo = computed(() => ({
+  username: userStore.username,
+  realName: userStore.realName,
+  role: userStore.role,
+  roleDescription: userStore.roleDescription
+}))
+
+const navigateTo = (path: string) => {
+  router.push(path)
+}
+</script>
+
+<style lang="scss" scoped>
+.workspace {
+  .card-header {
+    font-weight: 600;
+  }
+
+  .workspace-content {
+    padding: 20px 0;
+  }
+
+  .quick-access {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 30px;
+    background: #fff;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.3s;
+    border: 1px solid #ebeef5;
+
+    &:hover {
+      box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
+      transform: translateY(-2px);
+    }
+
+    .icon {
+      font-size: 36px;
+      color: #409eff;
+      margin-bottom: 12px;
+    }
+
+    .text {
+      font-size: 16px;
+      color: #303133;
+    }
+  }
+
+  .status-list {
+    .status-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 12px 0;
+      border-bottom: 1px solid #ebeef5;
+
+      &:last-child {
+        border-bottom: none;
+      }
+
+      .label {
+        color: #606266;
+      }
+    }
+  }
+}
+</style>
