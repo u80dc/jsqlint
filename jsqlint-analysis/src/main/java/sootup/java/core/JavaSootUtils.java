@@ -66,6 +66,13 @@ public class JavaSootUtils {
         return hasAnnotation(annotations, targets);
     }
 
+    /**
+     * 判断指定注解集中是否有指定的注解
+     *
+     * @param annotations  注解集合
+     * @param targets 注解名称
+     * @return 包含指定注解时返回true，否则返回false
+     */
     public static boolean hasAnnotation(Iterable<AnnotationUsage> annotations, Collection<String> targets) {
         for (AnnotationUsage au : annotations) {
             ClassType annotation = au.getAnnotation();

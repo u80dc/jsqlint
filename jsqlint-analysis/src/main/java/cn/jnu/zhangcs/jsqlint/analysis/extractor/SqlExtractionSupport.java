@@ -27,6 +27,15 @@ import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
+/**
+ * SQL 提取通用工具集
+ * <p>
+ * 为各 {@link SqlExtractor} 提供共用的提取与构造能力，包括调用点扫描、SQL 值解析、
+ * 语句构造、语句类型识别、注解取值、诊断信息聚合等。所有方法均为静态，不可实例化。
+ * </p>
+ *
+ * @author zhangcs
+ */
 public final class SqlExtractionSupport {
 
     private static final ValueModelStringResolver STRING_VALUE_RESOLVER = new ValueModelStringResolver();
@@ -34,6 +43,17 @@ public final class SqlExtractionSupport {
     private SqlExtractionSupport() {
     }
 
+    /**
+     * 扫描应用类中所有匹配 {@code targetMatcher} 的调用点，提取对应的 SQL 语句。
+     * <p>
+     * 仅处理应用类（{@link SootClass#isApplicationClass()}），遍历其每个方法的语句，
+     * 借助 {@code targetMatcher} 判断调用是否为目标 SQL 调用点。
+     * </p>
+     *
+     * @param context       共享分析上下文
+     * @param targetMatcher 方法签名到 SQL 调用目标的匹配器
+     * @return 提取结果
+     */
     public static SqlExtractionResult extractCallSites(
             SqlExtractorContext context,
             Function<MethodSignature, Optional<SqlCallTarget>> targetMatcher) {
@@ -47,6 +67,13 @@ public final class SqlExtractionSupport {
         return new SqlExtractionResult(statements, List.of());
     }
 
+    /**
+     * 扫描单个方法中的语句，提取匹配目标调用点的 SQL 语句。
+     *
+     * @param method        当前方法
+     * @param targetMatcher 方法签名到 SQL 调用目标的匹配器
+     * @param statements    用于收集提取结果
+     */
     private static void extractCallSites(
             SootMethod method,
             Function<MethodSignature, Optional<SqlCallTarget>> targetMatcher,
@@ -98,6 +125,12 @@ public final class SqlExtractionSupport {
         }
     }
 
+    /**
+     * 提取语句中的调用表达式。仅处理 {@link JAssignStmt}（赋值型调用）与 {@link JInvokeStmt}（直接调用）。
+     *
+     * @param stmt 语句
+     * @return 调用表达式；非调用语句返回 {@link Optional#empty()}
+     */
     public static Optional<AbstractInvokeExpr> invokeOf(Stmt stmt) {
         if (stmt instanceof JAssignStmt assign) {
             return assign.getInvokeExpr();
@@ -108,6 +141,19 @@ public final class SqlExtractionSupport {
         return Optional.empty();
     }
 
+    /**
+     * 解析调用点指定位置的 SQL 参数值。
+     * <p>
+     * 先用 {@link ValueModelResolver} 求出参数值的数据流模型，再通过字符串解析器渲染为 SQL 文本，
+     * 同时记录该参数对应的 {@link MethodParameterRef}。
+     * </p>
+     *
+     * @param resolver         值模型解析器
+     * @param invoke           调用表达式
+     * @param sqlArgumentIndex SQL 文本所在的参数下标
+     * @param statementIndex   语句在方法中的下标
+     * @return 解析出的 SQL 值；无法解析返回 {@link Optional#empty()}
+     */
     public static Optional<SqlValue> resolveSqlValue(
             ValueModelResolver resolver,
             AbstractInvokeExpr invoke,
@@ -120,6 +166,21 @@ public final class SqlExtractionSupport {
                 .map(value -> new SqlValue(value.value(), model, value.diagnostics()));
     }
 
+    /**
+     * 根据调用点信息构造一条 SQL 语句。
+     * <p>
+     * 识别语句类型并构建 {@link SqlNode} 树，将调用点相关上下文（调用者、目标、语句下标、值模型）
+     * 写入元数据的扩展属性。无法识别或构建失败时返回 {@code null}。
+     * </p>
+     *
+     * @param method         调用所在方法
+     * @param stmt           调用语句
+     * @param statementIndex 语句下标
+     * @param invoke         调用表达式
+     * @param target         SQL 调用目标
+     * @param sqlValue       解析出的 SQL 值
+     * @return 构造出的 SQL 语句；无法识别返回 {@code null}
+     */
     public static SqlStatement buildCallSiteStatement(
             SootMethod method,
             Stmt stmt,
@@ -165,6 +226,18 @@ public final class SqlExtractionSupport {
                 metadata);
     }
 
+    /**
+     * 根据静态 SQL 文本构造一条 SQL 语句（适用于注解、资源等非调用点来源）。
+     *
+     * @param method      所属方法
+     * @param statementId 语句标识
+     * @param sourceType  来源类型
+     * @param rawSql      原始 SQL 文本
+     * @param sourceFile  源文件路径
+     * @param tags        自定义标签
+     * @param extra       扩展属性
+     * @return 构造出的 SQL 语句；文本为空或无法识别返回 {@code null}
+     */
     public static SqlStatement buildStaticStatement(
             SootMethod method,
             String statementId,
@@ -208,6 +281,16 @@ public final class SqlExtractionSupport {
                 metadata);
     }
 
+    /**
+     * 构造语句元数据。
+     *
+     * @param callDepth 调用链深度
+     * @param callers   调用者列表
+     * @param sqlNode   SQL 节点树（用于计算复杂度）
+     * @param tags      自定义标签
+     * @param extra     扩展属性
+     * @return 元数据
+     */
     public static AnalyzeResult.Metadata metadata(
             int callDepth,
             List<String> callers,
@@ -225,6 +308,13 @@ public final class SqlExtractionSupport {
                 .build();
     }
 
+    /**
+     * 根据方法签名构造来源位置。
+     *
+     * @param signature  方法签名
+     * @param sourceFile 源文件路径
+     * @return 来源位置
+     */
     public static SourceLocation sourceLocation(MethodSignature signature, String sourceFile) {
         String className = signature.getDeclClassType().getFullyQualifiedName();
         String methodName = signature.getName();
@@ -235,6 +325,12 @@ public final class SqlExtractionSupport {
         return SourceLocation.of(className, methodName, returnType, parameterTypes, sourceFile);
     }
 
+    /**
+     * 根据方法签名生成语句标识，格式为 {@code 类名.方法名(参数类型1,参数类型2)}。
+     *
+     * @param signature 方法签名
+     * @return 语句标识
+     */
     public static String statementId(MethodSignature signature) {
         String parameters = signature.getParameterTypes().stream()
                 .map(Object::toString)
@@ -244,6 +340,15 @@ public final class SqlExtractionSupport {
                 + "(" + parameters + ")";
     }
 
+    /**
+     * 为调用点生成语句标识，格式为 {@code 调用者签名#类别:目标方法名:语句下标}。
+     *
+     * @param caller         调用者方法签名
+     * @param kind           调用类别
+     * @param target         目标方法签名
+     * @param statementIndex 语句下标
+     * @return 调用点语句标识
+     */
     public static String callSiteStatementId(
             MethodSignature caller,
             String kind,
@@ -256,6 +361,12 @@ public final class SqlExtractionSupport {
                 + ":" + statementIndex;
     }
 
+    /**
+     * 根据 SQL 首关键字识别语句类型。
+     *
+     * @param sql SQL 文本
+     * @return 语句类型；无法识别返回 {@code null}
+     */
     public static StatementType detectStatementType(String sql) {
         if (sql == null) {
             return null;
@@ -279,6 +390,13 @@ public final class SqlExtractionSupport {
         };
     }
 
+    /**
+     * 收集参数推断结果与渲染 SQL 中的诊断信息。
+     *
+     * @param parameters 参数推断结果列表
+     * @param sqls       渲染后的 SQL 列表
+     * @return 去重后的诊断信息列表
+     */
     public static List<String> collectParameterDiagnostics(
             List<ParameterValueInferenceResult> parameters,
             List<SqlNodeRenderer.RenderedSql> sqls) {
@@ -299,6 +417,13 @@ public final class SqlExtractionSupport {
         return cleanDiagnostics(diagnostics);
     }
 
+    /**
+     * 合并 SQL 诊断信息与渲染 SQL 中携带的诊断信息。
+     *
+     * @param sqlDiagnostics 原始 SQL 诊断信息
+     * @param renderedSqls   渲染后的 SQL 列表
+     * @return 去重后的诊断信息列表
+     */
     public static List<String> collectSqlDiagnostics(
             List<String> sqlDiagnostics,
             List<SqlNodeRenderer.RenderedSql> renderedSqls) {
@@ -316,6 +441,13 @@ public final class SqlExtractionSupport {
         return cleanDiagnostics(diagnostics);
     }
 
+    /**
+     * 从注解中读取字符串属性值，支持 {@link StringConstant}、字符串数组（拼接）及纯字符串。
+     *
+     * @param annotation    注解
+     * @param attributeName 属性名
+     * @return 字符串属性值；不存在或为空返回 {@link Optional#empty()}
+     */
     public static Optional<String> stringAnnotationValue(AnnotationUsage annotation, String attributeName) {
         if (annotation == null || attributeName == null) {
             return Optional.empty();
@@ -338,6 +470,13 @@ public final class SqlExtractionSupport {
         return Optional.empty();
     }
 
+    /**
+     * 从注解中读取布尔属性值，兼容 {@link Boolean}、{@code true/false} 文本与 {@code 1/0}。
+     *
+     * @param annotation    注解
+     * @param attributeName 属性名
+     * @return 布尔属性值；无法识别返回 {@link Optional#empty()}
+     */
     public static Optional<Boolean> booleanAnnotationValue(AnnotationUsage annotation, String attributeName) {
         if (annotation == null || attributeName == null) {
             return Optional.empty();
@@ -360,6 +499,12 @@ public final class SqlExtractionSupport {
         return Optional.empty();
     }
 
+    /**
+     * 提取注解数组中单个元素的字符串表示，{@link StringConstant} 取其常量值。
+     *
+     * @param value 元素值
+     * @return 字符串表示；为 {@code null} 时返回 {@code null}
+     */
     private static String annotationValuePart(Object value) {
         if (value instanceof StringConstant stringConstant) {
             return stringConstant.getValue();
@@ -367,6 +512,12 @@ public final class SqlExtractionSupport {
         return value == null ? null : value.toString();
     }
 
+    /**
+     * 清洗诊断信息：去除空白项并去重。
+     *
+     * @param diagnostics 原始诊断信息
+     * @return 清洗后的诊断信息列表
+     */
     private static List<String> cleanDiagnostics(List<String> diagnostics) {
         return diagnostics.stream()
                 .filter(message -> message != null && !message.isBlank())
@@ -374,6 +525,16 @@ public final class SqlExtractionSupport {
                 .toList();
     }
 
+    /**
+     * 根据参数类型生成一个示例外部值（数值类型给 1、布尔给 true、其余给参数名）。
+     * <p>
+     * 用于在缺少实际值时为参数填充一个合理的占位值，便于后续渲染。
+     * </p>
+     *
+     * @param type 参数类型
+     * @param name 参数名
+     * @return 示例值
+     */
     private static Object sampleExternalValue(String type, String name) {
         return switch (type) {
             case "byte", "java.lang.Byte", "short", "java.lang.Short", "int", "java.lang.Integer" -> 1;
