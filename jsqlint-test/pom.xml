@@ -23,6 +23,11 @@
         </dependency>
         <dependency>
             <groupId>cn.jnu.zhangcs</groupId>
+            <artifactId>jsqlint-audit</artifactId>
+            <version>${revision}</version>
+        </dependency>
+        <dependency>
+            <groupId>cn.jnu.zhangcs</groupId>
             <artifactId>jsqlint-common</artifactId>
             <version>${revision}</version>
         </dependency>
