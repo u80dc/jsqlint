@@ -6,6 +6,8 @@ package cn.jnu.zhangcs.jsqlint.common.mvn;
  * @param groupId    组织
  * @param artifactId 名称
  * @param version    版本
+ *
+ * @author zhangcs
  */
 public record Dependency(String groupId, String artifactId, String version) {
     public String info() {
