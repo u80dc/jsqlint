@@ -43,15 +43,32 @@ public final class ProviderSqlAnalyzer {
 
     private final int maxCallDepth;
 
+    /**
+     * 创建使用默认最大调用深度（8）的实例。
+     *
+     * @param view SootUp 类视图
+     */
     public ProviderSqlAnalyzer(View view) {
         this(view, 8);
     }
 
+    /**
+     * 创建指定最大调用深度的实例。
+     *
+     * @param view         SootUp 类视图
+     * @param maxCallDepth 方法执行的最大递归深度
+     */
     public ProviderSqlAnalyzer(View view, int maxCallDepth) {
         this.view = Objects.requireNonNull(view, "view");
         this.maxCallDepth = maxCallDepth;
     }
 
+    /**
+     * 对目标 provider 方法做抽象执行，推断其返回的 SQL 脚本。
+     *
+     * @param targetMethod 目标方法签名
+     * @return 推断结果，包含 SQL 脚本与诊断信息
+     */
     public ProviderSqlStatement analyze(MethodSignature targetMethod) {
         List<String> diagnostics = new ArrayList<>();
         Optional<? extends SootMethod> method = view.getMethod(targetMethod);
@@ -69,6 +86,12 @@ public final class ProviderSqlAnalyzer {
         return new ProviderSqlStatement(targetMethod, inferred, diagnostics);
     }
 
+    /**
+     * 仅返回推断出的 SQL 脚本文本，不携带诊断信息。
+     *
+     * @param targetMethod 目标方法签名
+     * @return SQL 脚本，推断失败时可能为 null
+     */
     public String inferScript(MethodSignature targetMethod) {
         return analyze(targetMethod).sql();
     }
@@ -357,8 +380,8 @@ public final class ProviderSqlAnalyzer {
             List<String> diagnostics,
             int depth) {
 
-        // Each method execution owns a fresh state so nested provider constructors cannot
-        // leak locals into the caller while still sharing the target SQL builder object.
+        // 每次方法执行拥有独立状态，嵌套的 provider 构造器不会把局部变量
+        // 泄漏给调用方，但仍共享目标 SQL 构建器对象。
         if (depth > maxCallDepth || !method.hasBody()) {
             return UnknownValue.INSTANCE;
         }
@@ -393,8 +416,8 @@ public final class ProviderSqlAnalyzer {
             ExecutionState state,
             int depth) {
 
-        // Walk Jimple in source order. Structured if/else blocks are handled as a unit;
-        // unsupported backward branches are skipped rather than treated as real loops.
+        // 按源码顺序遍历 Jimple。结构化的 if/else 块作为整体处理；
+        // 不支持的后向分支直接跳过，而不当作真实循环。
         int i = start;
         while (i < end) {
             Stmt stmt = stmts.get(i);
@@ -436,9 +459,9 @@ public final class ProviderSqlAnalyzer {
             ExecutionState state,
             int depth) {
 
-        // javac lowers compound conditions such as "a != null && !a.isEmpty()" into a
-        // sequence of guards that jump to the same else target. Collapse those guards
-        // into one MyBatis <when test="..."> expression.
+        // javac 会把 "a != null && !a.isEmpty()" 这类复合条件降级为一串
+        // 跳转到同一 else 目标的卫语句。这里把这些卫语句折叠为一个
+        // MyBatis <when test="..."> 表达式。
         int targetIndex = firstTargetIndex(body, stmts, firstIf);
         if (targetIndex <= ifIndex || targetIndex > end) {
             state.diagnostics.add("Loop or unsupported backward branch skipped at statement " + ifIndex);
@@ -501,8 +524,8 @@ public final class ProviderSqlAnalyzer {
             ExecutionState state,
             int depth) {
 
-        // Fork the current execution state, run both branches, then merge SQL clauses
-        // and plain StringBuilder fragments newly added by each branch.
+        // 复制当前执行状态，分别执行两个分支，再合并各分支新增的
+        // SQL 子句与普通 StringBuilder 片段。
         Map<String, Integer> baseSizes = state.builderSizes();
         Map<String, Integer> textBaseSizes = state.textBuilderSizes();
         ExecutionState thenState = state.fork();
@@ -574,8 +597,8 @@ public final class ProviderSqlAnalyzer {
             List<SqlClause> thenAdded,
             List<SqlClause> elseAdded) {
 
-        // If both branches modify the same SQL clause type, put the dynamic tag at that
-        // exact clause position. Mixed clause types fall back to raw clause rendering.
+        // 当两个分支修改同一类 SQL 子句时，把动态标签放在该子句的确切位置；
+        // 子句类型混杂时回退为原始子句渲染。
         if (thenAdded.isEmpty() && elseAdded.isEmpty()) {
             return;
         }
@@ -624,8 +647,8 @@ public final class ProviderSqlAnalyzer {
 
     private void executeStatement(Stmt stmt, ExecutionState state, int depth) {
         if (stmt instanceof JIdentityStmt identity) {
-            // Identity statements bind "this" and method parameters to real local names
-            // when debug information is available.
+            // identity 语句在调试信息可用时，把 this 与方法参数绑定到
+            // 真实的局部变量名。
             String local = identity.getLeftOp().getName();
             Value right = identity.getRightOp();
             if (right instanceof JParameterRef parameterRef) {
@@ -772,8 +795,8 @@ public final class ProviderSqlAnalyzer {
                 return objectValue;
             }
 
-            // Anonymous SQL providers compile to: new Provider$1(...); invokespecial <init>;
-            // invokevirtual toString. Following the constructor recovers the initializer block.
+            // 匿名 SQL provider 编译为：new Provider$1(...); invokespecial <init>;
+            // invokevirtual toString。跟进构造器即可还原初始化块。
             if ("<init>".equals(methodName) && base instanceof ObjectValue objectValue) {
                 executeConstructor(signature, objectValue, invoke.getArgs(), state, depth);
                 return objectValue;
@@ -787,8 +810,8 @@ public final class ProviderSqlAnalyzer {
                 return base;
             }
 
-            // Treat MyBatis SQL builder methods as append-only operations on our own model
-            // instead of executing the runtime org.apache.ibatis.jdbc.SQL implementation.
+            // 将 MyBatis SQL 构建器方法视为对自有模型的追加操作，
+            // 而不是执行运行时的 org.apache.ibatis.jdbc.SQL 实现。
             if (SQL_METHODS.contains(methodName) && base instanceof ObjectValue objectValue) {
                 addSqlClause(objectValue.builder, methodName, invoke.getArgs(), state, depth);
                 return objectValue;
@@ -814,8 +837,8 @@ public final class ProviderSqlAnalyzer {
                 return base;
             }
             if ("collect".equals(methodName) && base instanceof StreamValue streamValue) {
-                // Recognize collection.stream().map(...).collect(joining(",")) as a MyBatis
-                // foreach loop. The mapper function is assumed to stringify each item.
+                // 将 collection.stream().map(...).collect(joining(",")) 识别为
+                // MyBatis 的 foreach 循环，假定 mapper 函数对每个元素做字符串化。
                 String separator = ",";
                 if (invoke.getArgCount() > 0) {
                     SqlValue collector = evaluate(invoke.getArg(0), state, depth);
@@ -920,8 +943,8 @@ public final class ProviderSqlAnalyzer {
             return new FragmentValue(new ConcatFragment(fragments));
         }
 
-        // Java 9+ string concatenation stores a recipe where \u0001 marks runtime
-        // arguments. Convert that recipe back into ordered SQL fragments.
+        // Java 9+ 的字符串拼接会存储一个 recipe，其中转义字符\u0001 标记运行期参数
+        // （\u0002 标记 bootstrap 常量）。这里把该 recipe 还原为有序的 SQL 片段。
         List<SqlFragment> fragments = new ArrayList<>();
         StringBuilder text = new StringBuilder();
         int argIndex = 0;
@@ -1129,8 +1152,8 @@ public final class ProviderSqlAnalyzer {
     private String renderSelect(SqlBuilder builder) {
         List<String> lines = new ArrayList<>();
 
-        // Render the normalized SQL builder model in stable clause order. Dynamic
-        // fragments remain nested at the clause where the original branch wrote them.
+        // 按固定的子句顺序渲染规整后的 SQL 构建器模型。动态片段仍嵌套在
+        // 原分支写入时的子句位置。
         List<SqlFragment> distinctSelects = collect(builder, ClauseKind.SELECT_DISTINCT);
         List<SqlFragment> selects = collect(builder, ClauseKind.SELECT);
         if (!distinctSelects.isEmpty()) {
@@ -1248,8 +1271,8 @@ public final class ProviderSqlAnalyzer {
             return;
         }
 
-        // Dynamic SET items need their separator inside the MyBatis tag; otherwise a
-        // disabled <if> can leave a dangling comma between rendered assignments.
+        // 动态 SET 项的分隔符必须放在 MyBatis 标签内部；否则被禁用的 <if>
+        // 会在渲染出的赋值之间留下悬空逗号。
         lines.add("SET ");
         for (int i = 0; i < fragments.size(); i++) {
             lines.add(renderSetFragment(fragments.get(i), i < fragments.size() - 1));
@@ -1618,8 +1641,8 @@ public final class ProviderSqlAnalyzer {
         SqlValue left = evaluate(condition.getOp1(), state, depth);
         SqlValue right = evaluate(condition.getOp2(), state, depth);
 
-        // Boolean-returning method calls compile as comparisons against zero. Convert
-        // those back to normal MyBatis test expressions such as !ids.isEmpty().
+        // 返回布尔值的方法调用会被编译为与 0 的比较。这里把它们还原为
+        // !ids.isEmpty() 这类常规的 MyBatis test 表达式。
         if (left instanceof PredicateValue predicateValue && isZero(right)) {
             if ("!=".equals(symbol)) {
                 return predicateValue.expression;
@@ -2031,8 +2054,8 @@ public final class ProviderSqlAnalyzer {
 
         private ExecutionState fork() {
             ExecutionState copy = new ExecutionState(view, diagnostics);
-            // Builders are copied by id so branch-local mutations can be diffed and then
-            // merged back into the original state as dynamic SQL fragments.
+            // 构建器按 id 复制，便于对分支内的修改做差异比较，再以动态
+            // SQL 片段的形式合并回原状态。
             Map<String, SqlBuilder> copiedBuilders = builders.entrySet().stream()
                     .collect(Collectors.toMap(Map.Entry::getKey, entry -> entry.getValue().copy(),
                             (left, right) -> left, LinkedHashMap::new));

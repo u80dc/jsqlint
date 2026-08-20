@@ -11,20 +11,40 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * Resolves a generic {@link ValueModel} to a string value without depending on a SQL framework.
+ * 将通用 {@link ValueModel} 解析为字符串值，不依赖任何 SQL 框架。
+ *
+ * <p>解析优先级：先尝试直接拼接模型中的字面量（如字符串常量、toString/valueOf 调用），
+ * 失败后再交给 {@link ParameterValueInferencer} 推断，并附带诊断信息。</p>
+ *
+ * @author zhangcs
  */
 public final class ValueModelStringResolver {
 
     private final ParameterValueInferencer inferencer;
 
+    /**
+     * 创建默认实例，使用内置的采样式外部值生成器。
+     */
     public ValueModelStringResolver() {
         this(new ParameterValueInferencer(ValueModelStringResolver::sampleExternalValue));
     }
 
+    /**
+     * 使用自定义推断器创建实例。
+     *
+     * @param inferencer 参数值推断器
+     */
     public ValueModelStringResolver(ParameterValueInferencer inferencer) {
         this.inferencer = Objects.requireNonNull(inferencer, "inferencer");
     }
 
+    /**
+     * 将值模型解析为字符串。
+     *
+     * @param model  值模型，允许为 null
+     * @param target 目标方法参数引用，用于构造推断上下文
+     * @return 解析出的字符串及诊断信息；无法解析时返回空
+     */
     public Optional<ResolvedString> resolve(ValueModel model, MethodParameterRef target) {
         Objects.requireNonNull(target, "target");
         Optional<String> rawString = rawString(model);
@@ -49,6 +69,15 @@ public final class ValueModelStringResolver {
         return Optional.empty();
     }
 
+    /**
+     * 直接从值模型提取字符串，不触发推断。
+     *
+     * <p>支持字面量、拼接、强转、外部参数采样、toString/valueOf 调用；
+     * 其余模型类型返回空。</p>
+     *
+     * @param model 值模型，允许为 null
+     * @return 可直接确定的字符串；无法确定时返回空
+     */
     public static Optional<String> rawString(ValueModel model) {
         if (model == null) {
             return Optional.empty();
@@ -68,6 +97,9 @@ public final class ValueModelStringResolver {
         };
     }
 
+    /**
+     * 拼接模型的各部分字符串，任一部分无法确定则整体失败。
+     */
     private static Optional<String> rawConcat(ValueModel.ConcatValue concat) {
         StringBuilder builder = new StringBuilder();
         for (ValueModel part : concat.parts()) {
@@ -80,6 +112,9 @@ public final class ValueModelStringResolver {
         return Optional.of(builder.toString());
     }
 
+    /**
+     * 处理 toString/valueOf 等可透明穿透的方法调用。
+     */
     private static Optional<String> rawInvoke(ValueModel.InvokeValue invoke) {
         String className = invoke.method().getDeclClassType().getFullyQualifiedName();
         String methodName = invoke.method().getName();
@@ -95,6 +130,9 @@ public final class ValueModelStringResolver {
         return Optional.empty();
     }
 
+    /**
+     * 为外部输入参数生成采样值：数值类型返回 1，布尔返回 true，其余返回参数名。
+     */
     private static Object sampleExternalValue(String type, String name) {
         return switch (type) {
             case "byte", "java.lang.Byte", "short", "java.lang.Short", "int", "java.lang.Integer" -> 1;
@@ -106,6 +144,12 @@ public final class ValueModelStringResolver {
         };
     }
 
+    /**
+     * 解析结果。
+     *
+     * @param value       解析出的字符串
+     * @param diagnostics 推断过程中的诊断信息
+     */
     public record ResolvedString(String value, List<String> diagnostics) {
 
         public ResolvedString {

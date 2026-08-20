@@ -25,23 +25,42 @@ public final class ValueModelResolver {
     private final List<Stmt> statements;
     private final Map<String, ValueModel.ParameterValue> parameterLocals;
 
+    /**
+     * 创建绑定指定方法的解析器。
+     *
+     * @param method 待解析的方法，需包含方法体
+     */
     public ValueModelResolver(SootMethod method) {
         this.method = method;
         this.statements = method.getBody().getStmts();
         this.parameterLocals = collectParameterLocals();
     }
 
+    /**
+     * 解析表达式在指定语句之前的取值模型（不含流转步骤）。
+     *
+     * @param value       待解析的 Jimple 表达式
+     * @param beforeIndex 语句下标，仅解析该语句之前的定义
+     * @return 取值模型
+     */
     public ValueModel resolve(Value value, int beforeIndex) {
         return resolveWithTrace(value, beforeIndex).value();
     }
 
+    /**
+     * 解析表达式在指定语句之前的取值模型，并附带从使用点到定义点的流转步骤。
+     *
+     * @param value       待解析的 Jimple 表达式
+     * @param beforeIndex 语句下标，仅解析该语句之前的定义
+     * @return 解析结果，包含取值模型与流转步骤
+     */
     ResolvedValue resolveWithTrace(Value value, int beforeIndex) {
         return resolveInternal(value, beforeIndex, new LinkedHashSet<>());
     }
 
     private ResolvedValue resolveInternal(Value value, int beforeIndex, Set<String> visitingLocals) {
-        // Keep this method focused on expression shape. Statement-sensitive
-        // questions such as "what defines this local?" are delegated below.
+        // 本方法只关注表达式形态。“该局部变量由哪条语句定义”这类语句敏感的
+        // 问题，交由下方的方法处理。
         if (value == null) {
             return ResolvedValue.of(new ValueModel.UnknownValue("null value"));
         }
@@ -127,9 +146,8 @@ public final class ValueModelResolver {
         }
 
         try {
-            // Walk backwards from the call site and use the closest reaching definition.
-            // This is intentionally conservative: when multiple control-flow paths
-            // exist, the nearest linear definition is used as a readable first model.
+            // 从调用点向前回溯，使用最近的到达定义。这是有意的保守策略：
+            // 存在多条控制流路径时，以线性上最近的定义作为可读的首选模型。
             for (int i = Math.min(beforeIndex - 1, statements.size() - 1); i >= 0; i--) {
                 Stmt stmt = statements.get(i);
                 if (stmt instanceof JAssignStmt assign && assign.getLeftOp() instanceof Local left
@@ -159,8 +177,8 @@ public final class ValueModelResolver {
                 }
             }
 
-            // If no earlier assignment was found, fall back to identity statements
-            // collected at method entry, e.g. id := @parameter0.
+            // 未找到更早的赋值时，回退到方法入口处收集的 identity 语句，
+            // 例如 id := @parameter0。
             ValueModel.ParameterValue parameterValue = parameterLocals.get(name);
             if (parameterValue != null) {
                 return new ResolvedValue(parameterValue, List.of(flowStep(
@@ -207,9 +225,9 @@ public final class ValueModelResolver {
             Set<String> visitingLocals,
             List<ValueFlowStep> baseFlow) {
 
-        // New array creation and element writes are separate Jimple statements:
-        // a = new Object[1]; a[0] = id; call(a). Record writes before the base
-        // array assignment because the path is ordered from use point to definition.
+        // 数组创建与元素写入是两条独立的 Jimple 语句：
+        // a = new Object[1]; a[0] = id; call(a)。由于路径顺序从使用点指向定义点，
+        // 因此在基础数组赋值之前记录写入。
         Map<Integer, ValueModel> elements = new LinkedHashMap<>(arrayValue.elements());
         List<ValueFlowStep> flow = new ArrayList<>();
         Set<Integer> seenIndexes = new LinkedHashSet<>();
@@ -361,8 +379,7 @@ public final class ValueModelResolver {
     }
 
     private ResolvedValue resolveArrayElement(JArrayRef arrayRef, int beforeIndex, Set<String> visitingLocals) {
-        // Direct array reads are resolved only when the array base has already
-        // been folded into an ArrayValue with a known integer index.
+        // 直接数组读取仅在数组基址已折叠为带已知整数下标的 ArrayValue 时才解析。
         Integer index = intValue(arrayRef.getIndex());
         ResolvedValue base = resolveInternal(arrayRef.getBase(), beforeIndex, visitingLocals);
         ValueModel value = new ValueModel.UnknownValue(arrayRef.toString());
@@ -381,8 +398,8 @@ public final class ValueModelResolver {
             return resolveStringConcatDynamicInvoke(dynamicInvoke, beforeIndex, visitingLocals);
         }
 
-        // Method calls are kept as InvokeValue nodes. The resolver records their
-        // receiver and arguments, but does not infer return values in p1.
+        // 方法调用保留为 InvokeValue 节点。解析器记录其接收者与参数，
+        // 但不在 p1 阶段推断返回值。
         ValueModel receiver = null;
         List<ValueFlowStep> flow = new ArrayList<>();
         if (invoke instanceof AbstractInstanceInvokeExpr instanceInvoke) {
@@ -525,8 +542,8 @@ public final class ValueModelResolver {
                 continue;
             }
             if (identity.getRightOp() instanceof JParameterRef parameterRef) {
-                // Preserve the local name generated from debug metadata when it
-                // is useful; otherwise ParameterValue falls back to paramN.
+                // 保留调试元数据生成的局部变量名（若有意义）；
+                // 否则 ParameterValue 回退为 paramN。
                 result.put(left.getName(), parameterValue(parameterRef.getIndex(), left.getName()));
             }
         }
@@ -597,6 +614,12 @@ public final class ValueModelResolver {
         return colon >= 0 ? name.substring(0, colon).trim() : name.trim();
     }
 
+    /**
+     * 解析结果：取值模型及其流转步骤。
+     *
+     * @param value 取值模型
+     * @param flow  从使用点到定义点的流转步骤
+     */
     record ResolvedValue(ValueModel value, List<ValueFlowStep> flow) {
 
         ResolvedValue {
@@ -604,6 +627,12 @@ public final class ValueModelResolver {
             flow = flow == null ? List.of() : List.copyOf(flow);
         }
 
+        /**
+         * 创建不带流转步骤的解析结果。
+         *
+         * @param value 取值模型
+         * @return 解析结果
+         */
         static ResolvedValue of(ValueModel value) {
             return new ResolvedValue(value, List.of());
         }

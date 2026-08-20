@@ -21,9 +21,10 @@ import java.util.*;
 import java.util.stream.Stream;
 
 /**
- * The InMemoryJavaAnalysisInputLocation class provides a dummy AnalysisInputLocation implementation for use with runtime-created classes.
- * It relies on the use of an OverridingJavaClassSource to provide source information for a single entirely runtime-generated class.
- * It also assumes the View it is used with has already been created and initialized.
+ * 面向运行期生成类的内存分析输入位置实现。
+ *
+ * <p>借助 {@link OverridingJavaClassSource} 为单个完全在运行期生成的类提供源信息；
+ * 同时假定与其配合使用的 {@link View} 已完成创建与初始化。</p>
  *
  * @author zhangcs
  */

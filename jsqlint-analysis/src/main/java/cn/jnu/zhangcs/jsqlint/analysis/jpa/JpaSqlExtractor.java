@@ -214,7 +214,7 @@ public final class JpaSqlExtractor implements SqlExtractor {
             try {
                 factory.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
             } catch (Exception ignored) {
-                // Some JAXP implementations do not expose this feature.
+                // 部分 JAXP 实现未暴露该特性，忽略后仍按默认安全策略解析。
             }
             Document document = factory.newDocumentBuilder().parse(xml.toFile());
             collectNamedQueries(document, "named-query", false, xml, result);
