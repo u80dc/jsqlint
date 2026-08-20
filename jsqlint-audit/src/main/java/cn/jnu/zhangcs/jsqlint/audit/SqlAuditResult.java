@@ -17,6 +17,8 @@ import java.util.List;
  * @param matchedRules       本次审核实际触发的业务规则
  * @param evaluatedRuleCount 本次参与审核的有效规则数量
  * @param firedRuleCount     Drools 实际触发的规则次数
+ *
+ * @author zhangcs
  */
 public record SqlAuditResult(
         String sql,

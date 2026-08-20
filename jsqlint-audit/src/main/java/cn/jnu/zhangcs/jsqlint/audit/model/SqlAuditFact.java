@@ -11,6 +11,8 @@ import java.util.List;
  *
  * <p>调用方提供 SQL 文本、SQL 类型和可选来源信息；Drools 规则根据这些输入字段判断风险，
  * 并通过 {@link #riskLevel}、{@link #riskFactors}、{@link #suggestion} 写回审核结果。</p>
+ *
+ * @author zhangcs
  */
 @Getter
 @Setter

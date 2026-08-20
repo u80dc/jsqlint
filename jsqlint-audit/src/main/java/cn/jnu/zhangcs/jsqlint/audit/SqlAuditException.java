@@ -5,6 +5,8 @@ package cn.jnu.zhangcs.jsqlint.audit;
  *
  * <p>主要用于封装 Drools 规则编译失败、规则执行失败等底层异常，
  * 让调用方可以按审核失败统一处理。</p>
+ *
+ * @author zhangcs
  */
 public class SqlAuditException extends RuntimeException {
 

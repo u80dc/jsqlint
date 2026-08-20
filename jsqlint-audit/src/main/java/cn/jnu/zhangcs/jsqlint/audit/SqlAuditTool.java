@@ -27,6 +27,8 @@ import java.util.regex.Pattern;
  *
  * <p>为避免同一批规则反复编译，工具内部会按规则内容生成指纹并缓存编译后的 {@link KieContainer}。
  * 缓存只由传入规则列表决定，不会主动读取数据库或使用全局启用规则。</p>
+ *
+ * @author zhangcs
  */
 public final class SqlAuditTool {
 

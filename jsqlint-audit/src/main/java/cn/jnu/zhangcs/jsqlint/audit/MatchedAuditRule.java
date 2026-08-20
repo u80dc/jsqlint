@@ -10,6 +10,8 @@ package cn.jnu.zhangcs.jsqlint.audit;
  * @param severity       业务风险等级，可能为空
  * @param category       业务规则分类，可能为空
  * @param suggestion     修复建议，可能为空
+ *
+ * @author zhangcs
  */
 public record MatchedAuditRule(
         String droolsRuleName,
