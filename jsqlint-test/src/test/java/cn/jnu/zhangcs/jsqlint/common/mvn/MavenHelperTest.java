@@ -1,6 +1,7 @@
 package cn.jnu.zhangcs.jsqlint.common.mvn;
 
 import cn.jnu.zhangcs.jsqlint.support.TinyMavenProject;
+import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 import org.junit.jupiter.api.io.TempDir;
@@ -16,8 +17,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * {@link MavenHelper}（外部 mvn 命令编译）的行为测试。
  *
- * <p>使用无依赖的最小 Maven 项目驱动真实编译，依赖本机 PATH 中的 mvn 命令。</p>
+ * <p>使用无依赖的最小 Maven 项目驱动真实编译，依赖本机 PATH 中的 mvn 命令与本机 .m2 缓存，
+ * 属集成测试，默认测试运行被排除（surefire excludedGroups=integration），
+ * 需要时以 -Dgroups=integration 手动启用。</p>
  */
+@Tag("integration")
 class MavenHelperTest {
 
     @TempDir

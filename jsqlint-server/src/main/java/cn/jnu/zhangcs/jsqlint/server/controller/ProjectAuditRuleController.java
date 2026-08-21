@@ -55,7 +55,11 @@ public class ProjectAuditRuleController {
     public ResponseEntity<AuditRuleVO> getRule(
             @Parameter(name = "projectId", description = "项目ID", example = "1") @PathVariable("projectId") Long projectId,
             @Parameter(name = "id", description = "规则ID", example = "1") @PathVariable("id") Long id) {
-        return ResponseEntity.ok(toVO(projectAuditRuleService.getRule(projectId, id)));
+        AuditRule rule = projectAuditRuleService.getRule(projectId, id);
+        if (rule == null) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(toVO(rule));
     }
 
     @Operation(summary = "新增项目规则", description = "为指定项目新增一条项目特有 SQL 审核规则")

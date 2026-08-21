@@ -152,6 +152,15 @@ public class UserGroupController {
             }
         }
 
+        return buildVO(userGroup, creatorName);
+    }
+
+    private UserGroupVO toVO(UserGroup userGroup, Map<Long, String> creatorNames) {
+        String creatorName = userGroup.getCreatorId() == null ? null : creatorNames.get(userGroup.getCreatorId());
+        return buildVO(userGroup, creatorName);
+    }
+
+    private UserGroupVO buildVO(UserGroup userGroup, String creatorName) {
         Integer memberCount = userGroupService.getMemberCount(userGroup.getId());
 
         return UserGroupVO.builder()
@@ -182,7 +191,7 @@ public class UserGroupController {
                         .collect(Collectors.toMap(User::getId, User::getUsername));
 
         return groups.stream()
-                .map(this::toVO)
+                .map(group -> toVO(group, creatorNames))
                 .collect(Collectors.toList());
     }
 }
