@@ -85,13 +85,6 @@
             {{ formatTimestamp(row.lastExecTime) }}
           </template>
         </el-table-column>
-        <el-table-column label="最近状态" width="100" align="center">
-          <template #default="{ row }">
-            <el-tag :type="statusType(row.lastStatus)" size="small">
-              {{ statusText(row.lastStatus) }}
-            </el-tag>
-          </template>
-        </el-table-column>
         <el-table-column prop="lastMessage" label="执行信息" min-width="180" show-overflow-tooltip>
           <template #default="{ row }">
             {{ row.lastMessage || '-' }}
@@ -247,24 +240,6 @@ const formatTimestamp = (value?: number) => {
     return '-'
   }
   return new Date(value).toLocaleString()
-}
-
-const statusText = (status?: string) => {
-  const map: Record<string, string> = {
-    RUNNING: '运行中',
-    SUCCESS: '成功',
-    FAILED: '失败',
-    DISABLED: '已禁用'
-  }
-  return status ? map[status] || status : '未执行'
-}
-
-const statusType = (status?: string) => {
-  if (status === 'SUCCESS') return 'success'
-  if (status === 'FAILED') return 'danger'
-  if (status === 'RUNNING') return 'warning'
-  if (status === 'DISABLED') return 'info'
-  return 'info'
 }
 
 onMounted(loadData)
