@@ -11,6 +11,7 @@
         <el-tab-pane :label="t('projectDetail.tabs.members')" name="members" />
         <el-tab-pane :label="t('projectDetail.tabs.logs')" name="logs" />
       </el-tabs>
+      <!--
       <div class="top-actions">
         <el-tooltip :content="t('projectDetail.actions.pull')" placement="bottom">
           <el-button text @click="handlePullProject" class="top-action-btn">
@@ -38,6 +39,7 @@
           </el-button>
         </el-tooltip>
       </div>
+      -->
     </div>
 
     <!-- 概览页 -->
@@ -230,26 +232,16 @@
           </el-card>
         </div>
 
-        <!-- SQL 占比 + 四维得分 -->
+        <!-- SQL 占比 + 失分构成 -->
         <div class="charts-row">
-          <el-card class="chart-card">
+          <el-card class="chart-card pie-card">
             <template #header>
               <span class="section-title">{{ t('projectDetail.overview.sqlRatio') }}</span>
             </template>
             <div ref="pieChartRef" class="chart"></div>
           </el-card>
 
-          <el-card class="chart-card radar-card">
-            <template #header>
-              <span class="section-title">{{ t('projectDetail.overview.radarScore') }}</span>
-            </template>
-            <div ref="radarChartRef" class="chart"></div>
-          </el-card>
-        </div>
-
-        <!-- 失分构成 -->
-        <div class="charts-row single-chart-row">
-          <el-card class="chart-card pie-card">
+          <el-card class="chart-card lose-card">
             <template #header>
               <span class="section-title">{{ t('projectDetail.overview.loseScore') }}</span>
             </template>
@@ -645,11 +637,9 @@ const activeTab = ref(getRouteTab())
 // 图表引用
 const pieChartRef = ref<HTMLElement>()
 const lineChartRef = ref<HTMLElement>()
-const radarChartRef = ref<HTMLElement>()
 const loseScoreChartRef = ref<HTMLElement>()
 let pieChart: echarts.ECharts | null = null
 let lineChart: echarts.ECharts | null = null
-let radarChart: echarts.ECharts | null = null
 let loseScoreChart: echarts.ECharts | null = null
 
 // 项目状态步骤条
@@ -676,14 +666,6 @@ const projectScore = ref({
   slowSqlTrend: 0,
   fixRate: 0,
   fixTrend: 0
-})
-
-// 雷达图数据（思维得分）
-const radarData = ref({
-  compliance: 0,
-  performance: 0,
-  security: 0,
-  fixImplementation: 0
 })
 
 // 失分饼图数据
@@ -1454,7 +1436,6 @@ onUnmounted(() => {
   stopStatusRefresh()
   pieChart?.dispose()
   lineChart?.dispose()
-  radarChart?.dispose()
   loseScoreChart?.dispose()
 })
 
@@ -1468,10 +1449,6 @@ const initCharts = () => {
     if (lineChartRef.value) {
       lineChart = echarts.init(lineChartRef.value)
       updateLineChart()
-    }
-    if (radarChartRef.value) {
-      radarChart = echarts.init(radarChartRef.value)
-      updateRadarChart()
     }
     if (loseScoreChartRef.value) {
       loseScoreChart = echarts.init(loseScoreChartRef.value)
@@ -1506,8 +1483,8 @@ const updatePieChart = () => {
       {
         name: t('projectDetail.chart.sqlRatio'),
         type: 'pie',
-        radius: ['40%', '65%'],
-        center: ['50%', '45%'],
+        radius: ['48%', '76%'],
+        center: ['50%', '44%'],
         avoidLabelOverlap: false,
         itemStyle: {
           borderRadius: 6,
@@ -1612,68 +1589,6 @@ const updateLineChart = () => {
   lineChart.setOption(option)
 }
 
-// 更新雷达图
-const updateRadarChart = () => {
-  if (!radarChart) return
-  const option: echarts.EChartsOption = {
-    tooltip: {
-      trigger: 'item'
-    },
-    radar: {
-      indicator: [
-        { name: t('projectDetail.chart.healthScore'), max: 100 },
-        { name: t('projectDetail.chart.performanceScore'), max: 100 },
-        { name: t('projectDetail.chart.securityScore'), max: 100 },
-        { name: t('projectDetail.chart.fixImplementation'), max: 100 }
-      ],
-      center: ['50%', '55%'],
-      radius: '70%',
-      axisName: {
-        color: '#64748b',
-        fontSize: 12
-      },
-      splitArea: {
-        areaStyle: {
-          color: ['rgba(59, 130, 246, 0.02)', 'rgba(59, 130, 246, 0.04)', 'rgba(59, 130, 246, 0.06)', 'rgba(59, 130, 246, 0.08)']
-        }
-      },
-      axisLine: {
-        lineStyle: { color: '#e2e8f0' }
-      },
-      splitLine: {
-        lineStyle: { color: '#e2e8f0' }
-      }
-    },
-    series: [
-      {
-        type: 'radar',
-        data: [
-          {
-            value: [
-              radarData.value.compliance,
-              radarData.value.performance,
-              radarData.value.security,
-              radarData.value.fixImplementation
-            ],
-            name: t('projectDetail.chart.dimensionScore'),
-            areaStyle: {
-              color: 'rgba(59, 130, 246, 0.2)'
-            },
-            lineStyle: {
-              color: '#3b82f6',
-              width: 2
-            },
-            itemStyle: {
-              color: '#3b82f6'
-            }
-          }
-        ]
-      }
-    ]
-  }
-  radarChart.setOption(option)
-}
-
 // 更新失分饼图
 const updateLoseScoreChart = () => {
   if (!loseScoreChart) return
@@ -1690,17 +1605,17 @@ const updateLoseScoreChart = () => {
       itemHeight: 10,
       textStyle: {
         color: '#64748b',
-        fontSize: 11
+        fontSize: 12
       },
-      itemGap: 12
+      itemGap: 16
     },
     color: ['#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'],
     series: [
       {
         name: t('projectDetail.chart.loseScore'),
         type: 'pie',
-        radius: ['45%', '70%'],
-        center: ['50%', '45%'],
+        radius: ['48%', '76%'],
+        center: ['50%', '44%'],
         avoidLabelOverlap: false,
         itemStyle: {
           borderRadius: 4,
@@ -1738,13 +1653,6 @@ const toPercent = (value?: number | string | null) => {
   return Math.max(0, Math.min(100, Number(toNumber(value).toFixed(2))))
 }
 
-const scoreByIssueRate = (count: number, total: number) => {
-  if (total <= 0) {
-    return 100
-  }
-  return Math.max(0, Math.min(100, Number((100 - (count * 100 / total)).toFixed(2))))
-}
-
 const getSqlTypeLabel = (sqlType?: string) => {
   switch ((sqlType || '').toUpperCase()) {
     case 'SELECT':
@@ -1773,9 +1681,12 @@ const formatTrendVersionLabel = (item: { operationTime?: string, ref?: string, c
 
 const updateOverviewCharts = async () => {
   await nextTick()
+  // 容器布局可能晚于 echarts.init（样式/加载态），先同步尺寸再重绘，避免按初始小尺寸裁剪
+  pieChart?.resize()
+  lineChart?.resize()
+  loseScoreChart?.resize()
   updatePieChart()
   updateLineChart()
-  updateRadarChart()
   updateLoseScoreChart()
 }
 
@@ -1819,13 +1730,6 @@ const loadProjectOverview = async () => {
       slowSqlTrend: issueRateTrend,
       fixRate: toPercent(rectificationRate.rectificationRate),
       fixTrend
-    }
-
-    radarData.value = {
-      compliance: healthRate,
-      performance: scoreByIssueRate(issueCategories.performanceSqlCount || 0, totalSqlCount),
-      security: scoreByIssueRate(issueCategories.securitySqlCount || 0, totalSqlCount),
-      fixImplementation: toPercent(rectificationRate.rectificationRate)
     }
 
     loseScoreData.value = {
@@ -2041,8 +1945,8 @@ const loadProjectOverview = async () => {
 
   .metrics-cards {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 12px;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
     margin-bottom: 16px;
 
     .metric-card {
@@ -2050,22 +1954,26 @@ const loadProjectOverview = async () => {
         display: flex;
         flex-direction: column;
         align-items: center;
-        padding: 8px 0;
+        padding: 4px 0;
 
         .metric-label {
-          font-size: 12px;
+          font-size: 11px;
           color: #64748b;
-          margin-bottom: 6px;
+          margin-bottom: 4px;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          max-width: 100%;
         }
 
         .metric-value {
-          font-size: 26px;
+          font-size: 20px;
           font-weight: 700;
           color: #1e293b;
           line-height: 1.2;
 
           .metric-unit {
-            font-size: 14px;
+            font-size: 12px;
             font-weight: 500;
             margin-left: 2px;
           }
@@ -2083,11 +1991,11 @@ const loadProjectOverview = async () => {
           display: flex;
           align-items: center;
           gap: 2px;
-          font-size: 11px;
-          margin-top: 4px;
+          font-size: 10px;
+          margin-top: 2px;
 
           .el-icon {
-            font-size: 12px;
+            font-size: 11px;
           }
 
           &.up {
@@ -2101,7 +2009,7 @@ const loadProjectOverview = async () => {
       }
 
       :deep(.el-card__body) {
-        padding: 12px;
+        padding: 8px 10px;
       }
     }
 
@@ -2110,20 +2018,20 @@ const loadProjectOverview = async () => {
         position: relative;
 
         .score-value {
-          font-size: 32px;
+          font-size: 24px;
         }
 
         .rating-badge {
           position: absolute;
-          top: 0;
-          right: 0;
-          width: 28px;
-          height: 28px;
-          border-radius: 6px;
+          top: -2px;
+          right: -2px;
+          width: 22px;
+          height: 22px;
+          border-radius: 5px;
           display: flex;
           align-items: center;
           justify-content: center;
-          font-size: 14px;
+          font-size: 12px;
           font-weight: 700;
           color: #fff;
 
@@ -2170,10 +2078,11 @@ const loadProjectOverview = async () => {
   .chart-card {
     margin-bottom: 0;
 
-    &.radar-card,
+    // SQL 占比与失分构成同行，等高避免 grid 拉齐后矮卡留白
+    &.lose-card,
     &.pie-card {
       .chart {
-        height: 200px;
+        height: 280px;
       }
     }
 
@@ -2235,6 +2144,11 @@ const loadProjectOverview = async () => {
   }
 
   @media (max-width: 900px) {
+    // 窄屏下 4 列指标卡退回 2 列，避免过度压缩
+    .metrics-cards {
+      grid-template-columns: repeat(2, 1fr);
+    }
+
     .rule-filters {
       align-items: stretch;
       flex-direction: column;
