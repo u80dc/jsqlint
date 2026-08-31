@@ -309,7 +309,7 @@ public class ProjectServiceImpl implements ProjectService {
             return List.of();
         }
 
-        // 填充用户信息
+        // 填充用户信息；用户可能已被删除（成员关系未级联清理），孤儿成员跳过填充
         List<Long> userIds = members.stream()
                 .map(ProjectMember::getUserId)
                 .toList();
@@ -321,6 +321,9 @@ public class ProjectServiceImpl implements ProjectService {
         for (ProjectMember member : members) {
             Long userId = member.getUserId();
             User user = userMap.get(userId);
+            if (user == null) {
+                continue;
+            }
             member.setAccount(user.getAccount());
             member.setUsername(user.getUsername());
         }

@@ -35,10 +35,15 @@ class UserServiceImplTest {
     static void initTableInfo() {
         // LambdaQueryWrapper.select(字段...) 需要实体列缓存，纯单元测试下需手动初始化
         TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""), User.class);
+        TableInfoHelper.initTableInfo(new MapperBuilderAssistant(new MybatisConfiguration(), ""),
+                cn.jnu.zhangcs.jsqlint.server.entity.ProjectMember.class);
     }
 
     @Mock
     private UserMapper mapper;
+
+    @Mock
+    private cn.jnu.zhangcs.jsqlint.server.mapper.ProjectMemberMapper projectMemberMapper;
 
     @InjectMocks
     private UserServiceImpl userService;
@@ -158,9 +163,72 @@ class UserServiceImplTest {
     }
 
     @Test
-    void delete_deletesUser() {
+    void delete_marksUserAsDeletedInsteadOfRemovingRow() {
+        User exist = new User();
+        exist.setId(5L);
+        exist.setAccount("zhangsan");
+        exist.setStatus(1);
+        when(mapper.selectById(5L)).thenReturn(exist);
+
         userService.delete(5L);
-        verify(mapper).deleteById(5L);
+
+        // 软删除：不物理删行，置 status=-1 并给账号追加后缀释放唯一键
+        verify(mapper, never()).deleteById(org.mockito.ArgumentMatchers.<Long>any());
+        org.mockito.ArgumentCaptor<User> captor = org.mockito.ArgumentCaptor.forClass(User.class);
+        verify(mapper).updateById(captor.capture());
+        assertThat(captor.getValue().getStatus()).isEqualTo(-1);
+        assertThat(captor.getValue().getAccount()).isEqualTo("zhangsan#deleted5");
+    }
+
+    @Test
+    void delete_missingUser_throwsException() {
+        when(mapper.selectById(9L)).thenReturn(null);
+
+        assertThatThrownBy(() -> userService.delete(9L))
+                .isInstanceOf(BizException.class)
+                .hasMessage("用户不存在");
+    }
+
+    @Test
+    void delete_cascadesProjectMemberCleanup() {
+        User exist = new User();
+        exist.setId(5L);
+        exist.setAccount("zhangsan");
+        exist.setStatus(1);
+        when(mapper.selectById(5L)).thenReturn(exist);
+
+        userService.delete(5L);
+
+        // 删除用户时应级联清理其项目成员关系，避免孤儿成员
+        verify(projectMemberMapper).delete(any());
+    }
+
+    @Test
+    void delete_null_skipsMemberCleanup() {
+        userService.delete(null);
+
+        verify(projectMemberMapper, never()).delete(any());
+    }
+
+    @Test
+    void getById_deletedUser_returnsNull() {
+        User deleted = new User();
+        deleted.setId(5L);
+        deleted.setStatus(-1);
+        when(mapper.selectById(5L)).thenReturn(deleted);
+
+        assertThat(userService.getById(5L)).isNull();
+    }
+
+    @Test
+    void getByAccount_filtersDeletedUser() {
+        // wrapper 由 selectOne 执行，这里验证查询条件包含 status != -1
+        userService.getByAccount("zhangsan");
+        org.mockito.ArgumentCaptor<com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<User>> captor =
+                org.mockito.ArgumentCaptor.forClass(com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper.class);
+        verify(mapper).selectOne(captor.capture());
+        String sql = captor.getValue().getTargetSql() != null ? captor.getValue().getTargetSql() : "";
+        assertThat(captor.getValue().getSqlSegment()).contains("<>");
     }
 
     @Test

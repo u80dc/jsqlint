@@ -758,7 +758,9 @@ onUnmounted(() => {
 
 <style lang="scss" scoped>
 .dashboard {
-  height: 100%;
+  // 内容自然撑高，由 MainLayout 的 .main-content 滚动；
+  // 不能用 height:100% + 子项 flex:1，否则内容被压进一屏、表格内出现嵌套滚动
+  min-height: 100%;
   display: flex;
   flex-direction: column;
   gap: 20px;
@@ -878,20 +880,23 @@ onUnmounted(() => {
 // 表格卡片
 // ============================================
 .table-card {
-  flex: 1;
-  min-height: 0;
+  // 随内容自然撑高，不再与兄弟元素分食一屏高度
   display: flex;
   flex-direction: column;
 
   :deep(.el-card__body) {
-    flex: 1;
     display: flex;
     flex-direction: column;
     padding-top: 16px;
   }
 
   :deep(.el-table) {
-    flex: 1;
+    // 空数据时 el-table 高度塌缩只剩表头，保住空态面板高度
+    min-height: 280px;
+  }
+
+  :deep(.el-table__empty-block) {
+    min-height: 200px;
   }
 }
 

@@ -2,7 +2,9 @@ package cn.jnu.zhangcs.jsqlint.server.service.impl;
 
 import cn.jnu.zhangcs.jsqlint.server.common.annotation.SystemLog;
 import cn.jnu.zhangcs.jsqlint.server.common.exception.BizException;
+import cn.jnu.zhangcs.jsqlint.server.entity.ProjectMember;
 import cn.jnu.zhangcs.jsqlint.server.entity.User;
+import cn.jnu.zhangcs.jsqlint.server.mapper.ProjectMemberMapper;
 import cn.jnu.zhangcs.jsqlint.server.mapper.UserMapper;
 import cn.jnu.zhangcs.jsqlint.server.service.UserService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -30,6 +32,8 @@ public class UserServiceImpl implements UserService {
 
     private final UserMapper mapper;
 
+    private final ProjectMemberMapper projectMemberMapper;
+
     private final PasswordEncoder passwordEncoder;
 
     @Override
@@ -41,6 +45,7 @@ public class UserServiceImpl implements UserService {
         return mapper.selectOne(
                 new LambdaQueryWrapper<>(User.class)
                         .eq(User::getAccount, account)
+                        .ne(User::getStatus, -1)
         );
     }
 
@@ -49,7 +54,9 @@ public class UserServiceImpl implements UserService {
         if (id == null) {
             return null;
         }
-        return mapper.selectById(id);
+        User user = mapper.selectById(id);
+        // 软删除用户视同不存在
+        return user != null && user.getStatus() != null && user.getStatus() == -1 ? null : user;
     }
 
     @Override
@@ -76,7 +83,9 @@ public class UserServiceImpl implements UserService {
         if (CollectionUtils.isEmpty(ids)) {
             return Collections.emptyList();
         }
-        return mapper.selectByIds(ids);
+        return mapper.selectList(Wrappers.<User>lambdaQuery()
+                .in(User::getId, ids)
+                .ne(User::getStatus, -1));
     }
 
     @Override
@@ -120,12 +129,28 @@ public class UserServiceImpl implements UserService {
         if (id == null) {
             return;
         }
-        mapper.deleteById(id);
+        User exist = getById(id);
+        if (exist == null) {
+            throw new BizException("用户不存在");
+        }
+        // 软删除：保留数据行，置 status=-1；账号追加删除后缀释放唯一键，便于同账号重新注册
+        User update = new User();
+        update.setId(id);
+        update.setStatus(-1);
+        update.setAccount(exist.getAccount() + "#deleted" + id);
+        mapper.updateById(update);
+        // 级联清理项目成员关系，成员列表不再展示已删除用户
+        projectMemberMapper.delete(Wrappers.<ProjectMember>lambdaQuery()
+                .eq(ProjectMember::getUserId, id));
     }
 
     @Override
     public @NonNull List<User> getUserList(String account, String username, String phone, String email, Integer status) {
         LambdaQueryWrapper<User> query = new LambdaQueryWrapper<>();
+        // 已删除用户（status=-1）不在管理列表展示；除非显式按 -1 查询
+        if (status == null || status != -1) {
+            query.ne(User::getStatus, -1);
+        }
         if (account != null && !account.isBlank()) {
             query.like(User::getAccount, account);
         }

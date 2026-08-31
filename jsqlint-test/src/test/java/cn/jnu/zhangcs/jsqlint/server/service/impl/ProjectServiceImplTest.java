@@ -380,6 +380,28 @@ class ProjectServiceImplTest {
     }
 
     @Test
+    void getMembers_orphanMember_skipsUserFillWithoutError() {
+        // 成员对应的用户已被删除（历史遗留孤儿数据），列表不应 NPE
+        ProjectMember orphan = new ProjectMember();
+        orphan.setUserId(99L);
+        ProjectMember normal = new ProjectMember();
+        normal.setUserId(10L);
+        when(projectMemberMapper.selectList(any())).thenReturn(List.of(orphan, normal));
+        User user = new User();
+        user.setId(10L);
+        user.setAccount("zhangsan");
+        user.setUsername("张三");
+        when(userService.getByIds(any())).thenReturn(List.of(user));
+
+        List<ProjectMember> members = projectService.getMembers(1L);
+
+        assertThat(members).hasSize(2);
+        // 孤儿成员的用户信息保持为空，正常成员照常填充
+        assertThat(members.get(0).getAccount()).isNull();
+        assertThat(members.get(1).getAccount()).isEqualTo("zhangsan");
+    }
+
+    @Test
     void isAdmin_checksMemberRole() {
         ProjectMember admin = new ProjectMember();
         admin.setRole(ProjectMemberRole.ADMIN.getCode());
