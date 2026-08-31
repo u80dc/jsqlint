@@ -89,7 +89,7 @@ export default {
     noCurrentTasks: '暂无当前任务',
     noAnalysisRecords: '暂无分析记录',
     unknown: '未知',
-    uncategorized: '未分类',
+    noScanData: '暂无扫描数据',
     loadError: '加载概览数据失败',
     trendLoadError: '加载分析趋势失败',
     period: {
@@ -101,6 +101,19 @@ export default {
       safe: '安全',
       warning: '警告',
       danger: '危险'
+    },
+    ruleHitTop: '规则命中 TOP10',
+    severityDistribution: '问题严重级别分布',
+    projectScoreRanking: '项目健康度排行',
+    totalIssues: '总问题数',
+    noIssues: '暂无问题',
+    score: '评分',
+    issueSqlCount: '问题SQL数',
+    severity: {
+      critical: '严重',
+      high: '高危',
+      warning: '警告',
+      info: '提示'
     },
     projectStatus: {
       notExecuted: '未执行',

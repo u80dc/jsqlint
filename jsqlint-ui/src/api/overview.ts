@@ -59,3 +59,48 @@ export const getOverviewAnalysisTrend = (period: 'week' | 'month' | 'year' = 'we
 export const getOverviewCurrentTasks = (): Promise<OverviewCurrentTaskVO[]> => {
   return request.get<OverviewCurrentTaskVO[]>('/api/overview/current-tasks')
 }
+
+export interface OverviewRuleHitItemVO {
+  ruleId?: number
+  ruleName: string
+  ruleCode?: string
+  severity?: string
+  hitCount: number
+}
+
+export interface OverviewRuleHitVO {
+  totalHitCount: number
+  topRules: OverviewRuleHitItemVO[]
+}
+
+export interface OverviewSeverityDistributionVO {
+  totalIssueCount: number
+  criticalCount: number
+  highCount: number
+  warningCount: number
+  infoCount: number
+}
+
+export interface OverviewProjectScoreItemVO {
+  projectId: number
+  projectName: string
+  score: number
+  rating: string
+  issueSqlCount: number
+}
+
+export interface OverviewProjectScoreVO {
+  projects: OverviewProjectScoreItemVO[]
+}
+
+export const getOverviewRuleHits = (limit = 10): Promise<OverviewRuleHitVO> => {
+  return request.get<OverviewRuleHitVO>('/api/overview/rule-hits', { params: { limit } })
+}
+
+export const getOverviewSeverityDistribution = (): Promise<OverviewSeverityDistributionVO> => {
+  return request.get<OverviewSeverityDistributionVO>('/api/overview/severity-distribution')
+}
+
+export const getOverviewProjectScores = (limit = 10): Promise<OverviewProjectScoreVO> => {
+  return request.get<OverviewProjectScoreVO>('/api/overview/project-scores', { params: { limit } })
+}

@@ -89,7 +89,7 @@ export default {
     noCurrentTasks: 'No current tasks',
     noAnalysisRecords: 'No analysis records',
     unknown: 'Unknown',
-    uncategorized: 'Uncategorized',
+    noScanData: 'No Scan Data',
     loadError: 'Failed to load overview data',
     trendLoadError: 'Failed to load analysis trend',
     period: {
@@ -101,6 +101,19 @@ export default {
       safe: 'Safe',
       warning: 'Warning',
       danger: 'Danger'
+    },
+    ruleHitTop: 'Top 10 Rule Hits',
+    severityDistribution: 'Issue Severity Distribution',
+    projectScoreRanking: 'Project Health Ranking',
+    totalIssues: 'Total Issues',
+    noIssues: 'No Issues',
+    score: 'Score',
+    issueSqlCount: 'Issue SQL Count',
+    severity: {
+      critical: 'Critical',
+      high: 'High',
+      warning: 'Warning',
+      info: 'Info'
     },
     projectStatus: {
       notExecuted: 'Not Executed',

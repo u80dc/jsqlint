@@ -69,6 +69,12 @@ class OverviewServiceImplTest {
     @Mock
     private AuditResultMapper auditResultMapper;
 
+    @Mock
+    private cn.jnu.zhangcs.jsqlint.server.mapper.AuditRuleMapper auditRuleMapper;
+
+    @Mock
+    private cn.jnu.zhangcs.jsqlint.server.service.ProjectOverviewService projectOverviewService;
+
     @InjectMocks
     private OverviewServiceImpl overviewService;
 
@@ -282,5 +288,102 @@ class OverviewServiceImplTest {
         assertThat(vo.getTypeDescription()).isNull();
         assertThat(vo.getStatus()).isNull();
         assertThat(vo.getStatusDescription()).isNull();
+    }
+
+    /**
+     * 构造带规则ID的审核结果
+     */
+    private AuditResult ruleHit(long scanId, Long ruleId, String severity) {
+        AuditResult result = auditResult(scanId, severity);
+        result.setRuleId(ruleId);
+        return result;
+    }
+
+    private cn.jnu.zhangcs.jsqlint.server.entity.AuditRule rule(long id, String name, String severity) {
+        cn.jnu.zhangcs.jsqlint.server.entity.AuditRule rule = new cn.jnu.zhangcs.jsqlint.server.entity.AuditRule();
+        rule.setId(id);
+        rule.setName(name);
+        rule.setCode("RULE_" + id);
+        rule.setSeverity(severity);
+        return rule;
+    }
+
+    @Test
+    void getRuleHitOverview_aggregatesAcrossProjectsAndSortsByCount() {
+        // 两个可见项目，最新版本审核结果合并后按规则计数
+        when(projectService.getByUser(1L)).thenReturn(List.of(project(1L, "订单系统"), project(2L, "日志系统")));
+        when(projectVersionService.getLast(1L)).thenReturn(version(10L, 1L, 2));
+        when(projectVersionService.getLast(2L)).thenReturn(version(20L, 2L, 2));
+        when(sqlStatementService.getByProjectAndVersion(1L, 10L)).thenReturn(List.of(statement(100L)));
+        when(sqlStatementService.getByProjectAndVersion(2L, 20L)).thenReturn(List.of(statement(200L)));
+        when(auditResultMapper.selectList(any())).thenReturn(
+                List.of(ruleHit(100L, 10L, "critical"), ruleHit(200L, 10L, "critical")),
+                List.of(ruleHit(200L, 11L, "warning"), ruleHit(200L, null, "info")));
+        when(auditRuleMapper.selectList(any())).thenReturn(List.of(
+                rule(10L, "禁止无WHERE删除", "critical"), rule(11L, "禁用SELECT*", "high")));
+
+        var vo = overviewService.getRuleHitOverview(1L, 10);
+
+        assertThat(vo.getTotalHitCount()).isEqualTo(4);
+        // 规则10 命中2次居首；其余各1次按名称排序，"未知规则"与"禁用SELECT*"平手时按字典序
+        assertThat(vo.getTopRules()).extracting("ruleName").containsExactly("禁止无WHERE删除", "未知规则", "禁用SELECT*");
+        assertThat(vo.getTopRules().get(0).getHitCount()).isEqualTo(2);
+        assertThat(vo.getTopRules().get(1).getRuleId()).isNull();
+    }
+
+    @Test
+    void getRuleHitOverview_noVisibleProjects_returnsEmpty() {
+        var vo = overviewService.getRuleHitOverview(null, 10);
+
+        assertThat(vo.getTotalHitCount()).isZero();
+        assertThat(vo.getTopRules()).isEmpty();
+    }
+
+    @Test
+    void getSeverityDistribution_countsEachLevel() {
+        when(projectService.getByUser(1L)).thenReturn(List.of(project(1L, "订单系统")));
+        when(projectVersionService.getLast(1L)).thenReturn(version(10L, 1L, 2));
+        when(sqlStatementService.getByProjectAndVersion(1L, 10L)).thenReturn(List.of(statement(100L)));
+        when(auditResultMapper.selectList(any())).thenReturn(List.of(
+                ruleHit(100L, 10L, "critical"),
+                ruleHit(100L, 10L, "high"),
+                ruleHit(100L, 11L, "high"),
+                ruleHit(100L, 11L, "warning"),
+                ruleHit(100L, null, "info")));
+
+        var vo = overviewService.getSeverityDistribution(1L);
+
+        assertThat(vo.getTotalIssueCount()).isEqualTo(5);
+        assertThat(vo.getCriticalCount()).isEqualTo(1);
+        assertThat(vo.getHighCount()).isEqualTo(2);
+        assertThat(vo.getWarningCount()).isEqualTo(1);
+        assertThat(vo.getInfoCount()).isEqualTo(1);
+    }
+
+    @Test
+    void getProjectScoreRanking_sortsWorstFirst() {
+        when(projectService.getByUser(1L)).thenReturn(List.of(project(1L, "订单系统"), project(2L, "日志系统")));
+        cn.jnu.zhangcs.jsqlint.server.model.vo.ProjectOverviewScoreVO good =
+                cn.jnu.zhangcs.jsqlint.server.model.vo.ProjectOverviewScoreVO.builder()
+                        .projectId(2L).score(95).rating("A").issueSqlCount(1).build();
+        cn.jnu.zhangcs.jsqlint.server.model.vo.ProjectOverviewScoreVO bad =
+                cn.jnu.zhangcs.jsqlint.server.model.vo.ProjectOverviewScoreVO.builder()
+                        .projectId(1L).score(50).rating("D").issueSqlCount(5).build();
+        when(projectOverviewService.getProjectScore(1L)).thenReturn(bad);
+        when(projectOverviewService.getProjectScore(2L)).thenReturn(good);
+
+        var vo = overviewService.getProjectScoreRanking(1L, 10);
+
+        // 评分升序：最差项目在前
+        assertThat(vo.getProjects()).extracting("projectId").containsExactly(1L, 2L);
+        assertThat(vo.getProjects().get(0).getProjectName()).isEqualTo("订单系统");
+        assertThat(vo.getProjects().get(0).getRating()).isEqualTo("D");
+    }
+
+    @Test
+    void getProjectScoreRanking_noVisibleProjects_returnsEmpty() {
+        var vo = overviewService.getProjectScoreRanking(null, null);
+
+        assertThat(vo.getProjects()).isEmpty();
     }
 }

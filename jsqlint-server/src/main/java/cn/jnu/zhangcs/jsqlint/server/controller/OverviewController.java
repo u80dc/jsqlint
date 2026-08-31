@@ -1,8 +1,11 @@
 package cn.jnu.zhangcs.jsqlint.server.controller;
 
 import cn.jnu.zhangcs.jsqlint.server.model.vo.OverviewCurrentTaskVO;
+import cn.jnu.zhangcs.jsqlint.server.model.vo.OverviewProjectScoreVO;
 import cn.jnu.zhangcs.jsqlint.server.model.vo.OverviewProjectSummaryVO;
 import cn.jnu.zhangcs.jsqlint.server.model.vo.OverviewRecentProjectVO;
+import cn.jnu.zhangcs.jsqlint.server.model.vo.OverviewRuleHitVO;
+import cn.jnu.zhangcs.jsqlint.server.model.vo.OverviewSeverityDistributionVO;
 import cn.jnu.zhangcs.jsqlint.server.model.vo.OverviewTrendVO;
 import cn.jnu.zhangcs.jsqlint.server.security.LoginUser;
 import cn.jnu.zhangcs.jsqlint.server.service.OverviewService;
@@ -27,7 +30,7 @@ public class OverviewController {
 
     private final OverviewService overviewService;
 
-    @Operation(summary = "概览统计", description = "根据当前用户查询可见项目总数，安全/警告/危险SQL数暂时返回0")
+    @Operation(summary = "概览统计", description = "根据当前用户查询可见项目总数及最新版本的安全/警告/危险SQL数量")
     @GetMapping("/projects/summary")
     public ResponseEntity<OverviewProjectSummaryVO> getProjectSummary(
             @Parameter(hidden = true) @AuthenticationPrincipal LoginUser loginUser) {
@@ -55,6 +58,31 @@ public class OverviewController {
     public ResponseEntity<List<OverviewCurrentTaskVO>> listCurrentTasks(
             @Parameter(hidden = true) @AuthenticationPrincipal LoginUser loginUser) {
         return ResponseEntity.ok(overviewService.listCurrentTasks(loginUser.getUserId()));
+    }
+
+    @Operation(summary = "规则命中TOP N", description = "跨用户可见项目统计高频命中规则，按命中次数降序")
+    @GetMapping("/rule-hits")
+    public ResponseEntity<OverviewRuleHitVO> getRuleHitOverview(
+            @Parameter(name = "limit", description = "返回条数上限（1-50，默认10）", example = "10")
+            @RequestParam(required = false) Integer limit,
+            @Parameter(hidden = true) @AuthenticationPrincipal LoginUser loginUser) {
+        return ResponseEntity.ok(overviewService.getRuleHitOverview(loginUser.getUserId(), limit));
+    }
+
+    @Operation(summary = "问题严重级别分布", description = "跨用户可见项目统计 critical/high/warning/info 级别问题数")
+    @GetMapping("/severity-distribution")
+    public ResponseEntity<OverviewSeverityDistributionVO> getSeverityDistribution(
+            @Parameter(hidden = true) @AuthenticationPrincipal LoginUser loginUser) {
+        return ResponseEntity.ok(overviewService.getSeverityDistribution(loginUser.getUserId()));
+    }
+
+    @Operation(summary = "项目健康度排行", description = "跨用户可见项目按质量评分升序排列，最差项目在前")
+    @GetMapping("/project-scores")
+    public ResponseEntity<OverviewProjectScoreVO> getProjectScoreRanking(
+            @Parameter(name = "limit", description = "返回条数上限（1-50，默认10）", example = "10")
+            @RequestParam(required = false) Integer limit,
+            @Parameter(hidden = true) @AuthenticationPrincipal LoginUser loginUser) {
+        return ResponseEntity.ok(overviewService.getProjectScoreRanking(loginUser.getUserId(), limit));
     }
 
 }

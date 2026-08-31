@@ -83,6 +83,42 @@
       </el-col>
     </el-row>
 
+    <!-- 图表区域二：规则命中 / 严重级别分布 / 项目健康度 -->
+    <el-row :gutter="20" class="charts-row">
+      <el-col :xs="24" :lg="10">
+        <el-card class="chart-card">
+          <template #header>
+            <div class="card-header">
+              <span class="card-title">{{ t('dashboard.ruleHitTop') }}</span>
+            </div>
+          </template>
+          <div ref="ruleHitChartRef" class="chart"></div>
+        </el-card>
+      </el-col>
+
+      <el-col :xs="24" :lg="7">
+        <el-card class="chart-card">
+          <template #header>
+            <div class="card-header">
+              <span class="card-title">{{ t('dashboard.severityDistribution') }}</span>
+            </div>
+          </template>
+          <div ref="severityChartRef" class="chart"></div>
+        </el-card>
+      </el-col>
+
+      <el-col :xs="24" :lg="7">
+        <el-card class="chart-card">
+          <template #header>
+            <div class="card-header">
+              <span class="card-title">{{ t('dashboard.projectScoreRanking') }}</span>
+            </div>
+          </template>
+          <div ref="scoreChartRef" class="chart"></div>
+        </el-card>
+      </el-col>
+    </el-row>
+
     <!-- 当前任务 -->
     <el-card class="table-card">
       <template #header>
@@ -191,11 +227,17 @@ import { Document, SuccessFilled, WarningFilled, CircleCloseFilled, ArrowRight }
 import {
   getOverviewAnalysisTrend,
   getOverviewCurrentTasks,
+  getOverviewProjectScores,
   getOverviewProjectSummary,
   getOverviewRecentProjects,
+  getOverviewRuleHits,
+  getOverviewSeverityDistribution,
   type OverviewCurrentTaskVO,
+  type OverviewProjectScoreVO,
   type OverviewProjectSummaryVO,
   type OverviewRecentProjectVO,
+  type OverviewRuleHitVO,
+  type OverviewSeverityDistributionVO,
   type OverviewTrendVO
 } from '@/api/overview'
 
@@ -203,12 +245,18 @@ const router = useRouter()
 const { t, locale } = useI18n()
 const trendChartRef = ref<HTMLElement>()
 const pieChartRef = ref<HTMLElement>()
+const ruleHitChartRef = ref<HTMLElement>()
+const severityChartRef = ref<HTMLElement>()
+const scoreChartRef = ref<HTMLElement>()
 const trendPeriod = ref<'week' | 'month' | 'year'>('week')
 const recentLoading = ref(false)
 const tasksLoading = ref(false)
 
 let trendChart: echarts.ECharts | null = null
 let pieChart: echarts.ECharts | null = null
+let ruleHitChart: echarts.ECharts | null = null
+let severityChart: echarts.ECharts | null = null
+let scoreChart: echarts.ECharts | null = null
 
 const stats = ref<OverviewProjectSummaryVO>({
   totalProjects: 0,
@@ -392,9 +440,10 @@ const renderPieChart = () => {
     { value: summaryStats.value.dangerSqlCount, name: t('dashboard.dangerSql'), itemStyle: { color: '#ef4444' } }
   ]
   const totalDistribution = distribution.reduce((sum, item) => sum + item.value, 0)
+  // 无扫描数据时展示灰色空态占位，不再用项目总数冒充分布
   const data = totalDistribution > 0
     ? distribution
-    : [{ value: summaryStats.value.totalProjects, name: t('dashboard.uncategorized'), itemStyle: { color: '#94a3b8' } }]
+    : [{ value: 1, name: t('dashboard.noScanData'), itemStyle: { color: '#e2e8f0' } }]
 
   const option = {
     tooltip: {
@@ -439,6 +488,186 @@ const initCharts = () => {
     pieChart = echarts.init(pieChartRef.value)
     renderPieChart()
   }
+  if (ruleHitChartRef.value) {
+    ruleHitChart = echarts.init(ruleHitChartRef.value)
+  }
+  if (severityChartRef.value) {
+    severityChart = echarts.init(severityChartRef.value)
+  }
+  if (scoreChartRef.value) {
+    scoreChart = echarts.init(scoreChartRef.value)
+  }
+}
+
+const SEVERITY_COLORS: Record<string, string> = {
+  critical: '#ef4444',
+  high: '#f97316',
+  warning: '#f59e0b',
+  info: '#3b82f6'
+}
+
+/**
+ * 规则命中 TOP N：横向柱状图，按规则严重级别着色
+ */
+const renderRuleHitChart = (data?: OverviewRuleHitVO) => {
+  if (!ruleHitChart) return
+  // echarts 横向柱状图自下而上绘制，倒序传入使命中最多的在最上方
+  const rules = [...(data?.topRules || [])].reverse()
+  const option = {
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      backgroundColor: '#1e293b',
+      borderColor: '#334155',
+      textStyle: { color: '#f8fafc' }
+    },
+    grid: {
+      left: '3%',
+      right: '8%',
+      top: '5%',
+      bottom: '5%',
+      containLabel: true
+    },
+    xAxis: {
+      type: 'value',
+      axisLine: { show: false },
+      splitLine: { lineStyle: { color: '#f1f5f9' } },
+      axisLabel: { color: '#64748b' }
+    },
+    yAxis: {
+      type: 'category',
+      data: rules.map(rule => rule.ruleName),
+      axisLine: { lineStyle: { color: '#e2e8f0' } },
+      axisLabel: { color: '#64748b', width: 120, overflow: 'truncate' }
+    },
+    series: [{
+      type: 'bar',
+      barMaxWidth: 18,
+      data: rules.map(rule => ({
+        value: rule.hitCount,
+        itemStyle: { color: SEVERITY_COLORS[rule.severity || ''] || '#6366f1', borderRadius: [0, 4, 4, 0] }
+      })),
+      label: {
+        show: true,
+        position: 'right',
+        color: '#64748b'
+      }
+    }]
+  }
+  ruleHitChart.setOption(option)
+}
+
+/**
+ * 问题严重级别分布：环形图，中心显示总问题数
+ */
+const renderSeverityChart = (data?: OverviewSeverityDistributionVO) => {
+  if (!severityChart) return
+  const entries = [
+    { value: data?.criticalCount || 0, name: t('dashboard.severity.critical'), key: 'critical' },
+    { value: data?.highCount || 0, name: t('dashboard.severity.high'), key: 'high' },
+    { value: data?.warningCount || 0, name: t('dashboard.severity.warning'), key: 'warning' },
+    { value: data?.infoCount || 0, name: t('dashboard.severity.info'), key: 'info' }
+  ]
+  const total = entries.reduce((sum, item) => sum + item.value, 0)
+  const seriesData = total > 0
+    ? entries.map(item => ({ ...item, itemStyle: { color: SEVERITY_COLORS[item.key] } }))
+    : [{ value: 1, name: t('dashboard.noIssues'), itemStyle: { color: '#e2e8f0' } }]
+
+  const option = {
+    tooltip: {
+      trigger: 'item',
+      backgroundColor: '#1e293b',
+      borderColor: '#334155',
+      textStyle: { color: '#f8fafc' }
+    },
+    series: [{
+      type: 'pie',
+      radius: ['55%', '78%'],
+      center: ['50%', '50%'],
+      avoidLabelOverlap: false,
+      itemStyle: {
+        borderRadius: 6,
+        borderColor: '#ffffff',
+        borderWidth: 2
+      },
+      label: {
+        show: true,
+        position: 'center',
+        formatter: total > 0 ? `{total|${total}}\n{label|${t('dashboard.totalIssues')}}` : `{label|${t('dashboard.noIssues')}}`,
+        rich: {
+          total: { fontSize: 22, fontWeight: 'bold', color: '#1e293b' },
+          label: { fontSize: 12, color: '#64748b', padding: [4, 0, 0, 0] }
+        }
+      },
+      data: seriesData
+    }]
+  }
+  severityChart.setOption(option)
+}
+
+/**
+ * 项目健康度排行：横向条形图，分数映射红→绿色带，最差项目在上
+ */
+const renderScoreChart = (data?: OverviewProjectScoreVO) => {
+  if (!scoreChart) return
+  // 评分升序返回（最差在前），倒序绘制使最差在顶部
+  const projects = [...(data?.projects || [])].reverse()
+  const scoreColor = (score: number) => {
+    if (score >= 90) return '#10b981'
+    if (score >= 75) return '#84cc16'
+    if (score >= 60) return '#f59e0b'
+    return '#ef4444'
+  }
+  const option = {
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      backgroundColor: '#1e293b',
+      borderColor: '#334155',
+      textStyle: { color: '#f8fafc' },
+      formatter: (params: unknown) => {
+        const item = Array.isArray(params) ? params[0] : params
+        const project = projects[item.dataIndex]
+        if (!project) return ''
+        return `${project.projectName}<br/>${t('dashboard.score')}: ${project.score} (${project.rating})<br/>${t('dashboard.issueSqlCount')}: ${project.issueSqlCount}`
+      }
+    },
+    grid: {
+      left: '3%',
+      right: '12%',
+      top: '5%',
+      bottom: '5%',
+      containLabel: true
+    },
+    xAxis: {
+      type: 'value',
+      max: 100,
+      axisLine: { show: false },
+      splitLine: { lineStyle: { color: '#f1f5f9' } },
+      axisLabel: { color: '#64748b' }
+    },
+    yAxis: {
+      type: 'category',
+      data: projects.map(project => project.projectName),
+      axisLine: { lineStyle: { color: '#e2e8f0' } },
+      axisLabel: { color: '#64748b', width: 100, overflow: 'truncate' }
+    },
+    series: [{
+      type: 'bar',
+      barMaxWidth: 16,
+      data: projects.map(project => ({
+        value: project.score,
+        itemStyle: { color: scoreColor(project.score), borderRadius: [0, 4, 4, 0] }
+      })),
+      label: {
+        show: true,
+        position: 'right',
+        color: '#64748b',
+        formatter: '{c}'
+      }
+    }]
+  }
+  scoreChart.setOption(option)
 }
 
 const loadSummary = async () => {
@@ -469,13 +698,25 @@ const loadCurrentTasks = async () => {
   }
 }
 
+const loadOverviewCharts = async () => {
+  const [ruleHits, severity, scores] = await Promise.all([
+    getOverviewRuleHits(),
+    getOverviewSeverityDistribution(),
+    getOverviewProjectScores()
+  ])
+  renderRuleHitChart(ruleHits)
+  renderSeverityChart(severity)
+  renderScoreChart(scores)
+}
+
 const loadDashboard = async () => {
   try {
     await Promise.all([
       loadSummary(),
       loadTrend(),
       loadRecentProjects(),
-      loadCurrentTasks()
+      loadCurrentTasks(),
+      loadOverviewCharts()
     ])
   } catch {
     ElMessage.error(t('dashboard.loadError'))
@@ -485,6 +726,9 @@ const loadDashboard = async () => {
 const handleResize = () => {
   trendChart?.resize()
   pieChart?.resize()
+  ruleHitChart?.resize()
+  severityChart?.resize()
+  scoreChart?.resize()
 }
 
 watch(trendPeriod, async () => {
@@ -506,6 +750,9 @@ onUnmounted(() => {
   window.removeEventListener('resize', handleResize)
   trendChart?.dispose()
   pieChart?.dispose()
+  ruleHitChart?.dispose()
+  severityChart?.dispose()
+  scoreChart?.dispose()
 })
 </script>
 

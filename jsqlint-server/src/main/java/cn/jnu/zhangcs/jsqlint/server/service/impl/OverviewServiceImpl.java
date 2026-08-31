@@ -4,13 +4,19 @@ import cn.jnu.zhangcs.jsqlint.server.common.enums.ProjectVersionStatus;
 import cn.jnu.zhangcs.jsqlint.server.common.enums.TaskStatus;
 import cn.jnu.zhangcs.jsqlint.server.entity.*;
 import cn.jnu.zhangcs.jsqlint.server.mapper.AuditResultMapper;
+import cn.jnu.zhangcs.jsqlint.server.mapper.AuditRuleMapper;
 import cn.jnu.zhangcs.jsqlint.server.mapper.ProjectVersionMapper;
 import cn.jnu.zhangcs.jsqlint.server.mapper.ScheduledTaskMapper;
 import cn.jnu.zhangcs.jsqlint.server.model.vo.OverviewCurrentTaskVO;
+import cn.jnu.zhangcs.jsqlint.server.model.vo.OverviewProjectScoreVO;
 import cn.jnu.zhangcs.jsqlint.server.model.vo.OverviewProjectSummaryVO;
 import cn.jnu.zhangcs.jsqlint.server.model.vo.OverviewRecentProjectVO;
+import cn.jnu.zhangcs.jsqlint.server.model.vo.OverviewRuleHitVO;
+import cn.jnu.zhangcs.jsqlint.server.model.vo.OverviewSeverityDistributionVO;
 import cn.jnu.zhangcs.jsqlint.server.model.vo.OverviewTrendVO;
+import cn.jnu.zhangcs.jsqlint.server.model.vo.ProjectOverviewScoreVO;
 import cn.jnu.zhangcs.jsqlint.server.service.OverviewService;
+import cn.jnu.zhangcs.jsqlint.server.service.ProjectOverviewService;
 import cn.jnu.zhangcs.jsqlint.server.service.ProjectService;
 import cn.jnu.zhangcs.jsqlint.server.service.ProjectVersionService;
 import cn.jnu.zhangcs.jsqlint.server.service.SqlStatementService;
@@ -24,6 +30,7 @@ import java.time.LocalDateTime;
 import java.time.YearMonth;
 import java.time.temporal.TemporalAdjusters;
 import java.util.*;
+import java.util.function.Function;
 import java.util.stream.Collectors;
 
 @Service
@@ -43,6 +50,10 @@ public class OverviewServiceImpl implements OverviewService {
     private final SqlStatementService sqlStatementService;
 
     private final AuditResultMapper auditResultMapper;
+
+    private final AuditRuleMapper auditRuleMapper;
+
+    private final ProjectOverviewService projectOverviewService;
 
     @Override
     public OverviewProjectSummaryVO getProjectSummary(Long userId) {
@@ -478,5 +489,152 @@ public class OverviewServiceImpl implements OverviewService {
             return "year";
         }
         return "week";
+    }
+
+    @Override
+    public OverviewRuleHitVO getRuleHitOverview(Long userId, Integer limit) {
+        List<AuditResult> auditResults = latestVersionAuditResults(userId);
+        int topLimit = normalizeLimit(limit);
+
+        // 按规则分组计数，null 规则ID归为 0 后在 VO 转换时还原为 null
+        Map<Long, Integer> hitCountByRule = auditResults.stream()
+                .collect(Collectors.groupingBy(
+                        result -> result.getRuleId() == null ? 0L : result.getRuleId(),
+                        Collectors.summingInt(result -> 1)));
+
+        Map<Long, AuditRule> ruleIndex = ruleIndex(hitCountByRule.keySet());
+
+        List<OverviewRuleHitVO.RuleHitCountVO> topRules = hitCountByRule.entrySet()
+                .stream()
+                .map(entry -> toRuleHitCountVO(entry.getKey(), entry.getValue(), ruleIndex))
+                .sorted(Comparator
+                        .comparing(OverviewRuleHitVO.RuleHitCountVO::getHitCount, Comparator.reverseOrder())
+                        .thenComparing(rule -> rule.getRuleName() == null ? "" : rule.getRuleName()))
+                .limit(topLimit)
+                .toList();
+
+        return OverviewRuleHitVO.builder()
+                .totalHitCount(auditResults.size())
+                .topRules(topRules)
+                .build();
+    }
+
+    @Override
+    public OverviewSeverityDistributionVO getSeverityDistribution(Long userId) {
+        List<AuditResult> auditResults = latestVersionAuditResults(userId);
+
+        Map<String, Long> countBySeverity = auditResults.stream()
+                .collect(Collectors.groupingBy(
+                        result -> result.getSeverity() == null ? "unknown" : result.getSeverity().toLowerCase(),
+                        Collectors.counting()));
+
+        return OverviewSeverityDistributionVO.builder()
+                .totalIssueCount(auditResults.size())
+                .criticalCount(countBySeverity.getOrDefault("critical", 0L).intValue())
+                .highCount(countBySeverity.getOrDefault("high", 0L).intValue())
+                .warningCount(countBySeverity.getOrDefault("warning", 0L).intValue())
+                .infoCount(countBySeverity.getOrDefault("info", 0L).intValue())
+                .build();
+    }
+
+    @Override
+    public OverviewProjectScoreVO getProjectScoreRanking(Long userId, Integer limit) {
+        List<Project> projects = visibleProjects(userId);
+        if (projects.isEmpty()) {
+            return OverviewProjectScoreVO.builder().projects(List.of()).build();
+        }
+        int topLimit = normalizeLimit(limit);
+        Map<Long, String> projectNames = projectNameIndex(projects);
+
+        List<OverviewProjectScoreVO.ProjectScoreVO> scores = projects.stream()
+                .map(project -> toProjectScoreVO(project, projectNames))
+                .sorted(Comparator.comparing(OverviewProjectScoreVO.ProjectScoreVO::getScore))
+                .limit(topLimit)
+                .toList();
+
+        return OverviewProjectScoreVO.builder()
+                .projects(scores)
+                .build();
+    }
+
+    /**
+     * 汇总用户可见项目各自最新版本下的全部审核结果
+     */
+    private List<AuditResult> latestVersionAuditResults(Long userId) {
+        List<Project> projects = visibleProjects(userId);
+        if (projects.isEmpty()) {
+            return List.of();
+        }
+        List<AuditResult> all = new ArrayList<>();
+        for (Project project : projects) {
+            Long projectId = project.getId();
+            if (projectId == null) {
+                continue;
+            }
+            ProjectVersion version = projectVersionService.getLast(projectId);
+            if (version == null) {
+                continue;
+            }
+            List<SqlStatement> statements = sqlStatementService.getByProjectAndVersion(projectId, version.getId());
+            if (statements.isEmpty()) {
+                continue;
+            }
+            all.addAll(auditResults(projectId, statements));
+        }
+        return all;
+    }
+
+    /**
+     * 按规则ID集合批量加载规则并建立索引
+     */
+    private Map<Long, AuditRule> ruleIndex(Set<Long> ruleIds) {
+        Set<Long> validIds = ruleIds.stream()
+                .filter(id -> id != null && id > 0)
+                .collect(Collectors.toSet());
+        if (validIds.isEmpty()) {
+            return Map.of();
+        }
+        return auditRuleMapper.selectList(Wrappers.<AuditRule>lambdaQuery()
+                        .in(AuditRule::getId, validIds))
+                .stream()
+                .collect(Collectors.toMap(AuditRule::getId, Function.identity(), (left, right) -> left));
+    }
+
+    private OverviewRuleHitVO.RuleHitCountVO toRuleHitCountVO(Long ruleId,
+                                                              Integer hitCount,
+                                                              Map<Long, AuditRule> ruleIndex) {
+        AuditRule rule = ruleIndex.get(ruleId);
+        return OverviewRuleHitVO.RuleHitCountVO.builder()
+                .ruleId(ruleId == 0 ? null : ruleId)
+                .ruleName(rule == null ? "未知规则" : rule.getName())
+                .ruleCode(rule == null ? null : rule.getCode())
+                .severity(rule == null ? null : rule.getSeverity())
+                .hitCount(hitCount)
+                .build();
+    }
+
+    /**
+     * 计算单项目评分（按 ProjectOverviewServiceImpl 的评分口径，仅取评分与评级）
+     */
+    private OverviewProjectScoreVO.ProjectScoreVO toProjectScoreVO(Project project, Map<Long, String> projectNames) {
+        Long projectId = project.getId();
+        ProjectOverviewScoreVO scoreVO = projectOverviewService.getProjectScore(projectId);
+        return OverviewProjectScoreVO.ProjectScoreVO.builder()
+                .projectId(projectId)
+                .projectName(projectNames.getOrDefault(projectId, project.getName()))
+                .score(scoreVO.getScore())
+                .rating(scoreVO.getRating())
+                .issueSqlCount(scoreVO.getIssueSqlCount())
+                .build();
+    }
+
+    /**
+     * 归一化条数上限（1-50，默认 10）
+     */
+    private int normalizeLimit(Integer limit) {
+        if (limit == null || limit <= 0) {
+            return 10;
+        }
+        return Math.min(limit, 50);
     }
 }

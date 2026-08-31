@@ -1,8 +1,11 @@
 package cn.jnu.zhangcs.jsqlint.server.service;
 
 import cn.jnu.zhangcs.jsqlint.server.model.vo.OverviewCurrentTaskVO;
+import cn.jnu.zhangcs.jsqlint.server.model.vo.OverviewProjectScoreVO;
 import cn.jnu.zhangcs.jsqlint.server.model.vo.OverviewProjectSummaryVO;
 import cn.jnu.zhangcs.jsqlint.server.model.vo.OverviewRecentProjectVO;
+import cn.jnu.zhangcs.jsqlint.server.model.vo.OverviewRuleHitVO;
+import cn.jnu.zhangcs.jsqlint.server.model.vo.OverviewSeverityDistributionVO;
 import cn.jnu.zhangcs.jsqlint.server.model.vo.OverviewTrendVO;
 
 import java.util.List;
@@ -47,4 +50,30 @@ public interface OverviewService {
      * @return 当前任务列表
      */
     List<OverviewCurrentTaskVO> listCurrentTasks(Long userId);
+
+    /**
+     * 规则命中 TOP N 统计（跨用户可见项目，按命中次数降序）
+     *
+     * @param userId 当前用户ID，用于过滤可见项目
+     * @param limit  返回条数上限，默认 10
+     * @return 高频命中规则列表
+     */
+    OverviewRuleHitVO getRuleHitOverview(Long userId, Integer limit);
+
+    /**
+     * 问题严重级别分布统计（跨用户可见项目，critical/high/warning/info）
+     *
+     * @param userId 当前用户ID，用于过滤可见项目
+     * @return 严重级别分布数据
+     */
+    OverviewSeverityDistributionVO getSeverityDistribution(Long userId);
+
+    /**
+     * 项目健康度排行（跨用户可见项目，按评分升序最差在前）
+     *
+     * @param userId 当前用户ID，用于过滤可见项目
+     * @param limit  返回条数上限，默认 10
+     * @return 项目评分列表
+     */
+    OverviewProjectScoreVO getProjectScoreRanking(Long userId, Integer limit);
 }
