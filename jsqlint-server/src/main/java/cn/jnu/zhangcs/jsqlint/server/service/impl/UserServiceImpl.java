@@ -13,6 +13,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.CollectionUtils;
@@ -28,6 +29,8 @@ import java.util.List;
 public class UserServiceImpl implements UserService {
 
     private final UserMapper mapper;
+
+    private final PasswordEncoder passwordEncoder;
 
     @Override
     public @Nullable User getByAccount(String account) {
@@ -170,6 +173,49 @@ public class UserServiceImpl implements UserService {
         }
         user.setStatus(0);
         updateById(id, user);
+    }
+
+    @Override
+    @Transactional
+    @SystemLog(
+            operationType = "USER_CHANGE_PASSWORD",
+            message = "修改密码: #{#id}",
+            relatedId = "#id")
+    public void changePassword(@NonNull Long id, String oldPassword, String newPassword) {
+        User user = getById(id);
+        if (user == null) {
+            throw new BizException("用户不存在");
+        }
+        if (!passwordEncoder.matches(oldPassword, user.getPassword())) {
+            throw new BizException("旧密码不正确");
+        }
+        if (!StringUtils.hasText(newPassword) || newPassword.length() < 6) {
+            throw new BizException("新密码长度至少为6位");
+        }
+        User update = new User();
+        update.setId(id);
+        update.setPassword(passwordEncoder.encode(newPassword));
+        mapper.updateById(update);
+    }
+
+    @Override
+    @Transactional
+    @SystemLog(
+            operationType = "USER_UPDATE_PROFILE",
+            message = "更新个人信息: #{#id}",
+            relatedId = "#id")
+    public @NonNull User updateProfile(@NonNull Long id, String realName, String email, String phone) {
+        User user = getById(id);
+        if (user == null) {
+            throw new BizException("用户不存在");
+        }
+        User update = new User();
+        update.setId(id);
+        update.setUsername(realName);
+        update.setEmail(email);
+        update.setPhone(phone);
+        mapper.updateById(update);
+        return getById(id);
     }
 
 }

@@ -70,7 +70,7 @@ export default {
     safeSql: '安全SQL',
     warningSql: '警告SQL',
     dangerSql: '危险SQL',
-    analysisTrend: '分析趋势',
+    analysisTrend: '质量趋势',
     projectDistribution: '项目分布',
     currentTasks: '当前任务',
     recentProjects: '最近分析项目列表',

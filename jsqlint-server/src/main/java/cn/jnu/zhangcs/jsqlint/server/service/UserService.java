@@ -99,4 +99,25 @@ public interface UserService {
      * @param id 用户ID
      */
     void disable(Long id);
+
+    /**
+     * 修改当前用户密码
+     *
+     * @param id          用户ID
+     * @param oldPassword 旧密码（明文）
+     * @param newPassword 新密码（明文）
+     */
+    void changePassword(@NonNull Long id, String oldPassword, String newPassword);
+
+    /**
+     * 修改当前用户基本信息（姓名、邮箱、手机）
+     *
+     * @param id   用户ID
+     * @param realName 姓名
+     * @param email    邮箱
+     * @param phone    手机号
+     * @return 更新后的用户
+     */
+    @NonNull
+    User updateProfile(@NonNull Long id, String realName, String email, String phone);
 }

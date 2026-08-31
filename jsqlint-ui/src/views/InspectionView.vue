@@ -346,6 +346,13 @@ onMounted(loadData)
 
 <style lang="scss" scoped>
 .inspection {
+  // 本页工具栏只剩按钮与统计文字，去掉全局 filter-toolbar 的灰底与边框
+  .filter-toolbar {
+    padding: 0;
+    background: transparent;
+    border: none;
+  }
+
   .summary-inline {
     gap: 12px;
   }

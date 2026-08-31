@@ -6,8 +6,10 @@ import cn.jnu.zhangcs.jsqlint.server.common.exception.GlobalExceptionHandler;
 import cn.jnu.zhangcs.jsqlint.server.entity.User;
 import cn.jnu.zhangcs.jsqlint.server.model.vo.LoginVO;
 import cn.jnu.zhangcs.jsqlint.server.model.vo.UserVO;
+import cn.jnu.zhangcs.jsqlint.server.security.LoginUser;
 import cn.jnu.zhangcs.jsqlint.server.service.AuthService;
 import cn.jnu.zhangcs.jsqlint.server.service.UserService;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -19,15 +21,19 @@ import org.springframework.http.converter.StringHttpMessageConverter;
 import org.springframework.http.converter.json.JacksonJsonHttpMessageConverter;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.web.method.annotation.AuthenticationPrincipalArgumentResolver;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.nio.charset.StandardCharsets;
 
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -65,7 +71,19 @@ class AuthControllerTest {
                 .setMessageConverters(
                         new StringHttpMessageConverter(StandardCharsets.UTF_8),
                         new JacksonJsonHttpMessageConverter())
+                // standalone 默认不注册安全相关解析器，@AuthenticationPrincipal 需显式注册
+                .setCustomArgumentResolvers(new AuthenticationPrincipalArgumentResolver())
                 .build();
+    }
+
+    @AfterEach
+    void tearDown() {
+        SecurityContextHolder.clearContext();
+    }
+
+    private void login(Long userId) {
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(new LoginUser("admin", userId), "password"));
     }
 
     @Test
@@ -133,12 +151,88 @@ class AuthControllerTest {
     }
 
     @Test
-    void getUserInfo_bizExceptionMappedTo400() throws Exception {
-        when(userService.getByAccount("admin")).thenThrow(new RuntimeException("boom"));
+    void getUserInfo_loginUserPrincipal_resolvesUsername() throws Exception {
+        User user = new User();
+        user.setId(1L);
+        when(userService.getByAccount("admin")).thenReturn(user);
+        UserVO vo = new UserVO();
+        vo.setId(1L);
+        vo.setUsername("admin");
+        when(converter.toUserVO(user)).thenReturn(vo);
+        // 模拟 JwtAuthenticationFilter 的行为：principal 为 LoginUser 而非字符串
+        Authentication authentication = new UsernamePasswordAuthenticationToken(
+                new LoginUser("admin", 1L), "password");
 
+        mockMvc.perform(get("/api/auth/userinfo").principal(authentication))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(1));
+    }
+
+    @Test
+    void getUserInfo_userMissing_returns400() throws Exception {
+        when(userService.getByAccount("admin")).thenReturn(null);
         Authentication authentication = new UsernamePasswordAuthenticationToken("admin", "password");
 
         mockMvc.perform(get("/api/auth/userinfo").principal(authentication))
-                .andExpect(status().isInternalServerError());
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void changePassword_validBody_delegatesToService() throws Exception {
+        login(1L);
+
+        mockMvc.perform(put("/api/auth/password")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"oldPassword\":\"old123\",\"newPassword\":\"new123456\"}"))
+                .andExpect(status().isOk());
+
+        verify(userService).changePassword(1L, "old123", "new123456");
+    }
+
+    @Test
+    void changePassword_shortNewPassword_returns400() throws Exception {
+        login(1L);
+
+        mockMvc.perform(put("/api/auth/password")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"oldPassword\":\"old123\",\"newPassword\":\"123\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("参数校验失败"));
+
+        verify(userService, org.mockito.Mockito.never())
+                .changePassword(org.mockito.ArgumentMatchers.anyLong(),
+                        org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
+    }
+
+    @Test
+    void updateProfile_validBody_returnsUpdatedVo() throws Exception {
+        login(1L);
+        User updated = new User();
+        updated.setId(1L);
+        when(userService.updateProfile(1L, "张三", "a@b.com", "13800000000")).thenReturn(updated);
+        UserVO vo = new UserVO();
+        vo.setId(1L);
+        vo.setRealName("张三");
+        when(converter.toUserVO(updated)).thenReturn(vo);
+
+        mockMvc.perform(put("/api/auth/profile")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .characterEncoding("UTF-8")
+                        .content("{\"realName\":\"张三\",\"email\":\"a@b.com\",\"phone\":\"13800000000\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.id").value(1))
+                .andExpect(jsonPath("$.realName").value("张三"));
+    }
+
+    @Test
+    void updateProfile_invalidEmail_returns400() throws Exception {
+        login(1L);
+
+        mockMvc.perform(put("/api/auth/profile")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .characterEncoding("UTF-8")
+                        .content("{\"email\":\"not-an-email\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.errors.email").value("邮箱格式不正确"));
     }
 }
