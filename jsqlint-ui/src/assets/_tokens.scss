@@ -1,0 +1,81 @@
+// ============================================
+// JSQLint Design Tokens（单一来源）
+// main.scss 与各组件 <style lang="scss"> 经 vite additionalData 自动注入本文件，
+// 组件内直接使用 $primary-color 等变量，禁止手写十六进制色值
+// ============================================
+
+// Primary Colors
+$primary-color: #3b82f6;
+$primary-hover: #2563eb;
+$primary-light: #dbeafe;
+$primary-lighter: #eff6ff;
+
+// Success Colors
+$success-color: #10b981;
+$success-light: #d1fae5;
+$success-lighter: #ecfdf5;
+
+// Warning Colors
+$warning-color: #f59e0b;
+$warning-light: #fef3c7;
+
+// Danger Colors
+$danger-color: #ef4444;
+$danger-light: #fee2e2;
+$danger-lighter: #fef2f2;
+
+// Info Colors
+$info-color: #3b82f6;
+$info-light: #e0f2fe;
+
+// Background Colors
+$bg-page: #f4f6f9;
+$bg-page-light: #f8fafc;
+$bg-card: #ffffff;
+$bg-sidebar: #1e293b;
+$bg-sidebar-active: rgba(59, 130, 246, 0.15);
+$bg-header: #ffffff;
+
+// Text Colors
+$text-primary: #1e293b;
+$text-primary-dark: #0f172a;
+$text-secondary: #64748b;
+$text-secondary-dark: #475569;
+$text-placeholder: #94a3b8;
+$text-sidebar: #94a3b8;
+$text-sidebar-active: #ffffff;
+$text-inverse: #ffffff;
+
+// Border Colors
+$border-color: #e2e8f0;
+$border-light: #f1f5f9;
+$border-darker: #cbd5e1;
+
+// Shadow
+$shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+$shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+$shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
+$shadow-card: 0 1px 3px rgba(0, 0, 0, 0.05);
+
+// Border Radius
+$radius-sm: 6px;
+$radius-md: 8px;
+$radius-lg: 12px;
+$radius-xl: 16px;
+
+// Spacing
+$spacing-xs: 4px;
+$spacing-sm: 8px;
+$spacing-md: 16px;
+$spacing-lg: 24px;
+$spacing-xl: 32px;
+
+// Layout
+$sidebar-width: 240px;
+$sidebar-collapsed-width: 72px;
+$header-height: 64px;
+
+// Transitions
+$transition-fast: 0.15s ease;
+$transition-base: 0.2s ease;
+$transition-slow: 0.3s ease;

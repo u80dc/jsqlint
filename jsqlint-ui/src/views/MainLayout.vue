@@ -165,7 +165,7 @@ watch(() => [route.name, route.params.id, route.query.title], async () => {
 .layout-container {
   height: 100vh;
   display: flex;
-  background: #f4f6f9;
+  background: var(--jsp-bg-page);
 }
 
 .main-wrapper {
@@ -180,7 +180,7 @@ watch(() => [route.name, route.params.id, route.query.title], async () => {
   flex: 1;
   padding: 24px;
   overflow-y: auto;
-  background: #f4f6f9;
+  background: var(--jsp-bg-page);
 
   &::-webkit-scrollbar {
     width: 8px;
@@ -188,12 +188,12 @@ watch(() => [route.name, route.params.id, route.query.title], async () => {
   }
 
   &::-webkit-scrollbar-thumb {
-    background: #cbd5e1;
+    background: $border-darker;
     border-radius: 4px;
   }
 
   &::-webkit-scrollbar-thumb:hover {
-    background: #94a3b8;
+    background: $text-placeholder;
   }
 }
 

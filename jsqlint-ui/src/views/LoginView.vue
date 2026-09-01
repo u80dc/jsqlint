@@ -118,15 +118,15 @@ const handleLogin = async () => {
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: #f4f6f9;
+  background: var(--jsp-bg-page);
 }
 
 .login-card {
   width: 100%;
   max-width: 380px;
   padding: 32px;
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
+  background: var(--jsp-bg-card);
+  border-bottom: 1px solid var(--jsp-border-color);
   border-radius: 8px;
 }
 
@@ -137,7 +137,7 @@ const handleLogin = async () => {
   .logo-icon {
     width: 56px;
     height: 56px;
-    background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+    background: linear-gradient(135deg, $primary-color 0%, #8b5cf6 100%);
     border-radius: 14px;
     display: flex;
     align-items: center;
@@ -147,14 +147,14 @@ const handleLogin = async () => {
     svg {
       width: 34px;
       height: 34px;
-      color: #fff;
+      color: $text-inverse;
     }
   }
 
   h1 {
     margin: 0;
-    color: #1e293b;
-    font-size: 22px;
+    color: var(--jsp-text-primary);
+    font-size: 20px;
     line-height: 1.25;
     font-weight: 600;
     letter-spacing: 0;
@@ -167,12 +167,12 @@ const handleLogin = async () => {
   }
 
   :deep(.el-input__wrapper) {
-    background: #ffffff;
+    background: var(--jsp-bg-card);
     border-radius: 8px;
   }
 
   :deep(.el-input__prefix) {
-    color: #94a3b8;
+    color: $text-placeholder;
   }
 
   .form-options {
@@ -181,7 +181,7 @@ const handleLogin = async () => {
     margin: 2px 0 22px;
 
     :deep(.el-checkbox__label) {
-      color: #64748b;
+      color: var(--jsp-text-secondary);
       font-size: 14px;
     }
   }
@@ -190,7 +190,7 @@ const handleLogin = async () => {
     width: 100%;
     height: 44px;
     border-radius: 8px;
-    font-size: 15px;
+    font-size: 14px;
   }
 }
 

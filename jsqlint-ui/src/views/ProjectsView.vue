@@ -546,7 +546,7 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   height: 100%;
-  background: #ffffff;
+  background: var(--jsp-bg-card);
   border-radius: 12px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
   overflow: hidden;
@@ -557,7 +557,7 @@ onMounted(() => {
   align-items: center;
   justify-content: space-between;
   padding: 16px 24px;
-  border-bottom: 1px solid #f1f5f9;
+  border-bottom: 1px solid $border-light;
 }
 
 .workspace-tabs {
@@ -565,7 +565,7 @@ onMounted(() => {
   align-items: center;
   gap: 0;
   flex-wrap: wrap;
-  background: #f1f5f9;
+  background: $border-light;
   border-radius: 22px;
   padding: 4px;
 }
@@ -578,7 +578,7 @@ onMounted(() => {
   cursor: pointer;
   transition: all 0.2s ease;
   font-size: 13px;
-  color: #64748b;
+  color: var(--jsp-text-secondary);
   background: transparent;
   border-radius: 18px;
 
@@ -589,23 +589,23 @@ onMounted(() => {
   }
 
   &:hover {
-    color: #3b82f6;
+    color: $primary-color;
   }
 
   &.active {
-    color: #ffffff;
-    background: #3b82f6;
+    color: $text-inverse;
+    background: $primary-color;
     font-weight: 500;
     box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
   }
 
   &--add {
     padding: 6px 12px;
-    color: #94a3b8;
+    color: $text-placeholder;
     background: transparent;
 
     &:hover {
-      color: #3b82f6;
+      color: $primary-color;
     }
   }
 
@@ -624,7 +624,7 @@ onMounted(() => {
     }
 
     .el-icon {
-      font-size: 10px;
+      font-size: 12px;
     }
   }
 
@@ -643,10 +643,10 @@ onMounted(() => {
   flex-direction: column;
 
   :deep(.el-table) {
-    --el-table-header-bg-color: #fafbfc;
-    --el-table-header-text-color: #475569;
+    --el-table-header-bg-color: $bg-page-light;
+    --el-table-header-text-color: $text-secondary-dark;
     --el-table-header-font-weight: 600;
-    --el-table-border-color: #f1f5f9;
+    --el-table-border-color: $border-light;
     flex: 1;
 
     th.el-table__cell {
@@ -661,7 +661,7 @@ onMounted(() => {
     }
 
     tr:hover > td.el-table__cell {
-      background: #fafbfc;
+      background: var(--jsp-bg-card);
     }
   }
 }
@@ -670,7 +670,7 @@ onMounted(() => {
   display: flex;
   justify-content: flex-end;
   padding: 16px 0 0;
-  border-top: 1px solid #f1f5f9;
+  border-top: 1px solid $border-light;
   margin-top: auto;
 }
 
@@ -694,7 +694,7 @@ onMounted(() => {
 
   .empty-text {
     font-size: 14px;
-    color: #94a3b8;
+    color: $text-placeholder;
   }
 }
 
@@ -711,19 +711,19 @@ onMounted(() => {
 }
 
 .status-passed {
-  color: #22c55e;
+  color: $success-color;
 }
 
 .status-warning {
-  color: #eab308;
+  color: $warning-color;
 }
 
 .status-waiting {
-  color: #3b82f6;
+  color: $primary-color;
 }
 
 .status-none, .weather-none {
-  color: #94a3b8;
+  color: $text-placeholder;
 }
 
 // 晴雨表样式
@@ -739,19 +739,19 @@ onMounted(() => {
 }
 
 .weather-sunny {
-  color: #f59e0b;
+  color: $warning-color;
 }
 
 .weather-cloudy {
-  color: #94a3b8;
+  color: $text-placeholder;
 }
 
 .weather-overcast {
-  color: #64748b;
+  color: var(--jsp-text-secondary);
 }
 
 .weather-rainy {
-  color: #3b82f6;
+  color: $primary-color;
 }
 
 // 扫描数量样式
@@ -766,16 +766,16 @@ onMounted(() => {
     gap: 2px;
     padding: 2px 6px;
     border-radius: 4px;
-    background: #f1f5f9;
+    background: $border-light;
 
     .scan-label {
-      color: #94a3b8;
-      font-size: 11px;
+      color: $text-placeholder;
+      font-size: 12px;
       font-weight: 500;
     }
 
     .scan-num {
-      color: #475569;
+      color: $text-secondary-dark;
       font-size: 12px;
       font-weight: 600;
       font-family: 'Monaco', 'Menlo', monospace;
@@ -790,17 +790,17 @@ onMounted(() => {
   justify-content: center;
 
   .count-passed {
-    color: #22c55e;
+    color: $success-color;
     font-weight: 500;
   }
 
   .count-warning {
-    color: #f59e0b;
+    color: $warning-color;
     font-weight: 500;
   }
 
   .count-critical {
-    color: #ef4444;
+    color: $danger-color;
     font-weight: 600;
   }
 }
@@ -808,15 +808,15 @@ onMounted(() => {
 // 时间单元格样式
 .time-cell {
   font-size: 12px;
-  color: #64748b;
+  color: var(--jsp-text-secondary);
 }
 
 // 空间标签样式
 .workspace-tag {
   display: inline-block;
   padding: 2px 8px;
-  background: #e0f2fe;
-  color: #0284c7;
+  background: $info-light;
+  color: $primary-hover;
   border-radius: 4px;
   font-size: 12px;
   max-width: 100px;
@@ -826,8 +826,8 @@ onMounted(() => {
 }
 
 .no-workspace {
-  color: #94a3b8;
-  background: #f1f5f9;
+  color: $text-placeholder;
+  background: $border-light;
 }
 
 .workspace-dropdown {
@@ -841,31 +841,31 @@ onMounted(() => {
 
   .workspace-tag {
     max-width: 80px;
-    background: #e0f2fe;
-    color: #0284c7;
+    background: $info-light;
+    color: $primary-hover;
   }
 
   .no-workspace {
     max-width: 80px;
-    background: #f1f5f9;
-    color: #94a3b8;
+    background: $border-light;
+    color: $text-placeholder;
   }
 
   .dropdown-arrow {
     font-size: 12px;
-    color: #94a3b8;
+    color: $text-placeholder;
     transition: transform 0.2s;
   }
 
   &:hover {
-    background: #f1f5f9;
+    background: $border-light;
 
     .workspace-tag, .no-workspace {
-      background: #bae6fd;
+      background: $info-light;
     }
 
     .dropdown-arrow {
-      color: #64748b;
+      color: var(--jsp-text-secondary);
     }
   }
 }
@@ -873,14 +873,14 @@ onMounted(() => {
 .workspace-tag.readonly {
   display: inline-block;
   padding: 2px 8px;
-  background: #e0f2fe;
-  color: #0284c7;
+  background: $info-light;
+  color: $primary-hover;
   border-radius: 4px;
   font-size: 12px;
 }
 
 // 无数据样式
 .no-data {
-  color: #cbd5e1;
+  color: $border-darker;
 }
 </style>

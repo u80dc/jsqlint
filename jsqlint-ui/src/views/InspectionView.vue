@@ -361,7 +361,7 @@ onMounted(loadData)
     display: flex;
     justify-content: flex-end;
     padding: 16px 0 0;
-    border-top: 1px solid #f1f5f9;
+    border-top: 1px solid $border-light;
   }
 
   .action-icon {

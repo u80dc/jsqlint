@@ -576,6 +576,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { Lock, Download, DataAnalysis, Search, CircleCheck, Refresh, Plus, Top, Bottom, Tools, Document, VideoPlay, Close } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
+import { chartColors, chartNeutral, seriesPalette } from '@/utils/chartPalette'
 import ProjectLogsPanel from '@/components/project/ProjectLogsPanel.vue'
 import ProjectMembersPanel from '@/components/project/ProjectMembersPanel.vue'
 import ProjectReportPanel from '@/components/project/ProjectReportPanel.vue'
@@ -1473,12 +1474,12 @@ const updatePieChart = () => {
       itemWidth: 10,
       itemHeight: 10,
       textStyle: {
-        color: '#64748b',
+        color: chartNeutral.label,
         fontSize: 12
       },
       itemGap: 16
     },
-    color: ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#94a3b8'],
+    color: [...seriesPalette],
     series: [
       {
         name: t('projectDetail.chart.sqlRatio'),
@@ -1520,12 +1521,12 @@ const updateLineChart = () => {
       itemWidth: 14,
       itemHeight: 8,
       textStyle: {
-        color: '#64748b',
+        color: chartNeutral.label,
         fontSize: 12
       },
       itemGap: 16
     },
-    color: ['#3b82f6', '#ef4444', '#f59e0b', '#8b5cf6'],
+    color: [chartColors.primary, chartColors.danger, chartColors.warning, seriesPalette[4]],
     grid: {
       left: 60,
       right: 30,
@@ -1536,10 +1537,10 @@ const updateLineChart = () => {
       type: 'category',
       data: trendData.value.versions,
       axisLine: {
-        lineStyle: { color: '#e2e8f0' }
+        lineStyle: { color: chartNeutral.axisLine }
       },
       axisLabel: {
-        color: '#64748b',
+        color: chartNeutral.label,
         fontSize: 11,
         rotate: 0,
         formatter: (value: string) => value.replace(/\s+/, '\n')
@@ -1548,8 +1549,8 @@ const updateLineChart = () => {
     yAxis: {
       type: 'value',
       axisLine: { show: false },
-      splitLine: { lineStyle: { color: '#f1f5f9' } },
-      axisLabel: { color: '#64748b', fontSize: 11 }
+      splitLine: { lineStyle: { color: chartNeutral.splitLine } },
+      axisLabel: { color: chartNeutral.label, fontSize: 11 }
     },
     series: [
       {
@@ -1558,7 +1559,7 @@ const updateLineChart = () => {
         smooth: true,
         data: trendData.value.total,
         lineStyle: { width: 2 },
-        itemStyle: { color: '#3b82f6' }
+        itemStyle: { color: chartColors.primary }
       },
       {
         name: t('severity.critical'),
@@ -1566,7 +1567,7 @@ const updateLineChart = () => {
         smooth: true,
         data: trendData.value.critical,
         lineStyle: { width: 2 },
-        itemStyle: { color: '#ef4444' }
+        itemStyle: { color: chartColors.danger }
       },
       {
         name: t('severity.high'),
@@ -1574,7 +1575,7 @@ const updateLineChart = () => {
         smooth: true,
         data: trendData.value.high,
         lineStyle: { width: 2 },
-        itemStyle: { color: '#f59e0b' }
+        itemStyle: { color: chartColors.warning }
       },
       {
         name: t('projectDetail.chart.warningSql'),
@@ -1582,7 +1583,7 @@ const updateLineChart = () => {
         smooth: true,
         data: trendData.value.warning,
         lineStyle: { width: 2 },
-        itemStyle: { color: '#8b5cf6' }
+        itemStyle: { color: seriesPalette[4] }
       }
     ]
   }
@@ -1604,12 +1605,12 @@ const updateLoseScoreChart = () => {
       itemWidth: 10,
       itemHeight: 10,
       textStyle: {
-        color: '#64748b',
+        color: chartNeutral.label,
         fontSize: 12
       },
       itemGap: 16
     },
-    color: ['#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'],
+    color: [chartColors.warning, chartColors.danger, seriesPalette[4], '#ec4899'],
     series: [
       {
         name: t('projectDetail.chart.loseScore'),
@@ -1768,8 +1769,8 @@ const loadProjectOverview = async () => {
 }
 
 .top-menu {
-  background: #fff;
-  border-bottom: 1px solid #e2e8f0;
+  background: var(--jsp-bg-card);
+  border-bottom: 1px solid var(--jsp-border-color);
   margin-bottom: 2px;
   display: flex;
   align-items: center;
@@ -1787,7 +1788,7 @@ const loadProjectOverview = async () => {
     }
 
     :deep(.el-tabs__item) {
-      font-size: 15px;
+      font-size: 14px;
       height: 48px;
       line-height: 48px;
     }
@@ -1800,14 +1801,14 @@ const loadProjectOverview = async () => {
 
     .top-action-btn {
       padding: 8px;
-      color: #64748b;
+      color: var(--jsp-text-secondary);
 
       .el-icon {
         font-size: 18px;
       }
 
       &:hover {
-        color: #3b82f6;
+        color: $primary-color;
       }
     }
   }
@@ -1857,8 +1858,8 @@ const loadProjectOverview = async () => {
       height: 36px;
       border: 0;
       border-radius: 50%;
-      background: #ecfdf5;
-      color: #10b981;
+      background: $success-lighter;
+      color: $success-color;
       display: inline-flex;
       align-items: center;
       justify-content: center;
@@ -1871,8 +1872,8 @@ const loadProjectOverview = async () => {
       }
 
       &:hover {
-        background: #d1fae5;
-        color: #059669;
+        background: $success-light;
+        color: $success-color;
       }
 
       &:disabled {
@@ -1881,12 +1882,12 @@ const loadProjectOverview = async () => {
       }
 
       &.is-running {
-        background: #fef2f2;
-        color: #ef4444;
+        background: $danger-lighter;
+        color: $danger-color;
 
         &:hover {
-          background: #fee2e2;
-          color: #dc2626;
+          background: $danger-light;
+          color: $danger-color;
         }
       }
     }
@@ -1909,10 +1910,10 @@ const loadProjectOverview = async () => {
 
       .refresh-btn {
         padding: 4px;
-        color: #64748b;
+        color: var(--jsp-text-secondary);
 
         &:hover {
-          color: #3b82f6;
+          color: $primary-color;
         }
 
         .el-icon {
@@ -1957,8 +1958,8 @@ const loadProjectOverview = async () => {
         padding: 4px 0;
 
         .metric-label {
-          font-size: 11px;
-          color: #64748b;
+          font-size: 12px;
+          color: var(--jsp-text-secondary);
           margin-bottom: 4px;
           white-space: nowrap;
           overflow: hidden;
@@ -1969,7 +1970,7 @@ const loadProjectOverview = async () => {
         .metric-value {
           font-size: 20px;
           font-weight: 700;
-          color: #1e293b;
+          color: var(--jsp-text-primary);
           line-height: 1.2;
 
           .metric-unit {
@@ -1979,11 +1980,11 @@ const loadProjectOverview = async () => {
           }
 
           &.warning {
-            color: #f59e0b;
+            color: $warning-color;
           }
 
           &.success {
-            color: #10b981;
+            color: $success-color;
           }
         }
 
@@ -1991,19 +1992,19 @@ const loadProjectOverview = async () => {
           display: flex;
           align-items: center;
           gap: 2px;
-          font-size: 10px;
+          font-size: 12px;
           margin-top: 2px;
 
           .el-icon {
-            font-size: 11px;
+            font-size: 12px;
           }
 
           &.up {
-            color: #10b981;
+            color: $success-color;
           }
 
           &.down {
-            color: #ef4444;
+            color: $danger-color;
           }
         }
       }
@@ -2033,26 +2034,26 @@ const loadProjectOverview = async () => {
           justify-content: center;
           font-size: 12px;
           font-weight: 700;
-          color: #fff;
+          color: $text-inverse;
 
           &.rating-s {
-            background: linear-gradient(135deg, #10b981, #059669);
+            background: linear-gradient(135deg, $success-color, $success-color);
           }
 
           &.rating-a {
-            background: linear-gradient(135deg, #22c55e, #16a34a);
+            background: linear-gradient(135deg, $success-color, $success-color);
           }
 
           &.rating-b {
-            background: linear-gradient(135deg, #3b82f6, #2563eb);
+            background: linear-gradient(135deg, $primary-color, $primary-hover);
           }
 
           &.rating-c {
-            background: linear-gradient(135deg, #f59e0b, #d97706);
+            background: linear-gradient(135deg, $warning-color, $warning-color);
           }
 
           &.rating-d {
-            background: linear-gradient(135deg, #ef4444, #dc2626);
+            background: linear-gradient(135deg, $danger-color, $danger-color);
           }
         }
       }
@@ -2124,7 +2125,7 @@ const loadProjectOverview = async () => {
     }
 
     :deep(.el-icon) {
-      color: #94a3b8;
+      color: $text-placeholder;
     }
   }
 
@@ -2180,7 +2181,7 @@ const loadProjectOverview = async () => {
   }
 
   .whitelist-count {
-    color: #94a3b8;
+    color: $text-placeholder;
     font-size: 13px;
   }
 
@@ -2204,18 +2205,18 @@ const loadProjectOverview = async () => {
     flex-wrap: wrap;
     gap: 8px;
     min-width: 0;
-    color: #64748b;
+    color: var(--jsp-text-secondary);
     font-size: 13px;
 
     strong {
-      color: #1e293b;
+      color: var(--jsp-text-primary);
       font-weight: 600;
       word-break: break-all;
     }
   }
 
   .project-sql-count {
-    color: #94a3b8;
+    color: $text-placeholder;
   }
 
   .project-sql-table {
@@ -2233,26 +2234,26 @@ const loadProjectOverview = async () => {
     flex: 1;
     font-size: 18px;
     font-weight: 600;
-    color: #1e293b;
+    color: var(--jsp-text-primary);
   }
 
   .pull-btn {
     padding: 4px;
-    color: #64748b;
+    color: var(--jsp-text-secondary);
 
     .el-icon {
       font-size: 18px;
     }
 
     &:hover {
-      color: #3b82f6;
+      color: $primary-color;
     }
   }
 
   .section-title {
     font-size: 16px;
     font-weight: 600;
-    color: #1e293b;
+    color: var(--jsp-text-primary);
   }
 
 }
@@ -2271,20 +2272,20 @@ const loadProjectOverview = async () => {
     width: 80px;
     flex-shrink: 0;
     font-size: 14px;
-    color: #64748b;
+    color: var(--jsp-text-secondary);
   }
 
   .info-value {
     flex: 1;
     font-size: 14px;
-    color: #1e293b;
+    color: var(--jsp-text-primary);
     word-break: break-all;
 
     &.git-url {
       font-family: 'Monaco', 'Menlo', monospace;
       font-size: 13px;
-      color: #3b82f6;
-      background: #f1f5f9;
+      color: $primary-color;
+      background: $border-light;
       padding: 8px 12px;
       border-radius: 6px;
     }
@@ -2301,11 +2302,11 @@ const loadProjectOverview = async () => {
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    color: #3b82f6;
+    color: $primary-color;
     cursor: pointer;
 
     &:hover {
-      color: #2563eb;
+      color: $primary-hover;
 
       .credential-action {
         text-decoration: underline;
@@ -2313,21 +2314,21 @@ const loadProjectOverview = async () => {
     }
 
     .el-icon {
-      color: #64748b;
+      color: var(--jsp-text-secondary);
     }
   }
 
   .credential-detail {
-    color: #94a3b8;
+    color: $text-placeholder;
     font-size: 12px;
   }
 
   .no-credential {
-    color: #64748b;
+    color: var(--jsp-text-secondary);
     cursor: pointer;
 
     &:hover {
-      color: #3b82f6;
+      color: $primary-color;
 
       .credential-action {
         text-decoration: underline;
@@ -2336,7 +2337,7 @@ const loadProjectOverview = async () => {
   }
 
   .credential-action {
-    color: #94a3b8;
+    color: $text-placeholder;
     font-size: 13px;
     margin-left: 2px;
   }
@@ -2350,7 +2351,7 @@ const loadProjectOverview = async () => {
   gap: 12px;
 
   .credential-option-detail {
-    color: #94a3b8;
+    color: $text-placeholder;
     font-size: 12px;
   }
 }
@@ -2360,6 +2361,6 @@ const loadProjectOverview = async () => {
   height: 16px;
   vertical-align: middle;
   margin-right: 6px;
-  color: #64748b;
+  color: var(--jsp-text-secondary);
 }
 </style>

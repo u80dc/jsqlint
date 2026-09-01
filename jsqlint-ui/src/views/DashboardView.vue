@@ -222,6 +222,13 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
 import * as echarts from 'echarts'
+import {
+  chartColors,
+  chartNeutral,
+  severityColors,
+  seriesPalette,
+  darkTooltip
+} from '@/utils/chartPalette'
 import { ElMessage } from 'element-plus'
 import { Document, SuccessFilled, WarningFilled, CircleCloseFilled, ArrowRight } from '@element-plus/icons-vue'
 import {
@@ -349,14 +356,14 @@ const renderTrendChart = (data?: OverviewTrendVO) => {
   const option = {
     tooltip: {
       trigger: 'axis',
-      backgroundColor: '#1e293b',
-      borderColor: '#334155',
-      textStyle: { color: '#f8fafc' }
+      backgroundColor: darkTooltip.backgroundColor,
+      borderColor: darkTooltip.borderColor,
+      textStyle: { color: darkTooltip.textStyle.color }
     },
     legend: {
       data: [t('dashboard.legend.safe'), t('dashboard.legend.warning'), t('dashboard.legend.danger')],
       bottom: 0,
-      textStyle: { color: '#64748b' }
+      textStyle: { color: chartNeutral.label }
     },
     grid: {
       left: '3%',
@@ -368,14 +375,14 @@ const renderTrendChart = (data?: OverviewTrendVO) => {
     xAxis: {
       type: 'category',
       data: data?.labels || [],
-      axisLine: { lineStyle: { color: '#e2e8f0' } },
-      axisLabel: { color: '#64748b' }
+      axisLine: { lineStyle: { color: chartNeutral.axisLine } },
+      axisLabel: { color: chartNeutral.label }
     },
     yAxis: {
       type: 'value',
       axisLine: { show: false },
-      splitLine: { lineStyle: { color: '#f1f5f9' } },
-      axisLabel: { color: '#64748b' }
+      splitLine: { lineStyle: { color: chartNeutral.splitLine } },
+      axisLabel: { color: chartNeutral.label }
     },
     series: [
       {
@@ -384,8 +391,8 @@ const renderTrendChart = (data?: OverviewTrendVO) => {
         smooth: true,
         symbol: 'circle',
         symbolSize: 8,
-        lineStyle: { color: '#10b981', width: 3 },
-        itemStyle: { color: '#10b981' },
+        lineStyle: { color: chartColors.success, width: 3 },
+        itemStyle: { color: chartColors.success },
         areaStyle: {
           color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
             { offset: 0, color: 'rgba(16, 185, 129, 0.2)' },
@@ -400,8 +407,8 @@ const renderTrendChart = (data?: OverviewTrendVO) => {
         smooth: true,
         symbol: 'circle',
         symbolSize: 8,
-        lineStyle: { color: '#f59e0b', width: 3 },
-        itemStyle: { color: '#f59e0b' },
+        lineStyle: { color: chartColors.warning, width: 3 },
+        itemStyle: { color: chartColors.warning },
         areaStyle: {
           color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
             { offset: 0, color: 'rgba(245, 158, 11, 0.2)' },
@@ -416,8 +423,8 @@ const renderTrendChart = (data?: OverviewTrendVO) => {
         smooth: true,
         symbol: 'circle',
         symbolSize: 8,
-        lineStyle: { color: '#ef4444', width: 3 },
-        itemStyle: { color: '#ef4444' },
+        lineStyle: { color: chartColors.danger, width: 3 },
+        itemStyle: { color: chartColors.danger },
         areaStyle: {
           color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
             { offset: 0, color: 'rgba(239, 68, 68, 0.2)' },
@@ -435,28 +442,28 @@ const renderTrendChart = (data?: OverviewTrendVO) => {
 const renderPieChart = () => {
   if (!pieChart) return
   const distribution = [
-    { value: summaryStats.value.safeSqlCount, name: t('dashboard.safeSql'), itemStyle: { color: '#10b981' } },
-    { value: summaryStats.value.warningSqlCount, name: t('dashboard.warningSql'), itemStyle: { color: '#f59e0b' } },
-    { value: summaryStats.value.dangerSqlCount, name: t('dashboard.dangerSql'), itemStyle: { color: '#ef4444' } }
+    { value: summaryStats.value.safeSqlCount, name: t('dashboard.safeSql'), itemStyle: { color: chartColors.success } },
+    { value: summaryStats.value.warningSqlCount, name: t('dashboard.warningSql'), itemStyle: { color: chartColors.warning } },
+    { value: summaryStats.value.dangerSqlCount, name: t('dashboard.dangerSql'), itemStyle: { color: chartColors.danger } }
   ]
   const totalDistribution = distribution.reduce((sum, item) => sum + item.value, 0)
   // 无扫描数据时展示灰色空态占位，不再用项目总数冒充分布
   const data = totalDistribution > 0
     ? distribution
-    : [{ value: 1, name: t('dashboard.noScanData'), itemStyle: { color: '#e2e8f0' } }]
+    : [{ value: 1, name: t('dashboard.noScanData'), itemStyle: { color: chartNeutral.empty } }]
 
   const option = {
     tooltip: {
       trigger: 'item',
-      backgroundColor: '#1e293b',
-      borderColor: '#334155',
-      textStyle: { color: '#f8fafc' }
+      backgroundColor: darkTooltip.backgroundColor,
+      borderColor: darkTooltip.borderColor,
+      textStyle: { color: darkTooltip.textStyle.color }
     },
     legend: {
       orient: 'vertical',
       right: '5%',
       top: 'center',
-      textStyle: { color: '#64748b' }
+      textStyle: { color: chartNeutral.label }
     },
     series: [{
       type: 'pie',
@@ -465,12 +472,12 @@ const renderPieChart = () => {
       avoidLabelOverlap: false,
       itemStyle: {
         borderRadius: 8,
-        borderColor: '#ffffff',
+        borderColor: '#ffffff', // 环形图分瓣白描边
         borderWidth: 3
       },
       label: { show: false },
       emphasis: {
-        label: { show: true, fontSize: 18, fontWeight: 'bold', color: '#1e293b' }
+        label: { show: true, fontSize: 18, fontWeight: 'bold', color: chartNeutral.tooltipBg }
       },
       data
     }]
@@ -499,13 +506,6 @@ const initCharts = () => {
   }
 }
 
-const SEVERITY_COLORS: Record<string, string> = {
-  critical: '#ef4444',
-  high: '#f97316',
-  warning: '#f59e0b',
-  info: '#3b82f6'
-}
-
 /**
  * 规则命中 TOP N：横向柱状图，按规则严重级别着色
  */
@@ -517,9 +517,9 @@ const renderRuleHitChart = (data?: OverviewRuleHitVO) => {
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'shadow' },
-      backgroundColor: '#1e293b',
-      borderColor: '#334155',
-      textStyle: { color: '#f8fafc' }
+      backgroundColor: darkTooltip.backgroundColor,
+      borderColor: darkTooltip.borderColor,
+      textStyle: { color: darkTooltip.textStyle.color }
     },
     grid: {
       left: '3%',
@@ -531,26 +531,26 @@ const renderRuleHitChart = (data?: OverviewRuleHitVO) => {
     xAxis: {
       type: 'value',
       axisLine: { show: false },
-      splitLine: { lineStyle: { color: '#f1f5f9' } },
-      axisLabel: { color: '#64748b' }
+      splitLine: { lineStyle: { color: chartNeutral.splitLine } },
+      axisLabel: { color: chartNeutral.label }
     },
     yAxis: {
       type: 'category',
       data: rules.map(rule => rule.ruleName),
-      axisLine: { lineStyle: { color: '#e2e8f0' } },
-      axisLabel: { color: '#64748b', width: 120, overflow: 'truncate' }
+      axisLine: { lineStyle: { color: chartNeutral.axisLine } },
+      axisLabel: { color: chartNeutral.label, width: 120, overflow: 'truncate' }
     },
     series: [{
       type: 'bar',
       barMaxWidth: 18,
       data: rules.map(rule => ({
         value: rule.hitCount,
-        itemStyle: { color: SEVERITY_COLORS[rule.severity || ''] || '#6366f1', borderRadius: [0, 4, 4, 0] }
+        itemStyle: { color: severityColors[rule.severity || ''] || seriesPalette[0], borderRadius: [0, 4, 4, 0] }
       })),
       label: {
         show: true,
         position: 'right',
-        color: '#64748b'
+        color: chartNeutral.label
       }
     }]
   }
@@ -570,15 +570,15 @@ const renderSeverityChart = (data?: OverviewSeverityDistributionVO) => {
   ]
   const total = entries.reduce((sum, item) => sum + item.value, 0)
   const seriesData = total > 0
-    ? entries.map(item => ({ ...item, itemStyle: { color: SEVERITY_COLORS[item.key] } }))
-    : [{ value: 1, name: t('dashboard.noIssues'), itemStyle: { color: '#e2e8f0' } }]
+    ? entries.map(item => ({ ...item, itemStyle: { color: severityColors[item.key] } }))
+    : [{ value: 1, name: t('dashboard.noIssues'), itemStyle: { color: chartNeutral.empty } }]
 
   const option = {
     tooltip: {
       trigger: 'item',
-      backgroundColor: '#1e293b',
-      borderColor: '#334155',
-      textStyle: { color: '#f8fafc' }
+      backgroundColor: darkTooltip.backgroundColor,
+      borderColor: darkTooltip.borderColor,
+      textStyle: { color: darkTooltip.textStyle.color }
     },
     series: [{
       type: 'pie',
@@ -587,7 +587,7 @@ const renderSeverityChart = (data?: OverviewSeverityDistributionVO) => {
       avoidLabelOverlap: false,
       itemStyle: {
         borderRadius: 6,
-        borderColor: '#ffffff',
+        borderColor: '#ffffff', // 环形图分瓣白描边
         borderWidth: 2
       },
       label: {
@@ -595,8 +595,8 @@ const renderSeverityChart = (data?: OverviewSeverityDistributionVO) => {
         position: 'center',
         formatter: total > 0 ? `{total|${total}}\n{label|${t('dashboard.totalIssues')}}` : `{label|${t('dashboard.noIssues')}}`,
         rich: {
-          total: { fontSize: 22, fontWeight: 'bold', color: '#1e293b' },
-          label: { fontSize: 12, color: '#64748b', padding: [4, 0, 0, 0] }
+          total: { fontSize: 22, fontWeight: 'bold', color: chartNeutral.tooltipBg },
+          label: { fontSize: 12, color: chartNeutral.label, padding: [4, 0, 0, 0] }
         }
       },
       data: seriesData
@@ -613,18 +613,18 @@ const renderScoreChart = (data?: OverviewProjectScoreVO) => {
   // 评分升序返回（最差在前），倒序绘制使最差在顶部
   const projects = [...(data?.projects || [])].reverse()
   const scoreColor = (score: number) => {
-    if (score >= 90) return '#10b981'
-    if (score >= 75) return '#84cc16'
-    if (score >= 60) return '#f59e0b'
-    return '#ef4444'
+    if (score >= 90) return chartColors.success
+    if (score >= 75) return '#84cc16' // 黄绿过渡档，仅此处使用
+    if (score >= 60) return chartColors.warning
+    return chartColors.danger
   }
   const option = {
     tooltip: {
       trigger: 'axis',
       axisPointer: { type: 'shadow' },
-      backgroundColor: '#1e293b',
-      borderColor: '#334155',
-      textStyle: { color: '#f8fafc' },
+      backgroundColor: darkTooltip.backgroundColor,
+      borderColor: darkTooltip.borderColor,
+      textStyle: { color: darkTooltip.textStyle.color },
       formatter: (params: unknown) => {
         const item = Array.isArray(params) ? params[0] : params
         const project = projects[item.dataIndex]
@@ -643,14 +643,14 @@ const renderScoreChart = (data?: OverviewProjectScoreVO) => {
       type: 'value',
       max: 100,
       axisLine: { show: false },
-      splitLine: { lineStyle: { color: '#f1f5f9' } },
-      axisLabel: { color: '#64748b' }
+      splitLine: { lineStyle: { color: chartNeutral.splitLine } },
+      axisLabel: { color: chartNeutral.label }
     },
     yAxis: {
       type: 'category',
       data: projects.map(project => project.projectName),
-      axisLine: { lineStyle: { color: '#e2e8f0' } },
-      axisLabel: { color: '#64748b', width: 100, overflow: 'truncate' }
+      axisLine: { lineStyle: { color: chartNeutral.axisLine } },
+      axisLabel: { color: chartNeutral.label, width: 100, overflow: 'truncate' }
     },
     series: [{
       type: 'bar',
@@ -662,7 +662,7 @@ const renderScoreChart = (data?: OverviewProjectScoreVO) => {
       label: {
         show: true,
         position: 'right',
-        color: '#64748b',
+        color: chartNeutral.label,
         formatter: '{c}'
       }
     }]
@@ -776,7 +776,7 @@ onUnmounted(() => {
 }
 
 .stat-card {
-  background: #ffffff;
+  background: var(--jsp-bg-card);
   border-radius: 12px;
   padding: 20px;
   display: flex;
@@ -810,35 +810,35 @@ onUnmounted(() => {
   &__value {
     font-size: 28px;
     font-weight: 700;
-    color: #1e293b;
+    color: var(--jsp-text-primary);
     line-height: 1.2;
   }
 
   &__label {
     font-size: 14px;
-    color: #64748b;
+    color: var(--jsp-text-secondary);
     margin-top: 4px;
   }
 
   // 颜色变体
   &--blue .stat-card__icon {
-    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-    color: #fff;
+    background: linear-gradient(135deg, $primary-color 0%, $primary-hover 100%);
+    color: $text-inverse;
   }
 
   &--green .stat-card__icon {
-    background: linear-gradient(135deg, #10b981 0%, #059669 100%);
-    color: #fff;
+    background: linear-gradient(135deg, $success-color 0%, $success-color 100%);
+    color: $text-inverse;
   }
 
   &--yellow .stat-card__icon {
-    background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
-    color: #fff;
+    background: linear-gradient(135deg, $warning-color 0%, $warning-color 100%);
+    color: $text-inverse;
   }
 
   &--red .stat-card__icon {
-    background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-    color: #fff;
+    background: linear-gradient(135deg, $danger-color 0%, $danger-color 100%);
+    color: $text-inverse;
   }
 }
 
@@ -867,7 +867,7 @@ onUnmounted(() => {
   .card-title {
     font-size: 16px;
     font-weight: 600;
-    color: #1e293b;
+    color: var(--jsp-text-primary);
   }
 
   .chart {
@@ -908,18 +908,18 @@ onUnmounted(() => {
   .card-title {
     font-size: 16px;
     font-weight: 600;
-    color: #1e293b;
+    color: var(--jsp-text-primary);
   }
 
   .text-action {
     display: inline-flex;
     align-items: center;
-    color: #3b82f6;
+    color: $primary-color;
     font-size: 14px;
     cursor: pointer;
 
     &:hover {
-      color: #2563eb;
+      color: $primary-hover;
     }
   }
 }

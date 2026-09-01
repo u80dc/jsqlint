@@ -333,7 +333,7 @@ watch(() => props.active, (active) => {
 
     :deep(.el-card__header) {
       padding: 16px 24px;
-      border-bottom: 1px solid #f1f5f9;
+      border-bottom: 1px solid $border-light;
     }
 
     :deep(.el-card__body) {
@@ -344,7 +344,7 @@ watch(() => props.active, (active) => {
   .members-list-card {
     :deep(.el-card__header) {
       padding: 16px 24px;
-      border-bottom: 1px solid #f1f5f9;
+      border-bottom: 1px solid $border-light;
     }
 
     :deep(.el-card__body) {
@@ -362,12 +362,12 @@ watch(() => props.active, (active) => {
   .section-title {
     font-size: 16px;
     font-weight: 600;
-    color: #1e293b;
+    color: var(--jsp-text-primary);
   }
 
   .member-count {
     font-size: 14px;
-    color: #64748b;
+    color: var(--jsp-text-secondary);
   }
 }
 
@@ -392,14 +392,14 @@ watch(() => props.active, (active) => {
   }
 
   .user-option-name {
-    color: #94a3b8;
+    color: $text-placeholder;
     font-size: 12px;
     margin-left: 8px;
   }
 }
 
 .group-option-count {
-  color: #94a3b8;
+  color: $text-placeholder;
   font-size: 12px;
   margin-left: 8px;
 }
@@ -407,16 +407,16 @@ watch(() => props.active, (active) => {
 .group-members-preview {
   margin-top: 16px;
   padding: 12px;
-  background: #f8fafc;
+  background: var(--jsp-bg-card);
   border-radius: 6px;
-  border: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--jsp-border-color);
 
   .preview-header {
     margin-bottom: 8px;
 
     .preview-title {
       font-size: 13px;
-      color: #64748b;
+      color: var(--jsp-text-secondary);
     }
   }
 

@@ -1,73 +1,10 @@
 // ============================================
-// JSQLint Admin Theme - Design System Tokens
+// JSQLint Admin Theme
+// 设计令牌统一收敛在 _tokens.scss（vite additionalData 自动注入所有 scss）
 // ============================================
-
-// Primary Colors
 @use "sass:color";
-
-$primary-color: #3b82f6;
-$primary-hover: #2563eb;
-$primary-light: #dbeafe;
-
-// Success Colors
-$success-color: #10b981;
-$success-light: #d1fae5;
-
-// Warning Colors
-$warning-color: #f59e0b;
-$warning-light: #fef3c7;
-
-// Danger Colors
-$danger-color: #ef4444;
-$danger-light: #fee2e2;
-
-// Background Colors
-$bg-page: #f4f6f9;
-$bg-card: #ffffff;
-$bg-sidebar: #1e293b;
-$bg-sidebar-active: rgba(59, 130, 246, 0.15);
-$bg-header: #ffffff;
-
-// Text Colors
-$text-primary: #1e293b;
-$text-secondary: #64748b;
-$text-placeholder: #94a3b8;
-$text-sidebar: #94a3b8;
-$text-sidebar-active: #ffffff;
-$text-inverse: #ffffff;
-
-// Border Colors
-$border-color: #e2e8f0;
-$border-light: #f1f5f9;
-
-// Shadow
-$shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
-$shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
-$shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -4px rgba(0, 0, 0, 0.1);
-$shadow-card: 0 1px 3px rgba(0, 0, 0, 0.05);
-
-// Border Radius
-$radius-sm: 6px;
-$radius-md: 8px;
-$radius-lg: 12px;
-$radius-xl: 16px;
-
-// Spacing
-$spacing-xs: 4px;
-$spacing-sm: 8px;
-$spacing-md: 16px;
-$spacing-lg: 24px;
-$spacing-xl: 32px;
-
-// Layout
-$sidebar-width: 240px;
-$sidebar-collapsed-width: 72px;
-$header-height: 64px;
-
-// Transitions
-$transition-fast: 0.15s ease;
-$transition-base: 0.2s ease;
-$transition-slow: 0.3s ease;
+@use "./tokens" as *;
+@use "./theme-vars";
 
 // ============================================
 // Global Reset & Base Styles
@@ -84,6 +21,7 @@ html, body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  background: var(--jsp-bg-page);
 }
 
 #app {
@@ -95,25 +33,31 @@ html, body {
 // ============================================
 
 // Card
+// 优先走 Element Plus 官方 CSS 变量通道，避免 !important 对抗
 .el-card {
-  border: none !important;
-  border-radius: $radius-lg !important;
-  box-shadow: $shadow-card !important;
-  transition: box-shadow $transition-base !important;
+  --el-card-border-color: transparent;
+  --el-card-border-radius: #{$radius-lg};
+  --el-card-padding: #{$spacing-lg};
+  --el-card-bg-color: var(--jsp-bg-card);
+
+  border: none;
+  border-radius: $radius-lg;
+  box-shadow: $shadow-card;
+  transition: box-shadow $transition-base;
 
   &:hover {
-    box-shadow: $shadow-md !important;
+    box-shadow: $shadow-md;
   }
 
   .el-card__header {
-    padding: $spacing-md $spacing-lg !important;
-    border-bottom: 1px solid $border-light !important;
-    font-weight: 600 !important;
-    color: $text-primary !important;
+    padding: $spacing-md $spacing-lg;
+    border-bottom: 1px solid $border-light;
+    font-weight: 600;
+    color: $text-primary;
   }
 
   .el-card__body {
-    padding: $spacing-lg !important;
+    padding: $spacing-lg;
   }
 }
 
@@ -125,33 +69,31 @@ html, body {
   }
 }
 
-// Button
+// Button（走官方变量通道）
 .el-button {
-  border-radius: $radius-md !important;
-  font-weight: 500 !important;
-  transition: all $transition-fast !important;
+  --el-button-border-radius: #{$radius-md};
+  --el-button-font-weight: 500;
 
   &--primary {
-    background: $primary-color !important;
-    border-color: $primary-color !important;
-
-    &:hover {
-      background: $primary-hover !important;
-      border-color: $primary-hover !important;
-    }
+    --el-button-bg-color: #{$primary-color};
+    --el-button-border-color: #{$primary-color};
+    --el-button-hover-bg-color: #{$primary-hover};
+    --el-button-hover-border-color: #{$primary-hover};
+    --el-button-active-bg-color: #{$primary-hover};
+    --el-button-active-border-color: #{$primary-hover};
   }
 }
 
-// Input
+// Input（wrapper 阴影是 EP 的边框实现方式，需覆盖 shadow，保留必要 important）
 .el-input {
   .el-input__wrapper {
-    border-radius: $radius-md !important;
-    box-shadow: 0 0 0 1px $border-color !important;
-    transition: all $transition-fast !important;
-    padding: 12px 16px !important;
+    border-radius: $radius-md;
+    box-shadow: 0 0 0 1px $border-color;
+    transition: all $transition-fast;
+    padding: 12px 16px;
 
     &:hover {
-      box-shadow: 0 0 0 1px #cbd5e1 !important;
+      box-shadow: 0 0 0 1px $border-darker;
     }
 
     &.is-focus {
@@ -163,69 +105,75 @@ html, body {
 // Select
 .el-select {
   .el-select__wrapper {
-    border-radius: $radius-md !important;
-    min-height: 40px !important;
+    border-radius: $radius-md;
+    min-height: 40px;
   }
 }
 
 // Form
 .el-form-item__label {
-  color: $text-secondary !important;
-  font-weight: 500 !important;
+  color: $text-secondary;
+  font-weight: 500;
 }
 
 .el-form-item__error {
-  font-size: 12px !important;
+  font-size: 12px;
 }
 
 // Table
 .el-table {
   --el-table-border-color: #{$border-light};
-  --el-table-header-bg-color: #{$bg-page};
-  border-radius: $radius-md !important;
-  overflow: hidden !important;
+  --el-table-header-bg-color: var(--jsp-bg-page);
+  --el-table-row-hover-bg-color: var(--jsp-bg-page);
+
+  border-radius: $radius-md;
+  overflow: hidden;
 
   th.el-table__cell {
-    font-weight: 600 !important;
-    color: $text-secondary !important;
-    font-size: 13px !important;
-    text-transform: uppercase !important;
-    letter-spacing: 0.5px !important;
+    font-weight: 600;
+    color: $text-secondary;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
   }
 
   td.el-table__cell {
-    padding: 16px 0 !important;
+    padding: 16px 0;
   }
 
   tr:hover > td.el-table__cell {
-    background: $bg-page !important;
+    background: $bg-page;
   }
 }
 
 // Dialog
 .el-dialog {
-  border-radius: $radius-xl !important;
+  --el-dialog-border-radius: #{$radius-xl};
+
+  border-radius: $radius-xl;
 
   .el-dialog__header {
-    padding: $spacing-lg $spacing-lg $spacing-md !important;
-    border-bottom: 1px solid $border-light !important;
-    margin: 0 !important;
+    padding: $spacing-lg $spacing-lg $spacing-md;
+    border-bottom: 1px solid $border-light;
+    margin: 0;
   }
 
   .el-dialog__body {
-    padding: $spacing-lg !important;
+    padding: $spacing-lg;
   }
 
   .el-dialog__footer {
-    padding: $spacing-md $spacing-lg !important;
-    border-top: 1px solid $border-light !important;
+    padding: $spacing-md $spacing-lg;
+    border-top: 1px solid $border-light;
   }
 }
 
 // Tag
 .el-tag {
-  border-radius: $radius-sm !important;
-  font-weight: 500 !important;
+  --el-tag-border-radius: #{$radius-sm};
+
+  border-radius: $radius-sm;
+  font-weight: 500;
 }
 
 // Dropdown
@@ -300,7 +248,7 @@ html, body {
   gap: $spacing-md;
   padding: 12px $spacing-md;
   margin-bottom: $spacing-md;
-  background: #f8fafc;
+  background: var(--jsp-bg-card);
   border: 1px solid $border-color;
   border-radius: $radius-md;
 

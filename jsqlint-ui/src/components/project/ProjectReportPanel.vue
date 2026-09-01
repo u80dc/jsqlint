@@ -390,20 +390,20 @@ const formatDate = (date?: string) => {
   .section-title {
     font-size: 16px;
     font-weight: 600;
-    color: #1e293b;
+    color: var(--jsp-text-primary);
   }
 }
 
 .report-download-btn {
   padding: 4px;
-  color: #64748b;
+  color: var(--jsp-text-secondary);
 
   .el-icon {
     font-size: 18px;
   }
 
   &:hover {
-    color: #3b82f6;
+    color: $primary-color;
   }
 }
 
@@ -423,9 +423,9 @@ const formatDate = (date?: string) => {
 .report-score,
 .report-metric,
 .report-section {
-  border: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--jsp-border-color);
   border-radius: 8px;
-  background: #ffffff;
+  background: var(--jsp-bg-card);
 }
 
 .report-score {
@@ -440,11 +440,11 @@ const formatDate = (date?: string) => {
     font-size: 42px;
     line-height: 1;
     font-weight: 700;
-    color: #1e293b;
+    color: var(--jsp-text-primary);
   }
 
   .score-time {
-    color: #64748b;
+    color: var(--jsp-text-secondary);
     font-size: 12px;
     text-align: center;
   }
@@ -463,13 +463,13 @@ const formatDate = (date?: string) => {
   justify-content: center;
 
   .metric-label {
-    color: #64748b;
+    color: var(--jsp-text-secondary);
     font-size: 13px;
     margin-bottom: 8px;
   }
 
   strong {
-    color: #1e293b;
+    color: var(--jsp-text-primary);
     font-size: 24px;
     line-height: 1;
   }
@@ -487,7 +487,7 @@ const formatDate = (date?: string) => {
 }
 
 .report-section-title {
-  color: #1e293b;
+  color: var(--jsp-text-primary);
   font-weight: 600;
   margin-bottom: 12px;
 }
@@ -502,31 +502,31 @@ const formatDate = (date?: string) => {
   padding: 5px 10px;
   border-radius: 6px;
   font-size: 13px;
-  background: #f1f5f9;
-  color: #475569;
+  background: $border-light;
+  color: $text-secondary-dark;
 
   &.critical,
   &.security {
-    background: #fee2e2;
-    color: #dc2626;
+    background: $danger-light;
+    color: $danger-color;
   }
 
   &.high,
   &.performance {
-    background: #fef3c7;
-    color: #d97706;
+    background: $warning-light;
+    color: $warning-color;
   }
 
   &.warning,
   &.quality {
-    background: #dbeafe;
-    color: #2563eb;
+    background: $primary-light;
+    color: $primary-hover;
   }
 
   &.info,
   &.other {
-    background: #f1f5f9;
-    color: #475569;
+    background: $border-light;
+    color: $text-secondary-dark;
   }
 }
 
@@ -543,17 +543,17 @@ const formatDate = (date?: string) => {
 
   .action-btn {
     cursor: pointer;
-    color: #2563eb;
+    color: $primary-hover;
 
     &:hover {
-      color: #1d4ed8;
+      color: $primary-hover;
     }
 
     &.danger {
-      color: #dc2626;
+      color: $danger-color;
 
       &:hover {
-        color: #b91c1c;
+        color: $danger-color;
       }
     }
   }
@@ -567,7 +567,7 @@ const formatDate = (date?: string) => {
 
 .ignore-message {
   margin: 0;
-  color: #475569;
+  color: $text-secondary-dark;
   line-height: 1.6;
 }
 
@@ -576,9 +576,9 @@ const formatDate = (date?: string) => {
   flex-direction: column;
   gap: 10px;
   padding: 12px;
-  border: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--jsp-border-color);
   border-radius: 8px;
-  background: #f8fafc;
+  background: var(--jsp-bg-card);
 
   div {
     display: flex;
@@ -590,14 +590,14 @@ const formatDate = (date?: string) => {
   span {
     width: 72px;
     flex-shrink: 0;
-    color: #64748b;
+    color: var(--jsp-text-secondary);
   }
 
   strong,
   code {
     flex: 1;
     min-width: 0;
-    color: #1e293b;
+    color: var(--jsp-text-primary);
     word-break: break-all;
   }
 

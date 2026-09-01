@@ -113,11 +113,11 @@ const navigateTo = (path: string) => {
     align-items: center;
     justify-content: center;
     padding: 30px;
-    background: #fff;
+    background: var(--jsp-bg-card);
     border-radius: 8px;
     cursor: pointer;
     transition: all 0.3s;
-    border: 1px solid #ebeef5;
+    border-bottom: 1px solid var(--jsp-border-color);
 
     &:hover {
       box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
@@ -126,13 +126,13 @@ const navigateTo = (path: string) => {
 
     .icon {
       font-size: 36px;
-      color: #409eff;
+      color: $primary-color;
       margin-bottom: 12px;
     }
 
     .text {
       font-size: 16px;
-      color: #303133;
+      color: var(--jsp-text-primary);
     }
   }
 
@@ -142,14 +142,14 @@ const navigateTo = (path: string) => {
       justify-content: space-between;
       align-items: center;
       padding: 12px 0;
-      border-bottom: 1px solid #ebeef5;
+      border-bottom: 1px solid var(--jsp-border-color);
 
       &:last-child {
         border-bottom: none;
       }
 
       .label {
-        color: #606266;
+        color: var(--jsp-text-secondary);
       }
     }
   }

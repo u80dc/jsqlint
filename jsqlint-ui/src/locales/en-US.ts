@@ -14,6 +14,10 @@ export default {
     back: 'Back',
     refresh: 'Refresh',
     logout: 'Logout',
+    theme: {
+      dark: 'Switch to Dark Mode',
+      light: 'Switch to Light Mode'
+    },
     welcome: 'Welcome Back',
     loading: 'Loading...',
     success: 'Success',
@@ -442,10 +446,6 @@ export default {
     title: 'System Settings',
     basic: {
       tab: 'Basic Config',
-      themeColor: 'Theme Color',
-      themeBlue: 'Default Blue',
-      themePurple: 'Elegant Purple',
-      themeGreen: 'Fresh Green',
       language: 'Language',
       languageZh: '简体中文',
       languageEn: 'English',

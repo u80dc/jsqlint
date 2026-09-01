@@ -36,6 +36,14 @@
     </div>
 
     <div class="header-right">
+      <div
+        class="header-icon-btn"
+        :title="theme === 'dark' ? t('common.theme.light') : t('common.theme.dark')"
+        @click="toggleTheme"
+      >
+        <el-icon :size="20"><Sunny v-if="theme === 'dark'" /><Moon v-else /></el-icon>
+      </div>
+
       <el-badge :value="notificationCount" :hidden="notificationCount === 0" :max="99" class="notification-badge">
         <div class="header-icon-btn" @click="$emit('toggle-notifications')">
           <el-icon :size="20"><Bell /></el-icon>
@@ -76,8 +84,9 @@
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
-import { ArrowDown, ArrowLeft, ArrowRight, Bell, Postcard, SwitchButton, User } from '@element-plus/icons-vue'
+import { ArrowDown, ArrowLeft, ArrowRight, Bell, Moon, Postcard, Sunny, SwitchButton, User } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
+import { useTheme } from '@/composables/useTheme'
 
 defineProps<{
   collapsed: boolean
@@ -97,6 +106,8 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+
+const { theme, toggleTheme } = useTheme()
 const userStore = useUserStore()
 
 const handleCommand = (command: string) => {
@@ -110,7 +121,7 @@ const handleCommand = (command: string) => {
 .top-header {
   height: 64px;
   flex-shrink: 0;
-  background: #ffffff;
+  background: var(--jsp-bg-card);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -125,7 +136,7 @@ const handleCommand = (command: string) => {
     .page-title {
       font-size: 18px;
       font-weight: 600;
-      color: #1e293b;
+      color: var(--jsp-text-primary);
       margin: 0;
     }
 
@@ -141,12 +152,12 @@ const handleCommand = (command: string) => {
         align-items: center;
         gap: 6px;
         flex-shrink: 0;
-        color: #1e293b;
+        color: var(--jsp-text-primary);
         cursor: pointer;
         transition: color 0.2s ease;
 
         &:hover {
-          color: #3b82f6;
+          color: $primary-color;
         }
 
         .el-icon {
@@ -162,7 +173,7 @@ const handleCommand = (command: string) => {
     .detail-nav {
       .detail-name {
         flex-shrink: 0;
-        color: #1e293b;
+        color: var(--jsp-text-primary);
         font-size: 14px;
         font-weight: 400;
         line-height: 1.4;
@@ -170,7 +181,7 @@ const handleCommand = (command: string) => {
 
       .detail-location {
         min-width: 0;
-        color: #94a3b8;
+        color: $text-placeholder;
         font-size: 12px;
         font-weight: 400;
         line-height: 1.4;
@@ -188,20 +199,20 @@ const handleCommand = (command: string) => {
         line-height: normal;
 
         :deep(.el-breadcrumb__inner) {
-          color: #64748b;
+          color: var(--jsp-text-secondary);
           font-weight: normal;
           line-height: normal;
         }
 
         :deep(.breadcrumb-separator) {
-          color: #94a3b8;
+          color: $text-placeholder;
           font-size: 12px;
           margin: 0 8px;
           line-height: normal;
         }
 
         :deep(.el-breadcrumb__inner.is-link:hover) {
-          color: #3b82f6;
+          color: $primary-color;
         }
       }
     }
@@ -216,7 +227,7 @@ const handleCommand = (command: string) => {
 
   .notification-badge {
     :deep(.el-badge__content) {
-      background: #ef4444;
+      background: $danger-color;
       border: none;
     }
   }
@@ -228,13 +239,13 @@ const handleCommand = (command: string) => {
     align-items: center;
     justify-content: center;
     border-radius: 10px;
-    color: #64748b;
+    color: var(--jsp-text-secondary);
     cursor: pointer;
     transition: all 0.15s ease;
 
     &:hover {
-      background: #f1f5f9;
-      color: #3b82f6;
+      background: $border-light;
+      color: $primary-color;
     }
   }
 
@@ -247,7 +258,7 @@ const handleCommand = (command: string) => {
     transition: all 0.15s ease;
 
     &:hover {
-      background: #f1f5f9;
+      background: $border-light;
     }
 
     .user-info {
@@ -259,19 +270,19 @@ const handleCommand = (command: string) => {
       .user-name {
         font-size: 14px;
         font-weight: 600;
-        color: #1e293b;
+        color: var(--jsp-text-primary);
         line-height: 1.3;
       }
 
       .user-role {
         font-size: 12px;
-        color: #94a3b8;
+        color: $text-placeholder;
         line-height: 1.3;
       }
     }
 
     .dropdown-arrow {
-      color: #94a3b8;
+      color: $text-placeholder;
       font-size: 12px;
     }
   }

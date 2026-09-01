@@ -2,6 +2,7 @@ import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import ElementPlus from 'element-plus'
 import 'element-plus/dist/index.css'
+import 'element-plus/theme-chalk/dark/css-vars.css'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import enUS from 'element-plus/es/locale/lang/en'
 import * as ElementPlusIconsVue from '@element-plus/icons-vue'
@@ -9,6 +10,10 @@ import router from './router'
 import i18n from './locales'
 import App from './App.vue'
 import './assets/main.scss'
+import { useTheme } from './composables/useTheme'
+
+// 首帧同步深浅色主题，避免闪烁
+useTheme()
 
 const app = createApp(App)
 const pinia = createPinia()

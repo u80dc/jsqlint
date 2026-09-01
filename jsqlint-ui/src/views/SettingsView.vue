@@ -5,14 +5,6 @@
         <!-- 基础配置 -->
         <el-tab-pane :label="t('settings.basic.tab')" name="basic">
           <el-form :model="basicSettings" label-width="140px" class="settings-form">
-            <el-form-item :label="t('settings.basic.themeColor')">
-              <el-select v-model="basicSettings.themeColor" :placeholder="t('settings.basic.themeColor')">
-                <el-option :label="t('settings.basic.themeBlue')" value="blue" />
-                <el-option :label="t('settings.basic.themePurple')" value="purple" />
-                <el-option :label="t('settings.basic.themeGreen')" value="green" />
-              </el-select>
-            </el-form-item>
-
             <el-form-item :label="t('settings.basic.language')">
               <el-select v-model="basicSettings.language" :placeholder="t('settings.basic.language')">
                 <el-option :label="t('settings.basic.languageZh')" value="zh-CN" />
@@ -250,7 +242,6 @@ const { locale, t } = useI18n()
 const activeTab = ref('basic')
 
 const basicSettings = reactive({
-  themeColor: 'blue',
   language: localStorage.getItem('language') || 'zh-CN'
 })
 
@@ -323,7 +314,6 @@ const saveBasicSettings = async () => {
 }
 
 const resetBasicSettings = () => {
-  basicSettings.themeColor = 'blue'
   basicSettings.language = 'zh-CN'
   ElMessage.info(t('settings.basic.resetSuccess'))
 }
@@ -429,14 +419,14 @@ const testEmailConnection = () => {
     .switch-tip {
       margin-left: 12px;
       font-size: 13px;
-      color: #64748b;
+      color: var(--jsp-text-secondary);
     }
 
     .form-tip {
       display: block;
       margin-top: 8px;
       font-size: 12px;
-      color: #94a3b8;
+      color: $text-placeholder;
       line-height: 1.5;
     }
 
@@ -453,7 +443,7 @@ const testEmailConnection = () => {
       .el-divider__text {
         font-size: 14px;
         font-weight: 600;
-        color: #1e293b;
+        color: var(--jsp-text-primary);
       }
     }
   }
@@ -461,7 +451,7 @@ const testEmailConnection = () => {
   .settings-actions {
     margin-top: 32px;
     padding-top: 20px;
-    border-top: 1px solid #f1f5f9;
+    border-top: 1px solid $border-light;
     display: flex;
     gap: 12px;
   }

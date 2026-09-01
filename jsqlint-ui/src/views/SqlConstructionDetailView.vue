@@ -691,7 +691,7 @@ onUnmounted(() => {
 <style lang="scss" scoped>
 .sql-construction-page {
   padding: 0;
-  color: #1e293b;
+  color: var(--jsp-text-primary);
 }
 
 .detail-body {
@@ -708,8 +708,8 @@ onUnmounted(() => {
 .rendered-section,
 .audit-section,
 .diagnostic-section {
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
+  background: var(--jsp-bg-card);
+  border-bottom: 1px solid var(--jsp-border-color);
   border-radius: 8px;
 }
 
@@ -720,7 +720,7 @@ onUnmounted(() => {
 
 .summary-item {
   padding: 16px;
-  border-right: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--jsp-border-color);
 
   &:last-child {
     border-right: 0;
@@ -728,7 +728,7 @@ onUnmounted(() => {
 
   span {
     display: block;
-    color: #64748b;
+    color: var(--jsp-text-secondary);
     font-size: 12px;
     margin-bottom: 8px;
   }
@@ -763,7 +763,7 @@ onUnmounted(() => {
   }
 
   span {
-    color: #64748b;
+    color: var(--jsp-text-secondary);
     font-size: 13px;
   }
 }
@@ -776,7 +776,7 @@ onUnmounted(() => {
 
   span {
     display: block;
-    color: #64748b;
+    color: var(--jsp-text-secondary);
     font-size: 12px;
     margin-bottom: 4px;
   }
@@ -793,8 +793,8 @@ onUnmounted(() => {
 .step-sql {
   margin: 0;
   padding: 12px;
-  background: #0f172a;
-  color: #e2e8f0;
+  background: $text-primary-dark;
+  color: $border-color;
   border-radius: 6px;
   white-space: pre-wrap;
   word-break: break-word;
@@ -831,8 +831,8 @@ onUnmounted(() => {
   width: 28px;
   height: 28px;
   border-radius: 50%;
-  background: #dbeafe;
-  color: #2563eb;
+  background: $primary-light;
+  color: $primary-hover;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -841,7 +841,7 @@ onUnmounted(() => {
 }
 
 .timeline-content {
-  border: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--jsp-border-color);
   border-radius: 8px;
   padding: 12px;
   min-width: 0;
@@ -863,17 +863,17 @@ onUnmounted(() => {
 }
 
 .dynamic-flag {
-  color: #d97706;
+  color: $warning-color;
   font-size: 12px;
 }
 
 .step-condition {
   margin-top: 8px;
-  color: #475569;
+  color: $text-secondary-dark;
   font-size: 13px;
 
   code {
-    color: #1e293b;
+    color: var(--jsp-text-primary);
   }
 }
 
@@ -885,9 +885,9 @@ onUnmounted(() => {
   margin-top: 8px;
 
   span {
-    background: #f1f5f9;
+    background: $border-light;
     border-radius: 6px;
-    color: #475569;
+    color: $text-secondary-dark;
     font-size: 12px;
     padding: 4px 8px;
     word-break: break-all;
@@ -905,17 +905,17 @@ onUnmounted(() => {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   align-items: center;
-  border: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--jsp-border-color);
   border-radius: 8px;
-  background: #ffffff;
+  background: var(--jsp-bg-card);
   color: inherit;
   cursor: pointer;
   padding: 10px 12px;
   text-align: left;
 
   &.active {
-    border-color: #3b82f6;
-    background: #eff6ff;
+    border-color: $primary-color;
+    background: $primary-lighter;
   }
 }
 
@@ -927,14 +927,14 @@ onUnmounted(() => {
 
 .param-source {
   grid-column: 1 / -1;
-  color: #64748b;
+  color: var(--jsp-text-secondary);
   font-size: 12px;
   word-break: break-word;
 }
 
 .parameter-detail {
   margin-top: 16px;
-  border-top: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--jsp-border-color);
   padding-top: 16px;
 }
 
@@ -945,7 +945,7 @@ onUnmounted(() => {
 
   span {
     display: block;
-    color: #64748b;
+    color: var(--jsp-text-secondary);
     font-size: 12px;
     margin-bottom: 4px;
   }
@@ -972,7 +972,7 @@ onUnmounted(() => {
 
 .value-item,
 .path-item {
-  border: 1px solid #e2e8f0;
+  border-bottom: 1px solid var(--jsp-border-color);
   border-radius: 8px;
   padding: 10px;
 
@@ -983,14 +983,14 @@ onUnmounted(() => {
   }
 
   span {
-    color: #64748b;
+    color: var(--jsp-text-secondary);
     font-size: 12px;
     margin-top: 4px;
   }
 }
 
 .path-root {
-  color: #475569;
+  color: $text-secondary-dark;
   font-size: 13px;
   margin-bottom: 8px;
   word-break: break-word;
@@ -1013,30 +1013,30 @@ onUnmounted(() => {
 
   li {
     margin-bottom: 6px;
-    color: #475569;
+    color: $text-secondary-dark;
   }
 }
 
 .action-btn {
   cursor: pointer;
-  color: #2563eb;
+  color: $primary-hover;
   white-space: nowrap;
 
   &:hover {
-    color: #1d4ed8;
+    color: $primary-hover;
   }
 
   &.action-btn--danger {
-    color: #dc2626;
+    color: $danger-color;
 
     &:hover {
-      color: #b91c1c;
+      color: $danger-color;
     }
   }
 }
 
 .text-secondary {
-  color: #94a3b8;
+  color: $text-placeholder;
 }
 
 @media (max-width: 1100px) {
@@ -1048,7 +1048,7 @@ onUnmounted(() => {
 
   .summary-item {
     border-right: 0;
-    border-bottom: 1px solid #e2e8f0;
+    border-bottom: 1px solid var(--jsp-border-color);
 
     &:last-child {
       border-bottom: 0;

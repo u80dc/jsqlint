@@ -108,15 +108,15 @@ watch(() => props.active, (active) => {
     .section-title {
       font-size: 16px;
       font-weight: 600;
-      color: #1e293b;
+      color: var(--jsp-text-primary);
     }
 
     .refresh-btn {
       padding: 4px;
-      color: #64748b;
+      color: var(--jsp-text-secondary);
 
       &:hover {
-        color: #3b82f6;
+        color: $primary-color;
       }
 
       .el-icon {
@@ -138,7 +138,7 @@ watch(() => props.active, (active) => {
 
   :deep(.el-table) {
     .el-table__header-wrapper {
-      background: #f8fafc;
+      background: var(--jsp-bg-card);
     }
   }
 }

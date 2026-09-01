@@ -202,7 +202,7 @@ onMounted(() => {
 <style lang="scss" scoped>
 .logs-page {
   .user-option-name {
-    color: #94a3b8;
+    color: $text-placeholder;
     font-size: 12px;
     margin-left: 8px;
   }

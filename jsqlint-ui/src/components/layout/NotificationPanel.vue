@@ -146,7 +146,7 @@ onMounted(() => {
   right: 0;
   width: 400px;
   height: 100vh;
-  background: #ffffff;
+  background: var(--jsp-bg-card);
   box-shadow: -4px 0 24px rgba(0, 0, 0, 0.12);
   z-index: 1000;
   display: flex;
@@ -157,12 +157,12 @@ onMounted(() => {
     align-items: center;
     justify-content: space-between;
     padding: 20px 24px;
-    border-bottom: 1px solid #f1f5f9;
+    border-bottom: 1px solid $border-light;
 
     .panel-title {
       font-size: 16px;
       font-weight: 600;
-      color: #1e293b;
+      color: var(--jsp-text-primary);
     }
   }
 
@@ -181,17 +181,17 @@ onMounted(() => {
         padding: 16px;
         margin-bottom: 12px;
         border-radius: 12px;
-        background: #f8fafc;
+        background: var(--jsp-bg-card);
         cursor: pointer;
         transition: all 0.15s ease;
 
         &:hover {
-          background: #f1f5f9;
+          background: $border-light;
         }
 
         &.unread {
           background: linear-gradient(135deg, rgba(239, 68, 68, 0.06) 0%, rgba(239, 68, 68, 0.03) 100%);
-          border-left: 3px solid #ef4444;
+          border-left: 3px solid $danger-color;
 
           &:hover {
             background: linear-gradient(135deg, rgba(239, 68, 68, 0.08) 0%, rgba(239, 68, 68, 0.05) 100%);
@@ -206,20 +206,20 @@ onMounted(() => {
 
           .item-time {
             font-size: 12px;
-            color: #94a3b8;
+            color: $text-placeholder;
           }
         }
 
         .item-content {
           font-size: 14px;
-          color: #1e293b;
+          color: var(--jsp-text-primary);
           line-height: 1.6;
           margin-bottom: 8px;
         }
 
         .item-project {
           font-size: 12px;
-          color: #64748b;
+          color: var(--jsp-text-secondary);
         }
       }
     }
@@ -227,16 +227,16 @@ onMounted(() => {
 
   .panel-footer {
     padding: 16px 24px;
-    border-top: 1px solid #f1f5f9;
+    border-top: 1px solid $border-light;
     text-align: center;
 
     .text-action {
-      color: #3b82f6;
+      color: $primary-color;
       font-size: 14px;
       cursor: pointer;
 
       &:hover {
-        color: #2563eb;
+        color: $primary-hover;
       }
     }
   }

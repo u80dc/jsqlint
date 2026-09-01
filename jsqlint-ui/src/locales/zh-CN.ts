@@ -14,6 +14,10 @@ export default {
     back: '返回',
     refresh: '刷新',
     logout: '退出登录',
+    theme: {
+      dark: '切换深色模式',
+      light: '切换浅色模式'
+    },
     welcome: '欢迎回来',
     loading: '加载中...',
     success: '操作成功',
@@ -441,10 +445,6 @@ export default {
     title: '系统设置',
     basic: {
       tab: '基础配置',
-      themeColor: '主题颜色',
-      themeBlue: '默认蓝',
-      themePurple: '优雅紫',
-      themeGreen: '清新绿',
       language: '语言',
       languageZh: '简体中文',
       languageEn: 'English',

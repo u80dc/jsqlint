@@ -152,7 +152,7 @@ const navigate = (path: string) => {
   height: 100vh;
   display: flex;
   flex-direction: column;
-  background: #1e293b;
+  background: $text-primary;
   transition: width 0.25s ease;
   flex-shrink: 0;
   position: relative;
@@ -178,7 +178,7 @@ const navigate = (path: string) => {
   .logo-icon {
     width: 36px;
     height: 36px;
-    background: linear-gradient(135deg, #3b82f6 0%, #8b5cf6 100%);
+    background: linear-gradient(135deg, $primary-color 0%, #8b5cf6 100%);
     border-radius: 10px;
     display: flex;
     align-items: center;
@@ -189,14 +189,14 @@ const navigate = (path: string) => {
     svg {
       width: 22px;
       height: 22px;
-      color: #fff;
+      color: $text-inverse;
     }
   }
 
   .logo-title {
     font-size: 18px;
     font-weight: 700;
-    color: #f8fafc;
+    color: $bg-page-light;
     margin: 0;
     white-space: nowrap;
     letter-spacing: 0;
@@ -221,9 +221,9 @@ const navigate = (path: string) => {
 
 .menu-group-title {
   padding: 16px 12px 8px;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
-  color: #475569;
+  color: $text-secondary-dark;
   text-transform: uppercase;
   letter-spacing: 0.8px;
 }
@@ -235,7 +235,7 @@ const navigate = (path: string) => {
   :deep(.el-menu-item) {
     height: 44px;
     line-height: 44px;
-    color: #94a3b8;
+    color: $text-placeholder;
     background: transparent;
     margin: 2px 0;
     padding: 0 12px !important;
@@ -249,12 +249,12 @@ const navigate = (path: string) => {
     }
 
     &:hover {
-      color: #e2e8f0;
+      color: $border-color;
       background: rgba(255, 255, 255, 0.06);
     }
 
     &.is-active {
-      color: #ffffff !important;
+      color: $text-inverse !important;
       background: linear-gradient(135deg, rgba(59, 130, 246, 0.2) 0%, rgba(139, 92, 246, 0.2) 100%) !important;
 
       .el-icon {
@@ -269,7 +269,7 @@ const navigate = (path: string) => {
         transform: translateY(-50%);
         width: 3px;
         height: 24px;
-        background: linear-gradient(180deg, #3b82f6 0%, #8b5cf6 100%);
+        background: linear-gradient(180deg, $primary-color 0%, #8b5cf6 100%);
         border-radius: 0 2px 2px 0;
       }
     }
@@ -293,7 +293,7 @@ const navigate = (path: string) => {
     padding: 0 12px;
     margin-bottom: 4px;
     border-radius: 8px;
-    color: #94a3b8;
+    color: $text-placeholder;
     cursor: pointer;
     transition: all 0.15s ease;
 
@@ -309,7 +309,7 @@ const navigate = (path: string) => {
     }
 
     &:hover {
-      color: #e2e8f0;
+      color: $border-color;
       background: rgba(255, 255, 255, 0.06);
     }
   }

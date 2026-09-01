@@ -60,7 +60,7 @@ const statusLabels = computed<Record<ExecutionStepStatus, string>>(() => ({
 
 .execution-step {
   min-width: 0;
-  color: #64748b;
+  color: var(--jsp-text-secondary);
 
   .step-rail {
     display: flex;
@@ -71,10 +71,10 @@ const statusLabels = computed<Record<ExecutionStepStatus, string>>(() => ({
   .step-node {
     width: 30px;
     height: 30px;
-    border: 2px solid #cbd5e1;
+    border: 2px solid $border-darker;
     border-radius: 50%;
-    background: #ffffff;
-    color: #94a3b8;
+    background: var(--jsp-bg-card);
+    color: $text-placeholder;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -91,7 +91,7 @@ const statusLabels = computed<Record<ExecutionStepStatus, string>>(() => ({
     min-width: 16px;
     flex: 1;
     margin: 0 10px;
-    background: #e2e8f0;
+    background: $border-color;
     border-radius: 999px;
   }
 
@@ -101,7 +101,7 @@ const statusLabels = computed<Record<ExecutionStepStatus, string>>(() => ({
   }
 
   .step-title {
-    color: #1e293b;
+    color: var(--jsp-text-primary);
     font-size: 13px;
     font-weight: 600;
     line-height: 1.4;
@@ -112,31 +112,31 @@ const statusLabels = computed<Record<ExecutionStepStatus, string>>(() => ({
     margin-top: 4px;
     font-size: 12px;
     line-height: 1.3;
-    color: #94a3b8;
+    color: $text-placeholder;
     white-space: nowrap;
   }
 
   &.is-success {
     .step-node {
-      border-color: #10b981;
-      background: #10b981;
-      color: #ffffff;
+      border-color: $success-color;
+      background: $success-color;
+      color: $text-inverse;
     }
 
     .step-line {
-      background: #10b981;
+      background: $success-color;
     }
 
     .step-status {
-      color: #059669;
+      color: $success-color;
     }
   }
 
   &.is-running {
     .step-node {
-      border-color: #3b82f6;
-      background: #eff6ff;
-      color: #2563eb;
+      border-color: $primary-color;
+      background: $primary-lighter;
+      color: $primary-hover;
       box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.12);
     }
 
@@ -145,27 +145,27 @@ const statusLabels = computed<Record<ExecutionStepStatus, string>>(() => ({
     }
 
     .step-line {
-      background: linear-gradient(90deg, #3b82f6, #dbeafe);
+      background: linear-gradient(90deg, $primary-color, $primary-light);
     }
 
     .step-status {
-      color: #2563eb;
+      color: $primary-hover;
     }
   }
 
   &.is-failed {
     .step-node {
-      border-color: #ef4444;
-      background: #fef2f2;
-      color: #dc2626;
+      border-color: $danger-color;
+      background: $danger-lighter;
+      color: $danger-color;
     }
 
     .step-line {
-      background: #fecaca;
+      background: $danger-light;
     }
 
     .step-status {
-      color: #dc2626;
+      color: $danger-color;
     }
   }
 }
