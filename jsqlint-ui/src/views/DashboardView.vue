@@ -126,7 +126,7 @@
           <span class="card-title">{{ t('dashboard.currentTasks') }}</span>
         </div>
       </template>
-      <el-table :data="currentTasks" v-loading="tasksLoading" style="width: 100%" stripe>
+      <el-table :data="visibleTasks" v-loading="tasksLoading" style="width: 100%" stripe>
         <el-table-column prop="projectName" :label="t('dashboard.projectName')" min-width="180" show-overflow-tooltip>
           <template #default="{ row }">
             {{ row.projectName || '-' }}
@@ -163,6 +163,18 @@
           <el-empty :description="t('dashboard.noCurrentTasks')" />
         </template>
       </el-table>
+      <div v-if="currentTasks.length > TASK_PREVIEW_COUNT" class="load-more">
+        <el-button
+          text
+          type="primary"
+          :icon="tasksExpanded ? ArrowUp : ArrowDown"
+          @click="tasksExpanded = !tasksExpanded"
+        >
+          {{ tasksExpanded
+            ? t('dashboard.collapseTasks')
+            : t('dashboard.showMoreTasks', { count: currentTasks.length - TASK_PREVIEW_COUNT }) }}
+        </el-button>
+      </div>
     </el-card>
 
     <!-- 最近分析项目列表 -->
@@ -170,13 +182,9 @@
       <template #header>
         <div class="card-header">
           <span class="card-title">{{ t('dashboard.recentProjects') }}</span>
-          <span class="text-action" @click="handleViewAllProjects">
-            {{ t('dashboard.viewAll') }}
-            <el-icon style="margin-left: 4px"><ArrowRight /></el-icon>
-          </span>
         </div>
       </template>
-      <el-table :data="recentProjects" v-loading="recentLoading" style="width: 100%" stripe>
+      <el-table :data="visibleRecentProjects" v-loading="recentLoading" style="width: 100%" stripe>
         <el-table-column prop="projectName" :label="t('dashboard.projectName')" min-width="180" show-overflow-tooltip>
           <template #default="{ row }">
             {{ row.projectName || '-' }}
@@ -213,6 +221,18 @@
           <el-empty :description="t('dashboard.noAnalysisRecords')" />
         </template>
       </el-table>
+      <div v-if="recentProjects.length > RECENT_PREVIEW_COUNT" class="load-more">
+        <el-button
+          text
+          type="primary"
+          :icon="recentExpanded ? ArrowUp : ArrowDown"
+          @click="recentExpanded = !recentExpanded"
+        >
+          {{ recentExpanded
+            ? t('dashboard.collapseTasks')
+            : t('dashboard.showMoreTasks', { count: recentProjects.length - RECENT_PREVIEW_COUNT }) }}
+        </el-button>
+      </div>
     </el-card>
   </div>
 </template>
@@ -231,7 +251,7 @@ import {
 } from '@/utils/chartPalette'
 import { ElMessage } from 'element-plus'
 import { useTheme } from '@/composables/useTheme'
-import { Document, SuccessFilled, WarningFilled, CircleCloseFilled, ArrowRight } from '@element-plus/icons-vue'
+import { Document, SuccessFilled, WarningFilled, CircleCloseFilled, ArrowDown, ArrowUp } from '@element-plus/icons-vue'
 import {
   getOverviewAnalysisTrend,
   getOverviewCurrentTasks,
@@ -275,7 +295,19 @@ const stats = ref<OverviewProjectSummaryVO>({
 })
 
 const recentProjects = ref<OverviewRecentProjectVO[]>([])
+// 最近分析列表同样默认展示 5 条，可展开
+const RECENT_PREVIEW_COUNT = 5
+const recentExpanded = ref(false)
+const visibleRecentProjects = computed(() =>
+  recentExpanded.value ? recentProjects.value : recentProjects.value.slice(0, RECENT_PREVIEW_COUNT)
+)
 const currentTasks = ref<OverviewCurrentTaskVO[]>([])
+// 当前任务列表默认只展示前 5 条，点击"展示更多"展开全部
+const TASK_PREVIEW_COUNT = 5
+const tasksExpanded = ref(false)
+const visibleTasks = computed(() =>
+  tasksExpanded.value ? currentTasks.value : currentTasks.value.slice(0, TASK_PREVIEW_COUNT)
+)
 
 const toNumber = (value: unknown) => {
   const numeric = Number(value)
@@ -347,10 +379,6 @@ const handleView = (row: OverviewRecentProjectVO) => {
   if (row.projectId) {
     router.push(`/workspace/projects/${row.projectId}`)
   }
-}
-
-const handleViewAllProjects = () => {
-  router.push('/workspace/projects')
 }
 
 const renderTrendChart = (data?: OverviewTrendVO) => {
@@ -886,6 +914,13 @@ onUnmounted(() => {
 // ============================================
 // 表格卡片
 // ============================================
+.load-more {
+  display: flex;
+  justify-content: center;
+  padding-top: 12px;
+  border-top: 1px solid var(--jsp-border-light);
+}
+
 .table-card {
   // 随内容自然撑高，不再与兄弟元素分食一屏高度
   display: flex;

@@ -134,7 +134,7 @@ watch(() => props.active, (active) => {
   }
 
   :deep(.el-card__body) {
-    padding: 0;
+    padding: 16px;
   }
 
   :deep(.el-table) {

@@ -61,14 +61,6 @@ html, body {
   }
 }
 
-// ProjectDetailView 页面中的卡片无圆角
-.project-detail {
-  .el-card,
-  .el-card.is-bordered {
-    border-radius: 0 !important;
-  }
-}
-
 // Button（走官方变量通道）
 .el-button {
   --el-button-border-radius: #{$radius-md};

@@ -1777,7 +1777,7 @@ const loadProjectOverview = async () => {
 .top-menu {
   background: var(--jsp-bg-card);
   border-bottom: 1px solid var(--jsp-border-color);
-  margin-bottom: 2px;
+  margin-bottom: 16px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1830,19 +1830,7 @@ const loadProjectOverview = async () => {
   min-width: 0;
 
   .detail-card {
-    margin-bottom: 0;
-
-    :deep(.el-card) {
-      border-radius: 0 !important;
-    }
-
-    :deep(.el-card__header) {
-      border-radius: 0;
-    }
-
-    :deep(.el-card__body) {
-      border-radius: 0;
-    }
+    margin-bottom: 16px;
   }
 
   .status-card {
