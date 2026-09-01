@@ -101,15 +101,18 @@ const router = createRouter({
 router.beforeEach((to, _from, next) => {
   const userStore = useUserStore()
   const token = userStore.token || localStorage.getItem('token')
+  // 用户偏好：登录后默认落地页
+  const landingPage = localStorage.getItem('jsqlint_landing_page')
+  const preferredLanding = landingPage === '/workspace/projects' ? '/workspace/projects' : '/dashboard'
 
   if (to.path !== '/login' && !token) {
     next('/login')
   } else if (to.path === '/login' && token) {
-    next('/dashboard')
+    next(preferredLanding)
   } else {
     const requiresAdmin = to.meta.requiresAdmin
     if (requiresAdmin && userStore.role !== 'ROLE_ADMIN') {
-      next('/dashboard')
+      next(preferredLanding)
     } else {
       next()
     }

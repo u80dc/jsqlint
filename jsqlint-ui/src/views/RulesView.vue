@@ -150,7 +150,7 @@ const currentId = ref<number>(0)
 const formRef = ref<FormInstance>()
 
 const currentPage = ref(1)
-const pageSize = ref(10)
+const pageSize = ref(Number(localStorage.getItem('jsqlint_page_size')) || 10)
 const total = ref(0)
 
 const filters = reactive({

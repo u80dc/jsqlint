@@ -1,130 +1,178 @@
 <template>
   <div class="settings">
     <el-card>
-      <el-tabs v-model="activeTab" class="settings-tabs">
+      <el-tabs v-model="activeTab" tab-position="left" class="settings-tabs">
         <!-- 基础配置 -->
         <el-tab-pane :label="t('settings.basic.tab')" name="basic">
-          <el-form :model="basicSettings" label-width="140px" class="settings-form">
+          <!-- 个人偏好（存本地，即时生效） -->
+          <el-form label-width="140px" class="settings-form">
+            <el-divider content-position="left">{{ t('settings.basic.preferenceGroup') }}</el-divider>
+
+            <el-form-item :label="t('settings.basic.themeMode')">
+              <el-radio-group v-model="themePreference" @change="handleThemeChange">
+                <el-radio-button label="light">{{ t('settings.basic.themeLight') }}</el-radio-button>
+                <el-radio-button label="dark">{{ t('settings.basic.themeDark') }}</el-radio-button>
+                <el-radio-button label="system">{{ t('settings.basic.themeSystem') }}</el-radio-button>
+              </el-radio-group>
+            </el-form-item>
+
             <el-form-item :label="t('settings.basic.language')">
               <el-select v-model="basicSettings.language" :placeholder="t('settings.basic.language')">
                 <el-option :label="t('settings.basic.languageZh')" value="zh-CN" />
                 <el-option :label="t('settings.basic.languageEn')" value="en-US" />
               </el-select>
             </el-form-item>
+
+            <el-form-item :label="t('settings.basic.landingPage')">
+              <el-select v-model="preferenceSettings.landingPage">
+                <el-option :label="t('nav.dashboard')" value="/dashboard" />
+                <el-option :label="t('nav.projects')" value="/workspace/projects" />
+              </el-select>
+            </el-form-item>
+
+            <el-form-item :label="t('settings.basic.defaultPageSize')">
+              <el-select v-model="preferenceSettings.defaultPageSize">
+                <el-option :label="t('settings.basic.pageSizeRows', { count: 10 })" :value="10" />
+                <el-option :label="t('settings.basic.pageSizeRows', { count: 20 })" :value="20" />
+                <el-option :label="t('settings.basic.pageSizeRows', { count: 50 })" :value="50" />
+              </el-select>
+            </el-form-item>
           </el-form>
 
-          <div class="settings-actions">
-            <el-button type="primary" @click="saveBasicSettings">{{ t('common.save') }}</el-button>
-            <el-button @click="resetBasicSettings">{{ t('common.reset') }}</el-button>
-          </div>
+          <!-- 系统配置（管理员，存后端） -->
+          <el-form :model="systemSettings" label-width="140px" class="settings-form">
+            <el-divider content-position="left">{{ t('settings.basic.systemGroup') }}</el-divider>
+
+            <el-form-item :label="t('settings.basic.platformName')">
+              <el-input
+                v-model="systemSettings.platformName"
+                maxlength="50"
+                show-word-limit
+                :placeholder="t('settings.basic.platformNamePlaceholder')"
+              />
+              <span class="form-tip">{{ t('settings.basic.platformNameTip') }}</span>
+            </el-form-item>
+          </el-form>
+
+          <!-- 版本信息 -->
+          <el-divider content-position="left">{{ t('settings.basic.aboutGroup') }}</el-divider>
+          <el-descriptions :column="1" border class="about-desc">
+            <el-descriptions-item :label="t('settings.basic.version')">{{ appVersion }}</el-descriptions-item>
+            <el-descriptions-item :label="t('settings.basic.backendUrl')">{{ backendUrl }}</el-descriptions-item>
+            <el-descriptions-item :label="t('settings.basic.license')">MIT</el-descriptions-item>
+          </el-descriptions>
         </el-tab-pane>
 
         <!-- 消息与通知 -->
         <el-tab-pane :label="t('settings.messageNotification.tab')" name="messageNotification">
-          <el-form :model="messageNotificationSettings" label-width="180px" class="settings-form">
-            <el-divider content-position="left">{{ t('settings.messageNotification.messageGroup') }}</el-divider>
+          <div class="notification-columns">
+            <!-- 左列：通知开关 + 收件规则 -->
+            <el-form :model="messageNotificationSettings" label-width="180px" class="settings-form notification-col">
+              <el-divider content-position="left">{{ t('settings.messageNotification.messageGroup') }}</el-divider>
 
-            <el-form-item :label="t('settings.messageNotification.notifyNewProject')">
-              <el-switch v-model="messageNotificationSettings.notifyNewProject" />
-              <span class="switch-tip">{{ t('settings.messageNotification.notifyNewProjectTip') }}</span>
-            </el-form-item>
+              <el-form-item :label="t('settings.messageNotification.notifyNewProject')">
+                <el-switch v-model="messageNotificationSettings.notifyNewProject" />
+                <span class="switch-tip">{{ t('settings.messageNotification.notifyNewProjectTip') }}</span>
+              </el-form-item>
 
-            <el-form-item :label="t('settings.messageNotification.notifyRemoveProject')">
-              <el-switch v-model="messageNotificationSettings.notifyRemoveProject" />
-              <span class="switch-tip">{{ t('settings.messageNotification.notifyRemoveProjectTip') }}</span>
-            </el-form-item>
+              <el-form-item :label="t('settings.messageNotification.notifyRemoveProject')">
+                <el-switch v-model="messageNotificationSettings.notifyRemoveProject" />
+                <span class="switch-tip">{{ t('settings.messageNotification.notifyRemoveProjectTip') }}</span>
+              </el-form-item>
 
-            <el-form-item :label="t('settings.messageNotification.notifyAuditComplete')">
-              <el-switch v-model="messageNotificationSettings.notifyAuditComplete" />
-              <span class="switch-tip">{{ t('settings.messageNotification.notifyAuditCompleteTip') }}</span>
-            </el-form-item>
+              <el-form-item :label="t('settings.messageNotification.notifyAuditComplete')">
+                <el-switch v-model="messageNotificationSettings.notifyAuditComplete" />
+                <span class="switch-tip">{{ t('settings.messageNotification.notifyAuditCompleteTip') }}</span>
+              </el-form-item>
 
-            <el-form-item :label="t('settings.messageNotification.notifyHighRiskSql')">
-              <el-switch v-model="messageNotificationSettings.notifyHighRiskSql" />
-              <span class="switch-tip">{{ t('settings.messageNotification.notifyHighRiskSqlTip') }}</span>
-            </el-form-item>
+              <el-form-item :label="t('settings.messageNotification.notifyHighRiskSql')">
+                <el-switch v-model="messageNotificationSettings.notifyHighRiskSql" />
+                <span class="switch-tip">{{ t('settings.messageNotification.notifyHighRiskSqlTip') }}</span>
+              </el-form-item>
 
-            <el-divider content-position="left">{{ t('settings.messageNotification.notificationGroup') }}</el-divider>
+              <el-form-item :label="t('settings.messageNotification.recipientRules')">
+                <el-checkbox-group v-model="messageNotificationSettings.recipientRules">
+                  <el-checkbox label="PROJECT_CREATOR">{{ t('settings.messageNotification.recipientCreator') }}</el-checkbox>
+                  <el-checkbox label="PROJECT_ADMINS">{{ t('settings.messageNotification.recipientAdmins') }}</el-checkbox>
+                  <el-checkbox label="PROJECT_MEMBERS">{{ t('settings.messageNotification.recipientMembers') }}</el-checkbox>
+                  <el-checkbox label="TASK_OPERATOR">{{ t('settings.messageNotification.recipientOperator') }}</el-checkbox>
+                </el-checkbox-group>
+              </el-form-item>
+            </el-form>
 
-            <el-form-item :label="t('settings.messageNotification.emailEnabled')">
-              <el-switch v-model="messageNotificationSettings.emailEnabled" />
-              <span class="switch-tip">{{ t('settings.messageNotification.emailEnabledTip') }}</span>
-            </el-form-item>
+            <!-- 右列：邮件服务器 + 模板 -->
+            <el-form :model="messageNotificationSettings" label-width="180px" class="settings-form notification-col">
+              <el-divider content-position="left">{{ t('settings.messageNotification.notificationGroup') }}</el-divider>
 
-            <el-form-item :label="t('settings.messageNotification.emailSmtp')">
-              <div class="smtp-grid">
+              <el-form-item :label="t('settings.messageNotification.emailEnabled')">
+                <el-switch v-model="messageNotificationSettings.emailEnabled" />
+                <span class="switch-tip">{{ t('settings.messageNotification.emailEnabledTip') }}</span>
+              </el-form-item>
+
+              <el-form-item :label="t('settings.messageNotification.emailSmtp')">
+                <div class="smtp-grid">
+                  <el-input
+                    v-model="messageNotificationSettings.host"
+                    :placeholder="t('settings.messageNotification.smtpHostPlaceholder')"
+                  />
+                  <el-input-number
+                    v-model="messageNotificationSettings.port"
+                    :min="1"
+                    :max="65535"
+                    controls-position="right"
+                  />
+                  <el-switch
+                    v-model="messageNotificationSettings.useSsl"
+                    :active-text="t('settings.messageNotification.sslOn')"
+                    :inactive-text="t('settings.messageNotification.sslOff')"
+                  />
+                </div>
+              </el-form-item>
+
+              <el-form-item :label="t('settings.messageNotification.senderEmail')">
                 <el-input
-                  v-model="messageNotificationSettings.host"
-                  :placeholder="t('settings.messageNotification.smtpHostPlaceholder')"
+                  v-model="messageNotificationSettings.senderEmail"
+                  placeholder="noreply@example.com"
                 />
-                <el-input-number
-                  v-model="messageNotificationSettings.port"
-                  :min="1"
-                  :max="65535"
-                  controls-position="right"
+              </el-form-item>
+
+              <el-form-item :label="t('settings.messageNotification.senderName')">
+                <el-input
+                  v-model="messageNotificationSettings.senderName"
+                  :placeholder="t('settings.messageNotification.senderNamePlaceholder')"
                 />
-                <el-switch
-                  v-model="messageNotificationSettings.useSsl"
-                  :active-text="t('settings.messageNotification.sslOn')"
-                  :inactive-text="t('settings.messageNotification.sslOff')"
+              </el-form-item>
+
+              <el-form-item :label="t('settings.messageNotification.authAccount')">
+                <el-input
+                  v-model="messageNotificationSettings.username"
+                  :placeholder="t('settings.messageNotification.authAccountPlaceholder')"
                 />
+              </el-form-item>
+
+              <el-form-item :label="t('settings.messageNotification.authPassword')">
+                <el-input
+                  v-model="messageNotificationSettings.password"
+                  type="password"
+                  :placeholder="t('settings.messageNotification.authPasswordPlaceholder')"
+                  show-password
+                />
+              </el-form-item>
+
+              <el-form-item :label="t('settings.messageNotification.notificationTemplate')">
+                <el-input
+                  v-model="messageNotificationSettings.notificationTemplate"
+                  type="textarea"
+                  :rows="5"
+                  :placeholder="t('settings.messageNotification.notificationTemplatePlaceholder')"
+                />
+                <span class="form-tip">{{ t('settings.messageNotification.notificationTemplateTip') }}</span>
+              </el-form-item>
+
+              <div class="settings-actions">
+                <el-button @click="testEmailConnection">{{ t('settings.messageNotification.testConnection') }}</el-button>
               </div>
-            </el-form-item>
-
-            <el-form-item :label="t('settings.messageNotification.senderEmail')">
-              <el-input
-                v-model="messageNotificationSettings.senderEmail"
-                placeholder="noreply@example.com"
-              />
-            </el-form-item>
-
-            <el-form-item :label="t('settings.messageNotification.senderName')">
-              <el-input
-                v-model="messageNotificationSettings.senderName"
-                :placeholder="t('settings.messageNotification.senderNamePlaceholder')"
-              />
-            </el-form-item>
-
-            <el-form-item :label="t('settings.messageNotification.authAccount')">
-              <el-input
-                v-model="messageNotificationSettings.username"
-                :placeholder="t('settings.messageNotification.authAccountPlaceholder')"
-              />
-            </el-form-item>
-
-            <el-form-item :label="t('settings.messageNotification.authPassword')">
-              <el-input
-                v-model="messageNotificationSettings.password"
-                type="password"
-                :placeholder="t('settings.messageNotification.authPasswordPlaceholder')"
-                show-password
-              />
-            </el-form-item>
-
-            <el-form-item :label="t('settings.messageNotification.notificationTemplate')">
-              <el-input
-                v-model="messageNotificationSettings.notificationTemplate"
-                type="textarea"
-                :rows="5"
-                :placeholder="t('settings.messageNotification.notificationTemplatePlaceholder')"
-              />
-              <span class="form-tip">{{ t('settings.messageNotification.notificationTemplateTip') }}</span>
-            </el-form-item>
-
-            <el-form-item :label="t('settings.messageNotification.recipientRules')">
-              <el-checkbox-group v-model="messageNotificationSettings.recipientRules">
-                <el-checkbox label="PROJECT_CREATOR">{{ t('settings.messageNotification.recipientCreator') }}</el-checkbox>
-                <el-checkbox label="PROJECT_ADMINS">{{ t('settings.messageNotification.recipientAdmins') }}</el-checkbox>
-                <el-checkbox label="PROJECT_MEMBERS">{{ t('settings.messageNotification.recipientMembers') }}</el-checkbox>
-                <el-checkbox label="TASK_OPERATOR">{{ t('settings.messageNotification.recipientOperator') }}</el-checkbox>
-              </el-checkbox-group>
-            </el-form-item>
-          </el-form>
-
-          <div class="settings-actions">
-            <el-button type="primary" @click="saveMessageNotificationSettings">{{ t('common.save') }}</el-button>
-            <el-button @click="testEmailConnection">{{ t('settings.messageNotification.testConnection') }}</el-button>
-            <el-button @click="resetMessageNotificationSettings">{{ t('common.reset') }}</el-button>
+            </el-form>
           </div>
         </el-tab-pane>
 
@@ -183,11 +231,6 @@
               <span class="switch-tip">{{ t('settings.project.allowNormalUserCreateProjectTip') }}</span>
             </el-form-item>
           </el-form>
-
-          <div class="settings-actions">
-            <el-button type="primary" @click="saveProjectSettings">{{ t('common.save') }}</el-button>
-            <el-button @click="resetProjectSettings">{{ t('common.reset') }}</el-button>
-          </div>
         </el-tab-pane>
 
         <!-- 日志配置 -->
@@ -220,11 +263,6 @@
               <span class="switch-tip">{{ t('settings.log.auditExportEnabledTip') }}</span>
             </el-form-item>
           </el-form>
-
-          <div class="settings-actions">
-            <el-button type="primary" @click="saveLogSettings">{{ t('common.save') }}</el-button>
-            <el-button @click="resetLogSettings">{{ t('common.reset') }}</el-button>
-          </div>
         </el-tab-pane>
 
       </el-tabs>
@@ -233,9 +271,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useI18n } from 'vue-i18n'
+import { useTheme } from '@/composables/useTheme'
+import { usePlatformName } from '@/composables/usePlatformName'
+import { saveSystemSettings } from '@/api/systemConfig'
 
 const { locale, t } = useI18n()
 
@@ -244,6 +285,31 @@ const activeTab = ref('basic')
 const basicSettings = reactive({
   language: localStorage.getItem('language') || 'zh-CN'
 })
+
+// 个人偏好（localStorage，跨会话保留）
+const { themePreference, setTheme } = useTheme()
+
+const preferenceSettings = reactive({
+  landingPage: localStorage.getItem('jsqlint_landing_page') || '/dashboard',
+  defaultPageSize: Number(localStorage.getItem('jsqlint_page_size')) || 10
+})
+
+const handleThemeChange = (value: string | number | boolean) => {
+  setTheme(value as 'light' | 'dark' | 'system')
+}
+
+// 系统配置（管理员级，存后端）
+const { platformName, setPlatformName, refreshPlatformName } = usePlatformName()
+
+const systemSettings = reactive({
+  platformName: platformName.value
+})
+
+// 版本信息
+const appVersion = import.meta.env.MODE === 'production'
+  ? `v${document.querySelector('meta[name="version"]')?.getAttribute('content') || '0.1.0'}`
+  : '0.1.0 (dev)'
+const backendUrl = import.meta.env.VITE_API_BASE_URL || window.location.origin
 
 // 含 ${} 占位符的默认模板按当前语言取值，避免 vue-i18n 命名参数插值的限制
 const defaultNotificationTemplate = computed(() => t('settings.messageNotification.defaultTemplate'))
@@ -283,19 +349,15 @@ const logSettings = reactive({
 })
 
 const saveBasicSettings = async () => {
-  // 如果语言发生变化，需要刷新页面
+  // 语言变化时需刷新页面让全站文案生效
   const currentLanguage = localStorage.getItem('language') || 'zh-CN'
   const languageChanged = basicSettings.language !== currentLanguage
 
-  // 保存语言设置
   localStorage.setItem('language', basicSettings.language)
   locale.value = basicSettings.language
-  document.title = basicSettings.language === 'en-US' ? 'JSQLint System' : 'SQL质量管理平台'
+  document.title = localStorage.getItem('jsqlint_platform_name')
+    || (basicSettings.language === 'en-US' ? 'JSQLint System' : 'SQL质量管理平台')
 
-  // TODO: 调用保存基础配置的 API
-  ElMessage.success(t('settings.basic.saveSuccess'))
-
-  // 如果语言变化，提示刷新
   if (languageChanged) {
     ElMessageBox.confirm(
       t('settings.basic.languageChangedMessage'),
@@ -313,61 +375,70 @@ const saveBasicSettings = async () => {
   }
 }
 
-const resetBasicSettings = () => {
-  basicSettings.language = 'zh-CN'
-  ElMessage.info(t('settings.basic.resetSuccess'))
+// ============================================
+// 自动保存：配置变更后防抖落库（TODO: 接入各配置保存 API）
+// basicSettings 只含语言，由下方专用 watch 即时处理，不参与防抖
+// ============================================
+let autoSaveTimer: ReturnType<typeof setTimeout> | null = null
+
+watch(
+  [messageNotificationSettings, projectSettings, logSettings],
+  () => {
+    if (autoSaveTimer) {
+      clearTimeout(autoSaveTimer)
+    }
+    autoSaveTimer = setTimeout(() => {
+      // TODO: 调用保存各配置的 API
+      ElMessage.success(t('settings.autoSaved'))
+      autoSaveTimer = null
+    }, 600)
+  },
+  { deep: true }
+)
+
+// 语言切换需要即时生效（含刷新提示），单独立即触发不走防抖
+watch(() => basicSettings.language, () => {
+  saveBasicSettings()
+})
+
+// 个人偏好：写入 localStorage 即时生效（自动保存）
+watch(preferenceSettings, ({ landingPage, defaultPageSize }) => {
+  localStorage.setItem('jsqlint_landing_page', landingPage)
+  localStorage.setItem('jsqlint_page_size', String(defaultPageSize))
+}, { deep: true })
+
+// 平台名称：防抖保存到后端
+watch(() => systemSettings.platformName, (name) => {
+  if (autoSaveTimer) {
+    clearTimeout(autoSaveTimer)
+  }
+  autoSaveTimer = setTimeout(() => {
+    savePlatformName(name)
+    autoSaveTimer = null
+  }, 800)
+})
+
+const savePlatformName = async (name: string) => {
+  try {
+    await saveSystemSettings({ basic: { platformName: name.trim() || 'SQL质量管理平台' } })
+    setPlatformName(name.trim() || 'SQL质量管理平台')
+    document.title = platformName.value
+    ElMessage.success(t('settings.autoSaved'))
+  } catch {
+    // 保存失败静默，等下次变更重试
+  }
 }
 
-const saveMessageNotificationSettings = () => {
-  // TODO: 调用保存消息与通知配置的 API
-  ElMessage.success(t('settings.messageNotification.saveSuccess'))
+// 加载后端系统配置
+const loadSystemSettings = async () => {
+  await refreshPlatformName()
+  const cached = localStorage.getItem('jsqlint_platform_name')
+  if (cached) {
+    systemSettings.platformName = cached
+  }
 }
 
-const resetMessageNotificationSettings = () => {
-  messageNotificationSettings.notifyNewProject = true
-  messageNotificationSettings.notifyRemoveProject = true
-  messageNotificationSettings.notifyAuditComplete = true
-  messageNotificationSettings.notifyHighRiskSql = true
-  messageNotificationSettings.emailEnabled = true
-  messageNotificationSettings.host = ''
-  messageNotificationSettings.port = 465
-  messageNotificationSettings.useSsl = true
-  messageNotificationSettings.senderEmail = ''
-  messageNotificationSettings.senderName = defaultSenderName.value
-  messageNotificationSettings.username = ''
-  messageNotificationSettings.password = ''
-  messageNotificationSettings.notificationTemplate = defaultNotificationTemplate.value
-  messageNotificationSettings.recipientRules = ['PROJECT_CREATOR', 'PROJECT_ADMINS']
-  ElMessage.info(t('settings.messageNotification.resetSuccess'))
-}
-
-const saveProjectSettings = () => {
-  // TODO: 调用保存项目配置的 API
-  ElMessage.success(t('settings.project.saveSuccess'))
-}
-
-const resetProjectSettings = () => {
-  projectSettings.analysisTaskTimeoutMinutes = 60
-  projectSettings.compileTaskTimeoutMinutes = 30
-  projectSettings.maxConcurrentTasks = 4
-  projectSettings.reportRetentionCount = 20
-  projectSettings.highRiskAlertEnabled = true
-  projectSettings.allowNormalUserCreateProject = true
-  ElMessage.info(t('settings.project.resetSuccess'))
-}
-
-const saveLogSettings = () => {
-  // TODO: 调用保存日志配置的 API
-  ElMessage.success(t('settings.log.saveSuccess'))
-}
-
-const resetLogSettings = () => {
-  logSettings.operationLogRetentionDays = 180
-  logSettings.operationLogEnabled = true
-  logSettings.loginLogEnabled = true
-  logSettings.auditExportEnabled = true
-  ElMessage.info(t('settings.log.resetSuccess'))
-}
+loadSystemSettings()
 
 const testEmailConnection = () => {
   // TODO: 调用测试邮件连接的 API
@@ -378,8 +449,45 @@ const testEmailConnection = () => {
 <style lang="scss" scoped>
 .settings {
   .settings-tabs {
+    // 左侧竖向标签：固定宽度导航列 + 右侧内容
+    :deep(.el-tabs__header) {
+      margin-right: 32px;
+
+      .el-tabs__item {
+        height: 44px;
+        line-height: 44px;
+        justify-content: flex-start;
+        text-align: left;
+      }
+    }
+
     :deep(.el-tabs__content) {
-      padding-top: 20px;
+      padding-top: 4px;
+      flex: 1;
+      min-width: 0;
+    }
+
+    // 占满卡片宽度
+    display: flex;
+    flex-direction: row;
+  }
+
+  // 消息通知双栏
+  .notification-columns {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0 40px;
+    align-items: start;
+
+    .notification-col {
+      max-width: none;
+    }
+  }
+
+  @media (max-width: 1100px) {
+    // 窄屏退回单栏
+    .notification-columns {
+      grid-template-columns: 1fr;
     }
   }
 
@@ -454,6 +562,16 @@ const testEmailConnection = () => {
     border-top: 1px solid $border-light;
     display: flex;
     gap: 12px;
+  }
+
+  // 版本信息表与表单视觉同宽，不独占整行
+  .about-desc {
+    max-width: 560px;
+    margin-top: 8px;
+
+    :deep(.el-descriptions__label) {
+      width: 120px;
+    }
   }
 }
 </style>

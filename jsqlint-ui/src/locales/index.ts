@@ -17,11 +17,11 @@ const i18n = createI18n({
   messages
 })
 
-// 根据当前语言同步浏览器标签页标题，保持与界面展示的系统名一致
+// 浏览器标签页标题：优先使用管理员配置的平台名称，未配置时按语言取默认名
 const titleMessages: Record<string, string> = {
   'zh-CN': 'SQL质量管理平台',
   'en-US': 'JSQLint System'
 }
-document.title = titleMessages[savedLanguage] || titleMessages['zh-CN']
+document.title = localStorage.getItem('jsqlint_platform_name') || titleMessages[savedLanguage] || titleMessages['zh-CN']
 
 export default i18n

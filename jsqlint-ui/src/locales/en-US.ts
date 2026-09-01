@@ -443,14 +443,29 @@ export default {
     }
   },
   settings: {
+    autoSaved: 'Settings saved automatically',
     title: 'System Settings',
     basic: {
       tab: 'Basic Config',
+      preferenceGroup: 'Personal Preferences',
+      themeMode: 'Theme Mode',
+      themeLight: 'Light',
+      themeDark: 'Dark',
+      themeSystem: 'System',
+      landingPage: 'Default Landing Page',
+      defaultPageSize: 'Table Page Size',
+      pageSizeRows: '{count} / page',
+      systemGroup: 'System Configuration',
+      platformName: 'Platform Name',
+      platformNamePlaceholder: 'Enter platform name',
+      platformNameTip: 'Shown in sidebar and browser title',
+      aboutGroup: 'About',
+      version: 'Version',
+      backendUrl: 'Backend URL',
+      license: 'License',
       language: 'Language',
       languageZh: '简体中文',
       languageEn: 'English',
-      saveSuccess: 'Basic config saved successfully',
-      resetSuccess: 'Basic config reset',
       languageChangedTitle: 'Notice',
       languageChangedMessage: 'Language has been changed. The page needs to be refreshed to apply the new language settings. Refresh now?',
       refreshNow: 'Refresh',
@@ -489,8 +504,6 @@ export default {
       recipientAdmins: 'Project Admins',
       recipientMembers: 'Project Members',
       recipientOperator: 'Task Operator',
-      saveSuccess: 'Message & notification config saved',
-      resetSuccess: 'Message & notification config reset',
       testConnection: 'Test Connection',
       testingConnection: 'Testing email connection...',
       defaultTemplate: '${taskType} of project ${projectName} finished. Risk level: ${riskLevel}, issues: ${issueCount}.'
@@ -507,9 +520,7 @@ export default {
       highRiskAlertEnabledTip: 'Trigger an alert when high/critical issues are found',
       allowNormalUserCreateProject: 'Allow Users to Create Projects',
       allowNormalUserCreateProjectTip: 'When off, only admins can create projects',
-      unitMinute: 'min',
-      saveSuccess: 'Project config saved',
-      resetSuccess: 'Project config reset'
+      unitMinute: 'min'
     },
     log: {
       tab: 'Operation Logs',
@@ -522,8 +533,6 @@ export default {
       auditExportEnabled: 'Audit Export',
       auditExportEnabledTip: 'Allow exporting audit, report, and high-risk SQL details',
       unitDay: 'days',
-      saveSuccess: 'Log config saved',
-      resetSuccess: 'Log config reset'
     }
   },
   logs: {

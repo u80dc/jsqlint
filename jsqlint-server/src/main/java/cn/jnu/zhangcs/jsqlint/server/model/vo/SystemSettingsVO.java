@@ -24,6 +24,8 @@ public class SystemSettingsVO {
         private String themeColor;
 
         private String language;
+
+        private String platformName;
     }
 
     @Data

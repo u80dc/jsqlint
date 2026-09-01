@@ -442,14 +442,29 @@ export default {
     }
   },
   settings: {
+    autoSaved: '设置已自动保存',
     title: '系统设置',
     basic: {
       tab: '基础配置',
+      preferenceGroup: '个人偏好',
+      themeMode: '主题模式',
+      themeLight: '浅色',
+      themeDark: '深色',
+      themeSystem: '跟随系统',
+      landingPage: '默认落地页',
+      defaultPageSize: '表格每页条数',
+      pageSizeRows: '{count} 条/页',
+      systemGroup: '系统配置',
+      platformName: '平台名称',
+      platformNamePlaceholder: '请输入平台名称',
+      platformNameTip: '显示在侧边栏与浏览器标题',
+      aboutGroup: '版本信息',
+      version: '版本',
+      backendUrl: '后端地址',
+      license: '开源许可',
       language: '语言',
       languageZh: '简体中文',
       languageEn: 'English',
-      saveSuccess: '基础配置保存成功',
-      resetSuccess: '基础配置已重置',
       languageChangedTitle: '提示',
       languageChangedMessage: '语言已更改，需要刷新页面以应用新语言设置。是否立即刷新？',
       refreshNow: '刷新',
@@ -488,8 +503,6 @@ export default {
       recipientAdmins: '项目管理员',
       recipientMembers: '项目成员',
       recipientOperator: '任务执行人',
-      saveSuccess: '消息与通知配置已保存',
-      resetSuccess: '消息与通知配置已重置',
       testConnection: '测试连接',
       testingConnection: '正在测试邮件连接...',
       defaultTemplate: '项目 ${projectName} 的 ${taskType} 已完成，风险级别：${riskLevel}，问题数量：${issueCount}。'
@@ -506,9 +519,7 @@ export default {
       highRiskAlertEnabledTip: '发现 high/critical 级别问题时触发告警',
       allowNormalUserCreateProject: '允许普通用户创建项目',
       allowNormalUserCreateProjectTip: '关闭后仅管理员可以创建项目',
-      unitMinute: '分钟',
-      saveSuccess: '项目配置已保存',
-      resetSuccess: '项目配置已重置'
+      unitMinute: '分钟'
     },
     log: {
       tab: '操作日志',
@@ -521,8 +532,6 @@ export default {
       auditExportEnabled: '审核导出开关',
       auditExportEnabledTip: '允许导出审核、报告和高危 SQL 明细',
       unitDay: '天',
-      saveSuccess: '日志配置已保存',
-      resetSuccess: '日志配置已重置'
     }
   },
   logs: {

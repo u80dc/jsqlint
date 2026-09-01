@@ -29,6 +29,9 @@ public class SystemSettingsDTO {
         private String themeColor = "blue";
 
         private String language = "zh-CN";
+
+        @jakarta.validation.constraints.Size(max = 50, message = "平台名称长度不能超过50个字符")
+        private String platformName = "SQL质量管理平台";
     }
 
     @Data

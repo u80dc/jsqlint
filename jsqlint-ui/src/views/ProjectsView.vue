@@ -55,10 +55,10 @@
 
         <!-- 表格 -->
         <el-table v-else-if="!loading" :data="projects" stripe>
-          <el-table-column width="70" align="center">
+          <el-table-column width="70" align="center" label="S">
             <template #header>
               <el-tooltip content="上次审核状态" placement="top" :show-after="300">
-                <span>S</span>
+                <span class="header-letter">S</span>
               </el-tooltip>
             </template>
             <template #default="{ row }">
@@ -78,10 +78,10 @@
               </span>
             </template>
           </el-table-column>
-          <el-table-column width="70" align="center">
+          <el-table-column width="70" align="center" label="W">
             <template #header>
               <el-tooltip content="审核晴雨表" placement="top" :show-after="300">
-                <span>W</span>
+                <span class="header-letter">W</span>
               </el-tooltip>
             </template>
             <template #default="{ row }">
@@ -284,7 +284,7 @@ const selectedWorkspace = ref<string>('all')
 
 // 分页
 const currentPage = ref(1)
-const pageSize = ref(10)
+const pageSize = ref(Number(localStorage.getItem('jsqlint_page_size')) || 10)
 const total = ref(0)
 
 const showEmptyState = computed(() => {
@@ -699,8 +699,10 @@ onMounted(() => {
 }
 
 // 状态样式
+// 注意用块级 flex 而非 inline-flex：.cell 的 text-overflow:ellipsis 会作用于
+// inline-flex（原子内联盒），在图标右侧渲染出多余省略号
 .status-icon {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   justify-content: center;
 
@@ -726,9 +728,9 @@ onMounted(() => {
   color: $text-placeholder;
 }
 
-// 晴雨表样式
+// 晴雨表样式（同上：块级 flex 避免 ellipsis）
 .weather-icon {
-  display: inline-flex;
+  display: flex;
   align-items: center;
   justify-content: center;
 
@@ -755,6 +757,12 @@ onMounted(() => {
 }
 
 // 扫描数量样式
+// S/W 单字母表头：不受 .cell 的 ellipsis 截断影响
+.header-letter {
+  display: inline-block;
+  white-space: nowrap;
+}
+
 .scan-count {
   display: flex;
   gap: 8px;

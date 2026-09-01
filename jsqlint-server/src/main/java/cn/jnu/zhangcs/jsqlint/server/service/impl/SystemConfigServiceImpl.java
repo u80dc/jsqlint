@@ -46,6 +46,7 @@ public class SystemConfigServiceImpl implements SystemConfigService {
         SystemSettingsDTO.BasicSettings basic = basic(settings);
         upsert(existingConfigs, ConfigItem.THEME_COLOR, stringValue(basic.getThemeColor(), ConfigItem.THEME_COLOR), operatorId);
         upsert(existingConfigs, ConfigItem.LANGUAGE, stringValue(basic.getLanguage(), ConfigItem.LANGUAGE), operatorId);
+        upsert(existingConfigs, ConfigItem.PLATFORM_NAME, stringValue(basic.getPlatformName(), ConfigItem.PLATFORM_NAME), operatorId);
 
         SystemSettingsDTO.MessageNotificationSettings messageNotification = messageNotification(settings);
         upsert(existingConfigs, ConfigItem.NOTIFY_NEW_PROJECT, booleanValue(messageNotification.getNotifyNewProject(), ConfigItem.NOTIFY_NEW_PROJECT), operatorId);
@@ -95,6 +96,7 @@ public class SystemConfigServiceImpl implements SystemConfigService {
                 .basic(SystemSettingsVO.BasicSettings.builder()
                         .themeColor(getString(configs, ConfigItem.THEME_COLOR))
                         .language(getString(configs, ConfigItem.LANGUAGE))
+                        .platformName(getString(configs, ConfigItem.PLATFORM_NAME))
                         .build())
                 .messageNotification(SystemSettingsVO.MessageNotificationSettings.builder()
                         .notifyNewProject(getBoolean(configs, ConfigItem.NOTIFY_NEW_PROJECT))
@@ -249,6 +251,7 @@ public class SystemConfigServiceImpl implements SystemConfigService {
     private enum ConfigItem {
         THEME_COLOR("basic", "themeColor", "STRING", "blue", "主题色"),
         LANGUAGE("basic", "language", "STRING", "zh-CN", "语言"),
+        PLATFORM_NAME("basic", "platformName", "STRING", "SQL质量管理平台", "平台名称"),
 
         NOTIFY_NEW_PROJECT("message_notification", "notifyNewProject", "BOOLEAN", "true", "新增项目站内消息开关"),
         NOTIFY_REMOVE_PROJECT("message_notification", "notifyRemoveProject", "BOOLEAN", "true", "移除项目站内消息开关"),

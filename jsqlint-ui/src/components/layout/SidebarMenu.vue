@@ -9,7 +9,7 @@
         </svg>
       </div>
       <transition name="fade">
-        <h1 v-if="!collapsed" class="logo-title">{{ t('layout.appName') }}</h1>
+        <h1 v-if="!collapsed" class="logo-title">{{ platformName }}</h1>
       </transition>
     </div>
 
@@ -113,6 +113,7 @@
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n'
+import { usePlatformName } from '@/composables/usePlatformName'
 import {
   Avatar,
   Bell,
@@ -140,6 +141,8 @@ const emit = defineEmits<{
 }>()
 
 const { t } = useI18n()
+
+const { platformName } = usePlatformName()
 
 const navigate = (path: string) => {
   emit('navigate', path)

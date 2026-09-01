@@ -170,7 +170,7 @@ const togglingProjectId = ref<number | null>(null)
 const projects = ref<ProjectVO[]>([])
 const configs = ref<InspectionConfigVO[]>([])
 const currentPage = ref(1)
-const pageSize = ref(10)
+const pageSize = ref(Number(localStorage.getItem('jsqlint_page_size')) || 10)
 
 const editDialogVisible = ref(false)
 const editSaving = ref(false)

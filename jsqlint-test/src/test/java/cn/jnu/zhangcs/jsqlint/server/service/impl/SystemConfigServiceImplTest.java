@@ -104,7 +104,7 @@ class SystemConfigServiceImplTest {
         configService.saveSettings(null, 10L);
 
         // 首次保存：全部配置项走 insert，共 26 项
-        verify(mapper, org.mockito.Mockito.times(26)).insert(any(SystemConfig.class));
+        verify(mapper, org.mockito.Mockito.times(27)).insert(any(SystemConfig.class));
         verify(mapper, never()).updateById(any(SystemConfig.class));
     }
 
@@ -118,7 +118,7 @@ class SystemConfigServiceImplTest {
 
         // 仅 themeColor 已存在走更新，其余 25 项走插入
         verify(mapper, org.mockito.Mockito.times(1)).updateById(any(SystemConfig.class));
-        verify(mapper, org.mockito.Mockito.times(25)).insert(any(SystemConfig.class));
+        verify(mapper, org.mockito.Mockito.times(26)).insert(any(SystemConfig.class));
     }
 
     @Test
@@ -133,7 +133,7 @@ class SystemConfigServiceImplTest {
         dto.setBasic(basic);
         configService.saveSettings(dto, 10L);
 
-        verify(mapper, org.mockito.Mockito.times(26)).insert(captor.capture());
+        verify(mapper, org.mockito.Mockito.times(27)).insert(captor.capture());
         Map<String, String> saved = captor.getAllValues().stream()
                 .collect(Collectors.toMap(c -> c.getConfigGroup() + "." + c.getConfigKey(),
                         SystemConfig::getConfigValue));
@@ -153,7 +153,7 @@ class SystemConfigServiceImplTest {
         assertThat(vo.getBasic().getThemeColor()).isEqualTo("blue");
         // 已存在 1 项走更新，其余 25 项走插入
         verify(mapper, org.mockito.Mockito.times(1)).updateById(any(SystemConfig.class));
-        verify(mapper, org.mockito.Mockito.times(25)).insert(any(SystemConfig.class));
+        verify(mapper, org.mockito.Mockito.times(26)).insert(any(SystemConfig.class));
     }
 
     private SystemConfig config(String group, String key, String value) {
