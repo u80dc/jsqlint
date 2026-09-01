@@ -50,26 +50,46 @@
         <el-card v-loading="loading" class="detail-card">
           <template #header>
             <div class="card-header">
-              <span class="project-name">{{ project?.name }}</span>
+              <div class="project-title-group">
+                <span class="project-name">{{ project?.name }}</span>
+                <el-tag :type="project?.status === 1 ? 'success' : 'info'" effect="light" size="small">
+                  {{ project?.status === 1 ? t('projectDetail.status.ready') : t('projectDetail.status.notReady') }}
+                </el-tag>
+              </div>
+              <el-tooltip :content="t('common.edit')" placement="top">
+                <el-button text class="header-edit-btn" @click="openEditProject">
+                  <el-icon><EditPen /></el-icon>
+                </el-button>
+              </el-tooltip>
             </div>
           </template>
 
-          <div class="info-list">
-              <div class="info-item">
-                <span class="info-label">{{ t('projectDetail.overview.gitUrl') }}</span>
-                <span class="info-value git-url">{{ projectGitRef }}</span>
+          <el-descriptions :column="1" border class="project-desc">
+            <el-descriptions-item :label="t('projectDetail.overview.gitUrl')">
+              <div class="git-url-row">
+                <span class="info-value git-url">{{ project?.gitUrl || '-' }}</span>
+                <el-tooltip v-if="project?.gitUrl" :content="t('common.copy')" placement="top">
+                  <el-icon class="copy-btn" @click="copyGitUrl"><CopyDocument /></el-icon>
+                </el-tooltip>
               </div>
+            </el-descriptions-item>
 
-            <div class="info-item">
-              <span class="info-label">{{ t('projectDetail.overview.description') }}</span>
-              <span class="info-value">{{ project?.description || '-' }}</span>
-            </div>
+            <el-descriptions-item :label="t('projectDetail.overview.ref')">
+              {{ project?.ref || '-' }}
+            </el-descriptions-item>
 
+            <el-descriptions-item :label="t('projectDetail.overview.description')">
+              {{ project?.description || '-' }}
+            </el-descriptions-item>
 
-            <div class="info-item">
-              <span class="info-label">{{ t('projectDetail.overview.credential') }}</span>
-              <div class="info-value credential-info">
-                <template v-if="project?.credentialName">
+            <el-descriptions-item :label="t('projectDetail.overview.credential')">
+              <template v-if="project?.credentialName">
+                <el-tooltip
+                  :content="project.credentialCreatorName
+                    ? t('projectDetail.credentials.providedBy', { name: project.credentialCreatorName })
+                    : t('projectDetail.credentials.changeCredential')"
+                  placement="top"
+                >
                   <span class="credential-name" @click="showCredentialDialog">
                     <el-tooltip v-if="project.credentialVisibility !== 0" :content="t('projectDetail.credentials.private')" placement="top">
                       <el-icon><Lock /></el-icon>
@@ -81,28 +101,25 @@
                     </el-tooltip>
                     {{ project.credentialName }}
                   </span>
-                  <span class="credential-detail">
-                     @ {{ project.credentialCreatorName || '-' }}
-                  </span>
-                </template>
-                <template v-else>
-                  <span class="no-credential" @click="showCredentialDialog">
-                    {{ t('projectDetail.credentials.unset') }}
-                  </span>
-                </template>
-              </div>
-            </div>
+                </el-tooltip>
+              </template>
+              <span v-else class="no-credential" @click="showCredentialDialog">
+                <el-icon><Plus /></el-icon>
+                {{ t('projectDetail.credentials.unset') }}
+              </span>
+            </el-descriptions-item>
 
-            <div class="info-item">
-              <span class="info-label">{{ t('projectDetail.overview.creator') }}</span>
-              <span class="info-value">{{ project?.creatorName || '-' }}</span>
-            </div>
-            <div class="info-item">
-              <span class="info-label">{{ t('projectDetail.overview.createTime') }}</span>
-              <span class="info-value">{{ formatDate(project?.createTime) }}</span>
-            </div>
+            <el-descriptions-item :label="t('projectDetail.overview.creator')">
+              {{ project?.creatorName || '-' }}
+            </el-descriptions-item>
 
-          </div>
+            <el-descriptions-item :label="t('projectDetail.overview.createTime')">
+              <el-tooltip v-if="project?.createTime" :content="formatDate(project.createTime)" placement="top">
+                {{ relativeTime(project.createTime) }}
+              </el-tooltip>
+              <template v-else>-</template>
+            </el-descriptions-item>
+          </el-descriptions>
         </el-card>
 
         <!-- 项目状态步骤条 -->
@@ -527,6 +544,46 @@
       :project-id="projectId"
     />
 
+    <!-- 编辑项目对话框 -->
+    <el-dialog v-model="editProjectVisible" :title="t('projects.editProject')" width="520px" align-center @close="resetEditProjectForm">
+      <el-form ref="editProjectFormRef" :model="editProjectForm" :rules="editProjectRules" label-width="100px">
+        <el-form-item :label="t('projects.projectName')" prop="name">
+          <el-input v-model="editProjectForm.name" :placeholder="t('projects.projectNamePlaceholder')" />
+        </el-form-item>
+        <el-form-item :label="t('projects.description')" prop="description">
+          <el-input
+            v-model="editProjectForm.description"
+            type="textarea"
+            :rows="3"
+            maxlength="128"
+            show-word-limit
+            :placeholder="t('projects.descriptionPlaceholder')"
+          />
+        </el-form-item>
+        <el-form-item :label="t('projects.gitUrl')" prop="gitUrl">
+          <el-input v-model="editProjectForm.gitUrl" :placeholder="t('projects.gitUrlPlaceholder')" />
+        </el-form-item>
+        <el-form-item :label="t('projects.ref')" prop="ref">
+          <el-input v-model="editProjectForm.ref" :placeholder="t('projects.refPlaceholder')" />
+        </el-form-item>
+        <el-form-item :label="t('projects.credential')" prop="credentialId">
+          <el-select v-model="editProjectForm.credentialId" :placeholder="t('projects.credentialPlaceholder')" style="width: 100%">
+            <el-option v-for="cred in editCredentials" :key="cred.id" :label="cred.name" :value="cred.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item :label="t('projects.workspace')" prop="workspaceId">
+          <el-select v-model="editProjectForm.workspaceId" :placeholder="t('projects.workspacePlaceholder')" style="width: 100%">
+            <el-option :label="t('projects.none')" :value="0" />
+            <el-option v-for="ws in editWorkspaces" :key="ws.id" :label="ws.name" :value="ws.id" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="editProjectVisible = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" :loading="editProjectSaving" @click="submitEditProject">{{ t('common.confirm') }}</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 凭证选择对话框 -->
     <el-dialog v-model="credentialDialogVisible" :title="t('projectDetail.credentials.selectTitle')" width="500px">
       <el-select
@@ -546,7 +603,7 @@
           :value="cred.id"
         >
           <div class="credential-option">
-            <span>
+            <span class="credential-option-name">
               <el-tooltip v-if="cred.visibility !== 0" :content="t('projectDetail.credentials.private')" placement="top">
                 <el-icon><Lock /></el-icon>
               </el-tooltip>
@@ -574,7 +631,8 @@ import { ref, reactive, computed, onMounted, onUnmounted, nextTick, watch } from
 import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
-import { Lock, Download, DataAnalysis, Search, CircleCheck, Refresh, Plus, Top, Bottom, Tools, Document, VideoPlay, Close } from '@element-plus/icons-vue'
+import { getWorkspaces, addProjectToWorkspace, removeProjectFromWorkspace, type WorkspaceVO } from '@/api/workspace'
+import { Lock, Download, DataAnalysis, Search, CircleCheck, Refresh, Plus, Top, Bottom, Tools, Document, VideoPlay, Close, EditPen, CopyDocument } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 import { chartColors, chartNeutral, seriesPalette } from '@/utils/chartPalette'
 import { useTheme } from '@/composables/useTheme'
@@ -582,7 +640,7 @@ import ProjectLogsPanel from '@/components/project/ProjectLogsPanel.vue'
 import ProjectMembersPanel from '@/components/project/ProjectMembersPanel.vue'
 import ProjectReportPanel from '@/components/project/ProjectReportPanel.vue'
 import ExecutionSteps, { type ExecutionStep, type ExecutionStepStatus } from '@/components/project/ExecutionSteps.vue'
-import { analyzeProject, auditProject, compileProject, executeProject, generateReportProject, getProject, getProjectCredentials, getProjectStatus, getProjectVersions, syncProject, updateProjectCredential, type CredentialVO, type ProjectVO, type ProjectVersionStepVO, type ProjectVersionVO } from '@/api/project'
+import { analyzeProject, auditProject, compileProject, executeProject, generateReportProject, getProject, getProjectCredentials, getProjectStatus, getProjectVersions, syncProject, updateProject, updateProjectCredential, type CredentialVO, type ProjectVO, type ProjectVersionStepVO, type ProjectVersionVO } from '@/api/project'
 import type { AuditRuleVO } from '@/api/auditRule'
 import { checkIsProjectAdmin } from '@/api/projectMember'
 import { createProjectAuditRule, deleteProjectAuditRule, getProjectAuditRules, toggleProjectAuditRule, updateProjectAuditRule } from '@/api/projectAuditRule'
@@ -621,6 +679,28 @@ const executionSubmitting = ref(false)
 const STATUS_REFRESH_INTERVAL = 10000
 let statusRefreshTimer: ReturnType<typeof setInterval> | null = null
 let statusRefreshing = false
+
+// 原地编辑项目
+const editProjectVisible = ref(false)
+const editProjectSaving = ref(false)
+const editProjectFormRef = ref<FormInstance>()
+const editCredentials = ref<CredentialVO[]>([])
+const editWorkspaces = ref<WorkspaceVO[]>([])
+const editProjectForm = reactive({
+  name: '',
+  description: '',
+  gitUrl: '',
+  ref: '',
+  credentialId: undefined as number | undefined,
+  workspaceId: 0
+})
+const editProjectRules = computed<FormRules>(() => ({
+  name: [{ required: true, message: t('projects.projectNameRequired'), trigger: 'blur' }],
+  gitUrl: [{ required: true, message: t('projects.gitUrlRequired'), trigger: 'blur' }],
+  ref: [{ required: true, message: t('projects.refRequired'), trigger: 'blur' }],
+  credentialId: [{ required: true, message: t('projects.credentialRequired'), trigger: 'change' }],
+  workspaceId: [{ required: true, message: t('projects.workspaceRequired'), trigger: 'change' }]
+}))
 
 const projectDetailTabs = ['overview', 'projectSql', 'sql', 'rules', 'whitelist', 'members', 'logs']
 
@@ -1024,12 +1104,102 @@ const projectSqlVersionLabel = computed(() => {
   return `${ref} / ${commit}`
 })
 
-const projectGitRef = computed(() => {
+/** 复制 Git 地址到剪贴板 */
+const copyGitUrl = async () => {
   if (!project.value?.gitUrl) {
+    return
+  }
+  try {
+    await navigator.clipboard.writeText(project.value.gitUrl)
+    ElMessage.success(t('common.copySuccess'))
+  } catch {
+    ElMessage.error(t('common.copyFailed'))
+  }
+}
+
+/** 相对时间：x 天前 / x 小时前，完整时间由 tooltip 展示 */
+const relativeTime = (value: string) => {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) {
     return '-'
   }
-  return project.value.ref ? `${project.value.gitUrl}#${project.value.ref}` : project.value.gitUrl
-})
+  const diff = Date.now() - date.getTime()
+  const days = Math.floor(diff / 86400000)
+  if (days >= 1) {
+    return t('time.daysAgo', { count: days })
+  }
+  const hours = Math.floor(diff / 3600000)
+  if (hours >= 1) {
+    return t('time.hoursAgo', { count: hours })
+  }
+  const minutes = Math.floor(diff / 60000)
+  if (minutes >= 1) {
+    return t('time.minutesAgo', { count: minutes })
+  }
+  return t('time.justNow')
+}
+
+/** 原地编辑项目：弹窗复用列表页表单结构，保存后刷新信息卡 */
+const openEditProject = async () => {
+  if (!project.value) {
+    return
+  }
+  editProjectForm.name = project.value.name
+  editProjectForm.description = project.value.description || ''
+  editProjectForm.gitUrl = project.value.gitUrl
+  editProjectForm.ref = project.value.ref || ''
+  editProjectForm.credentialId = project.value.credentialId
+  editProjectForm.workspaceId = project.value.workspaceId ?? 0
+  // 凭证与工作空间选项并行加载（失败不阻塞弹窗打开）
+  try {
+    const [creds, spaces] = await Promise.all([getProjectCredentials(), getWorkspaces()])
+    editCredentials.value = creds
+    editWorkspaces.value = spaces
+  } catch {
+    editCredentials.value = []
+    editWorkspaces.value = []
+  }
+  editProjectVisible.value = true
+}
+
+const resetEditProjectForm = () => {
+  editProjectFormRef.value?.clearValidate()
+}
+
+const submitEditProject = async () => {
+  await editProjectFormRef.value?.validate()
+  editProjectSaving.value = true
+  try {
+    const workspaceId = editProjectForm.workspaceId || 0
+    await updateProject(projectId, {
+      name: editProjectForm.name.trim(),
+      description: editProjectForm.description?.trim() || undefined,
+      gitUrl: editProjectForm.gitUrl.trim(),
+      ref: editProjectForm.ref.trim(),
+      credentialId: editProjectForm.credentialId,
+      workspaceId: workspaceId === 0 ? undefined : workspaceId
+    })
+    // 工作空间归属变化需单独同步（与列表页创建逻辑同构）
+    const targetWorkspace = workspaceId === 0 ? null : workspaceId
+    if (targetWorkspace !== (project.value?.workspaceId ?? null)) {
+      try {
+        if (targetWorkspace === null) {
+          await removeProjectFromWorkspace((project.value?.workspaceId)!, projectId)
+        } else {
+          await addProjectToWorkspace(targetWorkspace, projectId)
+        }
+      } catch {
+        // 工作空间同步失败不影响主流程，提示后继续
+        ElMessage.warning(t('projects.moveError'))
+      }
+    }
+    ElMessage.success(t('projects.updateSuccess'))
+    editProjectVisible.value = false
+    await loadProject()
+  } finally {
+    editProjectSaving.value = false
+  }
+}
 
 // 凭证相关
 const credentialDialogVisible = ref(false)
@@ -2252,89 +2422,110 @@ const loadProjectOverview = async () => {
 
 }
 
-.info-list {
-  display: flex;
-  flex-direction: column;
-  gap: 20px;
-}
-
-.info-item {
-  display: flex;
-  align-items: flex-start;
-
-  .info-label {
-    width: 80px;
-    flex-shrink: 0;
-    font-size: 14px;
+// 项目信息 descriptions（el-descriptions 与个人信息页同形态）
+.project-desc {
+  :deep(.el-descriptions__label) {
+    width: 110px;
+    font-size: 13px;
     color: var(--jsp-text-secondary);
   }
 
-  .info-value {
-    flex: 1;
+  :deep(.el-descriptions__content) {
     font-size: 14px;
     color: var(--jsp-text-primary);
-    word-break: break-all;
-
-    &.git-url {
-      font-family: 'Monaco', 'Menlo', monospace;
-      font-size: 13px;
-      color: $primary-color;
-      background: $border-light;
-      padding: 8px 12px;
-      border-radius: 6px;
-    }
   }
 }
 
-.credential-info {
+.project-title-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.header-edit-btn {
+  padding: 4px;
+  color: var(--jsp-text-secondary);
+
+  .el-icon {
+    font-size: 16px;
+  }
+
+  &:hover {
+    color: $primary-color;
+  }
+}
+
+.git-url-row {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
   gap: 8px;
 
-  .credential-name {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
+  .info-value.git-url {
+    font-family: 'Monaco', 'Menlo', monospace;
+    font-size: 13px;
     color: $primary-color;
-    cursor: pointer;
-
-    &:hover {
-      color: $primary-hover;
-
-      .credential-action {
-        text-decoration: underline;
-      }
-    }
-
-    .el-icon {
-      color: var(--jsp-text-secondary);
-    }
+    background: $border-light;
+    padding: 4px 10px;
+    border-radius: 6px;
+    word-break: break-all;
   }
 
-  .credential-detail {
-    color: $text-placeholder;
-    font-size: 12px;
-  }
-
-  .no-credential {
+  .copy-btn {
+    flex-shrink: 0;
+    font-size: 15px;
     color: var(--jsp-text-secondary);
     cursor: pointer;
 
     &:hover {
       color: $primary-color;
+    }
+  }
+}
 
-      .credential-action {
-        text-decoration: underline;
-      }
+// 凭证展示（el-descriptions-item 直接子元素，不嵌套容器）
+.credential-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: $primary-color;
+  cursor: pointer;
+
+  &:hover {
+    color: $primary-hover;
+
+    .credential-action {
+      text-decoration: underline;
     }
   }
 
-  .credential-action {
-    color: $text-placeholder;
+  .el-icon {
     font-size: 13px;
-    margin-left: 2px;
+    color: var(--jsp-text-secondary);
   }
+}
+
+// 未设置凭证：虚线引导按钮样式，强调可点击配置
+.no-credential {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px;
+  border: 1px dashed var(--jsp-border-color);
+  border-radius: 4px;
+  color: var(--jsp-text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+
+  &:hover {
+    color: $primary-color;
+    border-color: $primary-color;
+  }
+}
+
+.credential-action {
+  color: $text-placeholder;
+  font-size: 13px;
+  margin-left: 2px;
 }
 
 .credential-option {
@@ -2344,6 +2535,13 @@ const loadProjectOverview = async () => {
   width: 100%;
   gap: 12px;
 
+  // 图标与名称同行居中对齐（与信息卡的 credential-name 同构）
+  .credential-option-name {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+
   .credential-option-detail {
     color: $text-placeholder;
     font-size: 12px;
@@ -2351,10 +2549,11 @@ const loadProjectOverview = async () => {
 }
 
 .globe-icon {
-  width: 16px;
-  height: 16px;
-  vertical-align: middle;
-  margin-right: 6px;
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+  // 该 svg 的绘制重心偏上，下移 7px 与文字视觉中线对齐
+  margin-top: 7px;
   color: var(--jsp-text-secondary);
 }
 </style>

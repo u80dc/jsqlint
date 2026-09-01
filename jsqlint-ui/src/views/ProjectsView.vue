@@ -53,8 +53,14 @@
           </span>
         </div>
 
-        <!-- 表格 -->
-        <el-table v-else-if="!loading" :data="projects" stripe>
+        <!-- 表格：行双击等价于"查看"跳转明细页，行悬浮显示可点击光标 -->
+        <el-table
+          v-else-if="!loading"
+          :data="projects"
+          stripe
+          row-class-name="clickable-row"
+          @row-dblclick="handleView"
+        >
           <el-table-column width="70" align="center" label="S">
             <template #header>
               <el-tooltip :content="t('projects.lastReviewStatus')" placement="top" :show-after="300">
@@ -106,25 +112,32 @@
           </el-table-column>
           <el-table-column prop="name" :label="t('projects.projectName')" min-width="120" show-overflow-tooltip />
           <el-table-column prop="description" :label="t('projects.description')" min-width="160" show-overflow-tooltip />
-          <el-table-column width="180" align="center">
+          <el-table-column width="150" align="center">
             <template #header>
               <span>{{ t('projects.lastScan') }}</span>
             </template>
             <template #default="{ row }">
-              <span class="scan-count">
-                <el-tooltip :content="t('projects.scanType.dql')" placement="top" :show-after="300">
-                  <span class="scan-item"><span class="scan-label">Q</span><span class="scan-num">{{ row.lastScan?.dql || 0 }}</span></span>
-                </el-tooltip>
-                <el-tooltip :content="t('projects.scanType.dml')" placement="top" :show-after="300">
-                  <span class="scan-item"><span class="scan-label">M</span><span class="scan-num">{{ row.lastScan?.dml || 0 }}</span></span>
-                </el-tooltip>
-                <el-tooltip :content="t('projects.scanType.ddl')" placement="top" :show-after="300">
-                  <span class="scan-item"><span class="scan-label">L</span><span class="scan-num">{{ row.lastScan?.ddl || 0 }}</span></span>
-                </el-tooltip>
-                <el-tooltip :content="t('projects.scanType.dcl')" placement="top" :show-after="300">
-                  <span class="scan-item"><span class="scan-label">C</span><span class="scan-num">{{ row.lastScan?.dcl || 0 }}</span></span>
-                </el-tooltip>
-              </span>
+              <el-tooltip placement="top" :show-after="200">
+                <template #content>
+                  <div class="scan-tip-row"><span class="scan-tip-dot scan-tip-dot--dql" />{{ t('projects.scanType.dql') }}: {{ row.lastScan?.dql || 0 }}</div>
+                  <div class="scan-tip-row"><span class="scan-tip-dot scan-tip-dot--dml" />{{ t('projects.scanType.dml') }}: {{ row.lastScan?.dml || 0 }}</div>
+                  <div class="scan-tip-row"><span class="scan-tip-dot scan-tip-dot--ddl" />{{ t('projects.scanType.ddl') }}: {{ row.lastScan?.ddl || 0 }}</div>
+                  <div class="scan-tip-row"><span class="scan-tip-dot scan-tip-dot--dcl" />{{ t('projects.scanType.dcl') }}: {{ row.lastScan?.dcl || 0 }}</div>
+                </template>
+                <div class="scan-stack">
+                  <div class="scan-stack-bar">
+                    <span
+                      v-for="seg in scanSegments(row)"
+                      :key="seg.key"
+                      class="scan-seg"
+                      :class="'scan-seg--' + seg.key"
+                      :style="{ width: seg.percent + '%' }"
+                    />
+                    <span v-if="scanTotal(row) === 0" class="scan-seg scan-seg--empty" style="width: 100%" />
+                  </div>
+                  <span class="scan-total">{{ scanTotal(row) }}</span>
+                </div>
+              </el-tooltip>
             </template>
           </el-table-column>
           <el-table-column width="160" align="center">
@@ -161,7 +174,7 @@
               <span class="time-cell">{{ row.lastReview?.reviewTime || t('projects.none') }}</span>
             </template>
           </el-table-column>
-          <el-table-column prop="status" :label="t('projects.status')" width="90" align="center">
+          <el-table-column prop="status" :label="t('projects.status')" width="110" align="center">
             <template #default="{ row }">
               <el-tag :type="row.status === 1 ? 'success' : 'info'" effect="light" round size="small">
                 {{ row.status === 1 ? t('projects.ready') : t('projects.notReady') }}
@@ -187,12 +200,19 @@
               </el-dropdown>
             </template>
           </el-table-column>
-          <el-table-column :label="t('projects.actions')" width="240" align="center">
+          <el-table-column :label="t('projects.actions')" width="160" align="center">
             <template #default="{ row }">
-              <span class="action-btn" @click="handleUpdate(row)">{{ t('projects.update') }}</span>
-              <span class="action-btn action-btn--success" @click="handleScan(row)">{{ t('projects.scan') }}</span>
-              <span class="action-btn action-btn--warning" @click="handleAudit(row)">{{ t('projects.audit') }}</span>
-              <span class="action-btn action-btn--info" @click="handleView(row)">{{ t('projects.view') }}</span>
+              <div class="action-icons-row">
+                <el-tooltip :content="t('projects.view')" placement="top">
+                  <el-icon class="action-icon" @click="handleView(row)"><View /></el-icon>
+                </el-tooltip>
+                <el-tooltip :content="t('projects.execute')" placement="top">
+                  <el-icon class="action-icon action-icon--success" @click="confirmExecute(row)"><VideoPlay /></el-icon>
+                </el-tooltip>
+                <el-tooltip :content="t('common.delete')" placement="top">
+                  <el-icon class="action-icon action-icon--danger" @click="confirmDelete(row)"><Delete /></el-icon>
+                </el-tooltip>
+              </div>
             </template>
           </el-table-column>
         </el-table>
@@ -272,7 +292,7 @@
 import { ref, reactive, onMounted, watch, computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
-import { Plus, Close, ArrowDown } from '@element-plus/icons-vue'
+import { Plus, Close, ArrowDown, View, VideoPlay, Delete } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import {
   getWorkspaces,
@@ -282,7 +302,9 @@ import {
   getProjectCredentials,
   createProject,
   addProjectToWorkspace,
-  removeProjectFromWorkspace
+  removeProjectFromWorkspace,
+  executeProject,
+  deleteProject
 } from '@/api/workspace'
 import type { WorkspaceVO, WorkspaceCreateDTO, ProjectVO, CredentialVO, ProjectCreateDTO } from '@/api/workspace'
 import { isDialogCanceled, shouldShowActionError } from '@/utils/error'
@@ -389,6 +411,24 @@ watch(selectedWorkspace, () => {
 })
 
 // 状态相关方法
+/** 上次扫描：四类 SQL 数量（0 值不渲染分段） */
+const scanCountOf = (row: ProjectVO, key: 'dql' | 'dml' | 'ddl' | 'dcl') => row.lastScan?.[key] || 0
+
+const scanTotal = (row: ProjectVO) =>
+  scanCountOf(row, 'dql') + scanCountOf(row, 'dml') + scanCountOf(row, 'ddl') + scanCountOf(row, 'dcl')
+
+const scanSegments = (row: ProjectVO) => {
+  const total = scanTotal(row)
+  if (total === 0) {
+    return []
+  }
+  const keys = ['dql', 'dml', 'ddl', 'dcl'] as const
+  return keys
+    .map(key => ({ key, count: scanCountOf(row, key) }))
+    .filter(seg => seg.count > 0)
+    .map(seg => ({ ...seg, percent: (seg.count / total) * 100 }))
+}
+
 const getStatusClass = (status?: number) => {
   if (status === undefined || status === null) return 'status-waiting'
   switch (status) {
@@ -425,20 +465,53 @@ const handleAdd = () => {
   projectDialogVisible.value = true
 }
 
-const handleScan = (row: ProjectVO) => {
-  ElMessage.info(t('projects.scanStarted', { name: row.name }))
-}
-
-const handleUpdate = (row: ProjectVO) => {
-  ElMessage.info(t('projects.updateStarted', { name: row.name }))
-}
-
-const handleAudit = (row: ProjectVO) => {
-  ElMessage.info(t('projects.auditStarted', { name: row.name }))
-}
-
 const handleView = (row: ProjectVO) => {
   router.push(`/workspace/projects/${row.id}`)
+}
+
+/** 执行项目：确认后提交完整执行任务（同步→编译→扫描→审核→报告） */
+const confirmExecute = (row: ProjectVO) => {
+  ElMessageBox.confirm(
+    t('projects.executeConfirm', { name: row.name }),
+    t('projects.executeTitle'),
+    {
+      confirmButtonText: t('projects.execute'),
+      cancelButtonText: t('common.cancel'),
+      type: 'info'
+    }
+  ).then(async () => {
+    try {
+      await executeProject(row.id)
+      ElMessage.success(t('projects.executeSubmitted', { name: row.name }))
+    } catch {
+      // 请求层已统一提示错误
+    }
+  }).catch(() => {
+    // 用户取消
+  })
+}
+
+/** 删除项目：确认后删除并刷新列表 */
+const confirmDelete = (row: ProjectVO) => {
+  ElMessageBox.confirm(
+    t('projects.deleteProjectConfirm', { name: row.name }),
+    t('projects.deleteTitle'),
+    {
+      confirmButtonText: t('common.delete'),
+      cancelButtonText: t('common.cancel'),
+      type: 'warning'
+    }
+  ).then(async () => {
+    try {
+      await deleteProject(row.id)
+      ElMessage.success(t('projects.deleteProjectSuccess', { name: row.name }))
+      await loadProjects()
+    } catch {
+      // 请求层已统一提示错误
+    }
+  }).catch(() => {
+    // 用户取消
+  })
 }
 
 const handleMoveToWorkspace = async (row: ProjectVO, workspaceId: number | null) => {
@@ -726,8 +799,8 @@ onMounted(() => {
   justify-content: center;
 
   .icon-svg {
-    width: 18px;
-    height: 18px;
+    width: 20px;
+    height: 20px;
   }
 }
 
@@ -754,8 +827,8 @@ onMounted(() => {
   justify-content: center;
 
   .icon-svg {
-    width: 18px;
-    height: 18px;
+    width: 20px;
+    height: 20px;
   }
 }
 
@@ -782,30 +855,88 @@ onMounted(() => {
   white-space: nowrap;
 }
 
-.scan-count {
+// 上次扫描：堆叠条 + 总数（明细由 tooltip 展示）
+// 行双击跳转：整行手型提示可交互
+:deep(.clickable-row) {
+  cursor: pointer;
+}
+
+.scan-stack {
   display: flex;
+  align-items: center;
   gap: 8px;
-  justify-content: center;
+  padding: 0 4px;
 
-  .scan-item {
-    display: inline-flex;
-    align-items: center;
-    gap: 2px;
-    padding: 2px 6px;
+  .scan-stack-bar {
+    flex: 1;
+    display: flex;
+    height: 8px;
     border-radius: 4px;
-    background: $border-light;
+    overflow: hidden;
+    background: var(--jsp-border-light);
 
-    .scan-label {
-      color: $text-placeholder;
-      font-size: 12px;
-      font-weight: 500;
+    .scan-seg {
+      height: 100%;
+
+      &--dql {
+        background: $primary-color;
+      }
+
+      &--dml {
+        background: $success-color;
+      }
+
+      &--ddl {
+        background: $warning-color;
+      }
+
+      &--dcl {
+        background: $text-placeholder;
+      }
+
+      &--empty {
+        background: var(--jsp-border-color);
+      }
+    }
+  }
+
+  .scan-total {
+    flex-shrink: 0;
+    min-width: 24px;
+    text-align: right;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--jsp-text-primary);
+    font-family: 'Monaco', 'Menlo', monospace;
+  }
+}
+
+// tooltip 中的分类明细行
+.scan-tip-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  line-height: 20px;
+
+  .scan-tip-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+
+    &--dql {
+      background: $primary-color;
     }
 
-    .scan-num {
-      color: $text-secondary-dark;
-      font-size: 12px;
-      font-weight: 600;
-      font-family: 'Monaco', 'Menlo', monospace;
+    &--dml {
+      background: $success-color;
+    }
+
+    &--ddl {
+      background: $warning-color;
+    }
+
+    &--dcl {
+      background: $text-placeholder;
     }
   }
 }

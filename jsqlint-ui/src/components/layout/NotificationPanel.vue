@@ -17,7 +17,7 @@
             @click="handleNotificationItemClick(item)"
           >
             <div class="item-header">
-              <el-tag :type="getAlertType(item.level)" size="small">{{ getAlertLabel(item.level) }}</el-tag>
+              <el-tag :type="getAlertType(item.level)" size="small">{{ getAlertLabel(item.level) || item.typeDescription }}</el-tag>
               <span class="item-time">{{ formatTime(item.createTime) }}</span>
             </div>
             <div class="item-content">{{ item.content }}</div>
@@ -45,7 +45,8 @@ import { listNotifications, markAllNotificationsRead, markNotificationRead } fro
 interface NotificationItem {
   id: number
   type: string
-  level: string
+  typeDescription?: string
+  level?: string
   content: string
   read: boolean
   projectName?: string
@@ -89,18 +90,21 @@ const handleNotificationItemClick = async (item: NotificationItem) => {
   }
 }
 
-const getAlertType = (level: string) => {
+const getAlertType = (level?: string) => {
   const types: Record<string, string> = {
     CRITICAL: 'danger',
     HIGH: 'warning',
     MEDIUM: 'info',
     LOW: 'info'
   }
-  return types[level] || 'info'
+  return types[level || ''] || 'info'
 }
 
-const getAlertLabel = (level: string) => {
-  const key = `severity.${level?.toLowerCase()}`
+const getAlertLabel = (level?: string) => {
+  if (!level) {
+    return ''
+  }
+  const key = `severity.${level.toLowerCase()}`
   const translated = t(key)
   return translated === key ? level : translated
 }

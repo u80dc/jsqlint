@@ -381,3 +381,52 @@ html, body {
     }
   }
 }
+
+// 表格操作图标（与 action-btn 同语义的图标形态，悬浮文字由 el-tooltip 提供）
+.action-icons-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  // 图标间距放大降低误触概率，同时给每个图标更大的点击热区
+  gap: 12px;
+
+  .action-icon {
+    margin: 0;
+    // el-icon 固定 1em 尺寸，全局 border-box 下 padding 会向内挤压图标（18px 盒被 4px padding 挤成 10px 内容区），
+    // 热区外扩须用 content-box
+    box-sizing: content-box;
+    padding: 4px;
+  }
+}
+
+.action-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: $primary-color;
+  cursor: pointer;
+  font-size: 18px;
+  margin: 0 6px;
+  vertical-align: middle;
+  transition: color 0.15s ease;
+
+  &:hover {
+    color: $primary-hover;
+  }
+
+  &--success {
+    color: $success-color;
+
+    &:hover {
+      color: color.adjust($success-color, $lightness: -10%);
+    }
+  }
+
+  &--danger {
+    color: $danger-color;
+
+    &:hover {
+      color: color.adjust($danger-color, $lightness: -10%);
+    }
+  }
+}

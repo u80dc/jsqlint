@@ -134,6 +134,10 @@ export const createProject = (data: ProjectCreateDTO): Promise<ProjectVO> => {
   return request.post<ProjectVO>('/api/project', data)
 }
 
+export const updateProject = (id: number, data: ProjectCreateDTO): Promise<ProjectVO> => {
+  return request.put<ProjectVO>(`/api/project/${id}`, data)
+}
+
 export const getCredentials = (): Promise<CredentialVO[]> => {
   return request.get<CredentialVO[]>('/api/credentials')
 }
@@ -176,4 +180,8 @@ export const generateReportProject = (projectId: number): Promise<number> => {
 
 export const executeProject = (projectId: number): Promise<boolean> => {
   return request.post<boolean>(`/api/project/${projectId}/execute`)
+}
+
+export const deleteProject = (projectId: number): Promise<void> => {
+  return request.delete<void>(`/api/project/${projectId}`)
 }

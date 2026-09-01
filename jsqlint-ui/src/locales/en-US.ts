@@ -12,6 +12,9 @@ export default {
     search: 'Search',
     submit: 'Submit',
     back: 'Back',
+    copy: 'Copy',
+    copySuccess: 'Copied',
+    copyFailed: 'Failed to copy',
     refresh: 'Refresh',
     logout: 'Logout',
     theme: {
@@ -314,7 +317,9 @@ export default {
       none: 'No Credential',
       private: 'Private',
       public: 'Public',
-      unset: 'No credential set'
+      unset: 'No credential set',
+      providedBy: 'Provided by {name}',
+      changeCredential: 'Click to change credential'
     },
     report: {
       title: 'Project Report',
@@ -907,9 +912,6 @@ export default {
     unassigned: 'Unassigned',
     remove: 'Remove',
     actions: 'Actions',
-    update: 'Update',
-    scan: 'Scan',
-    audit: 'Audit',
     view: 'View',
     createWorkspaceTitle: 'Create Workspace',
     name: 'Name',
@@ -933,9 +935,13 @@ export default {
     loadWorkspacesError: 'Failed to load workspaces',
     loadCredentialsError: 'Failed to load credentials',
     loadProjectsError: 'Failed to load projects',
-    scanStarted: 'Starting project scan: {name}',
-    updateStarted: 'Updating project: {name}',
-    auditStarted: 'Starting project audit: {name}',
+    execute: 'Execute',
+    executeTitle: 'Execute Project',
+    executeConfirm: 'Execute project "{name}"? ',
+    executeSubmitted: 'Execution task submitted for "{name}"',
+    deleteTitle: 'Delete Project',
+    deleteProjectConfirm: 'Delete project "{name}"?',
+    deleteProjectSuccess: 'Project "{name}" deleted',
     moveSuccess: 'Moved "{name}" to {target}',
     moveTarget: '"{target}"',
     noSpace: 'no workspace',
@@ -945,7 +951,9 @@ export default {
     deleteSuccess: 'Deleted successfully',
     deleteError: 'Failed to delete',
     createSuccess: 'Created successfully',
-    createError: 'Failed to create'
+    createError: 'Failed to create',
+    editProject: 'Edit Project',
+    updateSuccess: 'Project updated successfully',
   },
   groups: {
     addGroup: 'New Group',

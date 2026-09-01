@@ -12,6 +12,9 @@ export default {
     search: '搜索',
     submit: '提交',
     back: '返回',
+    copy: '复制',
+    copySuccess: '复制成功',
+    copyFailed: '复制失败',
     refresh: '刷新',
     logout: '退出登录',
     theme: {
@@ -314,7 +317,9 @@ export default {
       none: '不使用凭证',
       private: '私有',
       public: '公开',
-      unset: '未设置凭证'
+      unset: '未设置凭证',
+      providedBy: '由 {name} 提供',
+      changeCredential: '点击更换凭证'
     },
     report: {
       title: '项目报告',
@@ -906,9 +911,6 @@ export default {
     unassigned: '未分配',
     remove: '移除',
     actions: '操作',
-    update: '更新',
-    scan: '扫描',
-    audit: '审核',
     view: '查看',
     createWorkspaceTitle: '创建工作空间',
     name: '名称',
@@ -932,9 +934,13 @@ export default {
     loadWorkspacesError: '加载工作空间列表失败',
     loadCredentialsError: '加载凭证列表失败',
     loadProjectsError: '加载项目列表失败',
-    scanStarted: '开始扫描项目: {name}',
-    updateStarted: '更新项目: {name}',
-    auditStarted: '审核项目: {name}',
+    execute: '执行',
+    executeTitle: '执行项目',
+    executeConfirm: '确定要执行项目「{name}」吗？',
+    executeSubmitted: '项目「{name}」执行任务已提交',
+    deleteTitle: '删除项目',
+    deleteProjectConfirm: '确定要删除项目「{name}」吗？',
+    deleteProjectSuccess: '项目「{name}」已删除',
     moveSuccess: '已将「{name}」移动到{target}',
     moveTarget: '「{target}」',
     noSpace: '无空间',
@@ -944,7 +950,9 @@ export default {
     deleteSuccess: '删除成功',
     deleteError: '删除失败',
     createSuccess: '创建成功',
-    createError: '创建失败'
+    createError: '创建失败',
+    editProject: '编辑项目',
+    updateSuccess: '项目更新成功',
   },
   groups: {
     addGroup: '新增用户组',
