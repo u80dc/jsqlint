@@ -1,46 +1,46 @@
 <template>
   <div class="sql-construction-page">
     <el-skeleton v-if="loading && !detail" :rows="8" animated />
-    <el-empty v-else-if="!detail" description="未找到 SQL 构造详情" />
+    <el-empty v-else-if="!detail" :description="t('sqlConstruction.notFound')" />
     <div v-else class="detail-body">
       <section class="summary-band">
         <div class="summary-item">
-          <span>SQL 类型</span>
+          <span>{{ t('sqlConstruction.statementType') }}</span>
           <strong>{{ detail.definition.statementType || '-' }}</strong>
         </div>
         <div class="summary-item">
-          <span>构造方式</span>
+          <span>{{ t('sqlConstruction.constructionType') }}</span>
           <strong>{{ detail.definition.constructionType || '-' }}</strong>
         </div>
         <div class="summary-item">
-          <span>来源</span>
+          <span>{{ t('sqlConstruction.source') }}</span>
           <strong>{{ detail.definition.sourceType || '-' }}</strong>
         </div>
         <div class="summary-item">
-          <span>参数数量</span>
+          <span>{{ t('sqlConstruction.parameterCount') }}</span>
           <strong>{{ detail.definition.parameterCount ?? 0 }}</strong>
         </div>
         <div class="summary-item">
-          <span>动态 SQL</span>
-          <strong>{{ detail.definition.dynamic ? '是' : '否' }}</strong>
+          <span>{{ t('sqlConstruction.dynamicSql') }}</span>
+          <strong>{{ detail.definition.dynamic ? t('common.yes') : t('common.no') }}</strong>
         </div>
       </section>
 
       <section class="definition-section">
         <div class="section-heading">
-          <h2>定义位置</h2>
+          <h2>{{ t('sqlConstruction.definitionLocation') }}</h2>
         </div>
         <div class="definition-grid">
           <div>
-            <span>Mapper 类</span>
+            <span>{{ t('sqlConstruction.mapperClass') }}</span>
             <strong>{{ detail.definition.mapperClass || '-' }}</strong>
           </div>
           <div>
-            <span>方法</span>
+            <span>{{ t('sqlConstruction.method') }}</span>
             <strong>{{ detail.definition.mapperMethod || '-' }}</strong>
           </div>
           <div>
-            <span>文件</span>
+            <span>{{ t('sqlConstruction.file') }}</span>
             <strong>{{ sourceLocation }}</strong>
           </div>
           <div>
@@ -48,16 +48,16 @@
             <strong>{{ detail.definition.sqlHash || '-' }}</strong>
           </div>
         </div>
-        <pre class="sql-block">{{ detail.definition.rawSql || '暂无原始 SQL' }}</pre>
+        <pre class="sql-block">{{ detail.definition.rawSql || t('sqlConstruction.noRawSql') }}</pre>
       </section>
 
       <div class="workbench">
         <section class="timeline-section">
           <div class="section-heading">
-            <h2>构造过程</h2>
-            <span>{{ detail.constructionSteps.length }} 个节点</span>
+            <h2>{{ t('sqlConstruction.constructionProcess') }}</h2>
+            <span>{{ t('sqlConstruction.nodeCount', { count: detail.constructionSteps.length }) }}</span>
           </div>
-          <el-empty v-if="detail.constructionSteps.length === 0" description="暂无 SqlNode 构造信息" />
+          <el-empty v-if="detail.constructionSteps.length === 0" :description="t('sqlConstruction.noConstructionSteps')" />
           <div v-else class="construction-timeline">
             <div
               v-for="step in detail.constructionSteps"
@@ -72,11 +72,11 @@
                     <el-tag size="small" effect="plain">{{ step.nodeType || 'NODE' }}</el-tag>
                     <strong>{{ step.title }}</strong>
                   </div>
-                  <span v-if="step.dynamic" class="dynamic-flag">动态</span>
+                  <span v-if="step.dynamic" class="dynamic-flag">{{ t('sqlConstruction.dynamic') }}</span>
                 </div>
                 <pre v-if="step.contribution" class="step-sql">{{ step.contribution }}</pre>
                 <div v-if="step.condition" class="step-condition">
-                  条件: <code>{{ step.condition }}</code>
+                  {{ t('sqlConstruction.conditionLabel') }} <code>{{ step.condition }}</code>
                 </div>
                 <div v-if="step.attributes && Object.keys(step.attributes).length" class="step-attrs">
                   <span v-for="(value, key) in step.attributes" :key="key">
@@ -90,10 +90,10 @@
 
         <section class="parameter-section">
           <div class="section-heading">
-            <h2>关联参数</h2>
-            <span>{{ detail.parameters.length }} 个参数</span>
+            <h2>{{ t('sqlConstruction.parameters') }}</h2>
+            <span>{{ t('sqlConstruction.parameterCountLabel', { count: detail.parameters.length }) }}</span>
           </div>
-          <el-empty v-if="detail.parameters.length === 0" description="暂无参数推断信息" />
+          <el-empty v-if="detail.parameters.length === 0" :description="t('sqlConstruction.noParameters')" />
           <div v-else class="parameter-list">
             <button
               v-for="parameter in detail.parameters"
@@ -113,28 +113,28 @@
           <div v-if="selectedParameter" class="parameter-detail">
             <div class="param-meta">
               <div>
-                <span>目标</span>
+                <span>{{ t('sqlConstruction.target') }}</span>
                 <strong>{{ selectedParameter.target || '-' }}</strong>
               </div>
               <div>
-                <span>类型</span>
+                <span>{{ t('sqlConstruction.type') }}</span>
                 <strong>{{ selectedParameter.type || '-' }}</strong>
               </div>
             </div>
 
-            <div class="subsection-title">可能值</div>
+            <div class="subsection-title">{{ t('sqlConstruction.possibleValues') }}</div>
             <div v-if="selectedParameter.possibleValues?.length" class="value-list">
               <div v-for="(value, index) in selectedParameter.possibleValues" :key="index" class="value-item">
                 <strong>{{ formatValue(value.displayValue) }}</strong>
                 <span>{{ formatValue(value.summary) }}</span>
               </div>
             </div>
-            <el-empty v-else description="暂无可能值" :image-size="70" />
+            <el-empty v-else :description="t('sqlConstruction.noPossibleValues')" :image-size="70" />
 
-            <div class="subsection-title">传播路径</div>
+            <div class="subsection-title">{{ t('sqlConstruction.propagationPaths') }}</div>
             <div v-if="selectedParameter.propagationPaths?.length" class="path-list">
               <div v-for="(path, pathIndex) in selectedParameter.propagationPaths" :key="pathIndex" class="path-item">
-                <div class="path-root">根值: {{ formatValue(path.rootValue) }}</div>
+                <div class="path-root">{{ t('sqlConstruction.rootValueLabel', { value: formatValue(path.rootValue) }) }}</div>
                 <ol>
                   <li v-for="(step, stepIndex) in pathSteps(path)" :key="stepIndex">
                     {{ formatValue(step.summary || step.callSite || step.statement) }}
@@ -142,34 +142,34 @@
                 </ol>
               </div>
             </div>
-            <el-empty v-else description="当前记录未保存完整传播路径" :image-size="70" />
+            <el-empty v-else :description="t('sqlConstruction.noFullPropagation')" :image-size="70" />
           </div>
         </section>
       </div>
 
       <section class="flow-section">
         <div class="section-heading">
-          <h2>参数传播路径</h2>
-          <span v-if="!propagation && propagationLoading">加载中...</span>
-          <span v-else-if="propagation && hasPropagationSteps">{{ propagationStats.pathCount }} 条路径 / {{ propagationStats.stepCount }} 个节点</span>
+          <h2>{{ t('sqlConstruction.propagationSection') }}</h2>
+          <span v-if="!propagation && propagationLoading">{{ t('common.loading') }}</span>
+          <span v-else-if="propagation && hasPropagationSteps">{{ t('sqlConstruction.propagationStats', { pathCount: propagationStats.pathCount, stepCount: propagationStats.stepCount }) }}</span>
         </div>
-        <el-empty v-if="propagation && !hasPropagationSteps" description="暂无参数传播路径" />
-        <el-empty v-else-if="propagationLoadError" description="参数传播路径加载失败" />
+        <el-empty v-if="propagation && !hasPropagationSteps" :description="t('sqlConstruction.noPropagation')" />
+        <el-empty v-else-if="propagationLoadError" :description="t('sqlConstruction.propagationLoadError')" />
         <div v-show="hasPropagationSteps" ref="flowChartRef" class="flow-chart" :style="{ height: flowChartHeight }"></div>
       </section>
 
       <section class="rendered-section">
         <div class="section-heading">
-          <h2>渲染 SQL</h2>
-          <span>{{ detail.renderedSqls.length }} 条样例</span>
+          <h2>{{ t('sqlConstruction.renderedSql') }}</h2>
+          <span>{{ t('sqlConstruction.sampleCount', { count: detail.renderedSqls.length }) }}</span>
         </div>
-        <el-empty v-if="detail.renderedSqls.length === 0" description="暂无渲染 SQL 样例" />
+        <el-empty v-if="detail.renderedSqls.length === 0" :description="t('sqlConstruction.noRenderedSql')" />
         <el-collapse v-else>
           <el-collapse-item
             v-for="item in detail.renderedSqls"
             :key="item.index"
             :name="String(item.index)"
-            :title="`样例 ${item.index + 1}`"
+            :title="t('sqlConstruction.sampleTitle', { index: item.index + 1 })"
           >
             <pre class="sql-block">{{ item.sql }}</pre>
             <div v-if="item.parameters && Object.keys(item.parameters).length" class="render-params">
@@ -183,38 +183,38 @@
 
       <section class="audit-section">
         <div class="section-heading">
-          <h2>审核问题</h2>
-          <span>{{ visibleAuditResults.length }} 条问题</span>
+          <h2>{{ t('sqlConstruction.auditIssues') }}</h2>
+          <span>{{ t('sqlConstruction.issueCount', { count: visibleAuditResults.length }) }}</span>
         </div>
-        <el-empty v-if="visibleAuditResults.length === 0" description="暂无审核问题" />
-        <el-table v-else :data="visibleAuditResults" size="small" stripe>
-          <el-table-column label="级别" width="100" align="center">
+        <el-empty v-if="visibleAuditResults.length === 0" :description="t('sqlConstruction.noAuditIssues')" />
+        <el-table v-else :data="visibleAuditResults" stripe>
+          <el-table-column :label="t('sqlConstruction.level')" width="100" align="center">
             <template #default="{ row }">
               <el-tag :type="severityTagType(row.severity)" size="small">
                 {{ severityText(row.severity) }}
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="触发规则" min-width="160" show-overflow-tooltip>
+          <el-table-column :label="t('sqlConstruction.triggerRule')" min-width="160" show-overflow-tooltip>
             <template #default="{ row }">{{ row.ruleName || row.ruleId || '-' }}</template>
           </el-table-column>
-          <el-table-column label="问题信息" min-width="220" show-overflow-tooltip>
+          <el-table-column :label="t('sqlConstruction.issueMessage')" min-width="220" show-overflow-tooltip>
             <template #default="{ row }">{{ row.message || '-' }}</template>
           </el-table-column>
-          <el-table-column label="问题 SQL" min-width="260" show-overflow-tooltip>
+          <el-table-column :label="t('sqlConstruction.issueSql')" min-width="260" show-overflow-tooltip>
             <template #default="{ row }">{{ row.sqlContent || fallbackWhitelistSql }}</template>
           </el-table-column>
-          <el-table-column label="修改建议" min-width="180" show-overflow-tooltip>
+          <el-table-column :label="t('sqlConstruction.suggestion')" min-width="180" show-overflow-tooltip>
             <template #default="{ row }">{{ row.suggestion || '-' }}</template>
           </el-table-column>
-          <el-table-column label="操作" width="130" align="center" fixed="right">
+          <el-table-column :label="t('sqlConstruction.operation')" width="130" align="center" fixed="right">
             <template #default="{ row }">
               <span
                 v-if="canIgnoreAuditResult(row)"
                 class="action-btn action-btn--danger"
                 @click="handleIgnoreAuditResult(row)"
               >
-                忽略此问题
+                {{ t('sqlConstruction.ignoreIssue') }}
               </span>
               <span v-else class="text-secondary">-</span>
             </template>
@@ -224,7 +224,7 @@
 
       <section v-if="detail.diagnostics.length" class="diagnostic-section">
         <div class="section-heading">
-          <h2>诊断信息</h2>
+          <h2>{{ t('sqlConstruction.diagnostics') }}</h2>
         </div>
         <ul>
           <li v-for="item in detail.diagnostics" :key="item">{{ item }}</li>
@@ -236,6 +236,7 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as echarts from 'echarts'
@@ -251,6 +252,7 @@ import {
 import { createSqlWhitelist } from '@/api/sqlWhitelist'
 
 const route = useRoute()
+const { t } = useI18n()
 
 const loading = ref(false)
 const detail = ref<SqlConstructionDetailVO | null>(null)
@@ -344,7 +346,7 @@ const loadPropagationPaths = async () => {
 
 const loadDetail = async () => {
   if (!sqlId.value || Number.isNaN(sqlId.value)) {
-    ElMessage.error('SQL 记录 ID 不合法')
+    ElMessage.error(t('sqlConstruction.invalidSqlId'))
     return
   }
   loading.value = true
@@ -374,29 +376,29 @@ const canIgnoreAuditResult = (result: SqlAuditResultVO) => {
 
 const handleIgnoreAuditResult = async (result: SqlAuditResultVO) => {
   if (!detail.value?.projectId || !result.ruleId || !auditResultSql(result)) {
-    ElMessage.warning('该问题缺少 SQL 或规则信息，无法加入白名单')
+    ElMessage.warning(t('sqlConstruction.ignoreUnavailable'))
     return
   }
   try {
     await ElMessageBox.confirm(
-      '确认将此类 SQL 问题加入白名单吗？加入后，后续审核中相同 SQL 指纹和规则命中的问题将被过滤。',
-      '加入白名单',
+      t('sqlConstruction.ignoreConfirm'),
+      t('sqlConstruction.ignoreTitle'),
       {
         type: 'warning',
-        confirmButtonText: '确认',
-        cancelButtonText: '取消'
+        confirmButtonText: t('common.confirm'),
+        cancelButtonText: t('common.cancel')
       }
     )
     await createSqlWhitelist(detail.value.projectId, {
       sql: auditResultSql(result),
       ruleId: result.ruleId,
-      reason: '从 SQL 构造详情页加入白名单'
+      reason: t('sqlConstruction.ignoreReason')
     })
     ignoredAuditKeys.value = new Set([...ignoredAuditKeys.value, auditResultKey(result)])
-    ElMessage.success('已加入白名单')
+    ElMessage.success(t('sqlConstruction.ignoreSuccess'))
   } catch (error) {
     if (error !== 'cancel' && error !== 'close') {
-      ElMessage.error('加入白名单失败')
+      ElMessage.error(t('sqlConstruction.ignoreError'))
     }
   }
 }
@@ -412,10 +414,10 @@ const severityTagType = (severity?: string) => {
 
 const severityText = (severity?: string) => {
   switch ((severity || '').toLowerCase()) {
-    case 'critical': return '致命'
-    case 'high': return '高危'
-    case 'warning': return '警告'
-    case 'info': return '信息'
+    case 'critical': return t('severity.critical')
+    case 'high': return t('severity.high')
+    case 'warning': return t('severity.warning')
+    case 'info': return t('severity.info')
     default: return severity || '-'
   }
 }
@@ -426,10 +428,11 @@ const parameterKey = (parameter: SqlParameterVO) => {
 
 const bindingText = (bindingType?: string) => {
   switch (bindingType) {
-    case 'PARAMETER_BINDING': return '#{} 绑定'
-    case 'RAW_SUBSTITUTION': return '${} 拼接'
-    case 'SQL_TEXT_REFERENCE': return '文本引用'
-    default: return '未知'
+    // #{} / ${} 前缀保留在代码中，避免放入词条触发 vue-i18n 插值语法
+    case 'PARAMETER_BINDING': return '#{} ' + t('sqlConstruction.binding.parameter')
+    case 'RAW_SUBSTITUTION': return '${} ' + t('sqlConstruction.binding.raw')
+    case 'SQL_TEXT_REFERENCE': return t('sqlConstruction.binding.text')
+    default: return t('sqlConstruction.binding.unknown')
   }
 }
 
@@ -487,7 +490,7 @@ const buildFlowOption = (data: SqlPropagationPathVO): echarts.EChartsOption => {
   }
 
   ;(data.parameters || []).forEach((parameter, paramIndex) => {
-    const paramLabel = parameter.name || (parameter.index != null ? `param${parameter.index}` : `参数${paramIndex + 1}`)
+    const paramLabel = parameter.name || (parameter.index != null ? `param${parameter.index}` : t('sqlConstruction.flow.parameterFallback', { index: paramIndex + 1 }))
     ;(parameter.paths || []).forEach((path, pathIndex) => {
       const steps = path.steps || []
       if (steps.length === 0) {
@@ -497,8 +500,8 @@ const buildFlowOption = (data: SqlPropagationPathVO): echarts.EChartsOption => {
       const y = rowIndex * 132 + 84
       let previousNodeId = ''
       steps.forEach((step, stepIndex) => {
-        const callerName = shortMethod(step.caller) || '调用者'
-        const calleeName = shortMethod(step.callee) || '被调方法'
+        const callerName = shortMethod(step.caller) || t('sqlConstruction.flow.caller')
+        const calleeName = shortMethod(step.callee) || t('sqlConstruction.flow.callee')
         const nodeId = `param-${paramIndex}-path-${pathIndex}-step-${stepIndex}`
         const isFirst = stepIndex === 0
         const isLast = stepIndex === steps.length - 1
@@ -512,9 +515,9 @@ const buildFlowOption = (data: SqlPropagationPathVO): echarts.EChartsOption => {
           rootValue: path.rootValue,
           stepNumber: stepIndex + 1,
           detail: [
-            step.callSite ? `调用点: ${step.callSite}` : '',
-            step.argumentIndex != null ? `实参下标: ${step.argumentIndex}` : '',
-            step.argument ? `实参: ${step.argument}` : '',
+            step.callSite ? t('sqlConstruction.flow.callSite', { value: step.callSite }) : '',
+            step.argumentIndex != null ? t('sqlConstruction.flow.argumentIndex', { value: step.argumentIndex }) : '',
+            step.argument ? t('sqlConstruction.flow.argument', { value: step.argument }) : '',
             step.summary
           ].filter(Boolean).join('\n'),
           itemStyle: flowStepNodeStyle(isFirst, isLast),
@@ -534,8 +537,8 @@ const buildFlowOption = (data: SqlPropagationPathVO): echarts.EChartsOption => {
       formatter: (param: any) => {
         const data = param?.data || {}
         const lines = [`<strong>${data.name || ''}</strong>`]
-        if (data.parameter) lines.push(`参数: ${data.parameter}`)
-        if (data.rootValue) lines.push(`根值: ${data.rootValue}`)
+        if (data.parameter) lines.push(t('sqlConstruction.flow.parameter', { name: data.parameter }))
+        if (data.rootValue) lines.push(t('sqlConstruction.flow.rootValue', { value: data.rootValue }))
         if (data.caller) lines.push(`caller: ${data.caller}`)
         if (data.callee) lines.push(`callee: ${data.callee}`)
         if (data.detail) lines.push(`<span style="color:#64748b">${String(data.detail).replace(/\n/g, '<br/>')}</span>`)
@@ -561,7 +564,7 @@ const buildFlowOption = (data: SqlPropagationPathVO): echarts.EChartsOption => {
             const node = params.data || {}
             return [
               `{step|STEP ${node.stepNumber || ''}}`,
-              `{caller|${truncate(node.caller || '调用者', 30)}}`
+              `{caller|${truncate(node.caller || t('sqlConstruction.flow.caller'), 30)}}`
             ].join('\n')
           },
           rich: {

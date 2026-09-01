@@ -3,117 +3,120 @@
     <el-card>
       <div class="filter-toolbar">
         <el-form :inline="true" class="filter-form">
-          <el-form-item label="类型">
-            <el-select v-model="filters.type" placeholder="请选择类型" clearable style="width: 150px">
-              <el-option label="依赖仓库" :value="0" />
-              <el-option label="插件仓库" :value="1" />
+          <el-form-item :label="t('repositories.type')">
+            <el-select v-model="filters.type" :placeholder="t('repositories.typePlaceholder')" clearable style="width: 150px">
+              <el-option :label="t('repositories.dependencyRepo')" :value="0" />
+              <el-option :label="t('repositories.pluginRepo')" :value="1" />
             </el-select>
           </el-form-item>
-          <el-form-item label="状态">
-            <el-select v-model="filters.status" placeholder="请选择状态" clearable style="width: 140px">
-              <el-option label="启用" :value="1" />
-              <el-option label="禁用" :value="0" />
+          <el-form-item :label="t('repositories.status')">
+            <el-select v-model="filters.status" :placeholder="t('repositories.statusPlaceholder')" clearable style="width: 140px">
+              <el-option :label="t('common.enable')" :value="1" />
+              <el-option :label="t('common.disable')" :value="0" />
             </el-select>
           </el-form-item>
           <el-form-item>
-            <el-button type="primary" @click="handleSearch">查询</el-button>
-            <el-button @click="handleReset">重置</el-button>
+            <el-button type="primary" @click="handleSearch">{{ t('repositories.search') }}</el-button>
+            <el-button @click="handleReset">{{ t('common.reset') }}</el-button>
           </el-form-item>
         </el-form>
         <div class="filter-toolbar__actions">
           <el-button type="primary" @click="handleAdd">
             <el-icon><Plus /></el-icon>
-            新增仓库
+            {{ t('repositories.addRepo') }}
           </el-button>
         </div>
       </div>
 
       <el-table :data="repositories" v-loading="loading" stripe>
-        <el-table-column prop="type" label="类型" width="120">
+        <el-table-column prop="type" :label="t('repositories.type')" width="120">
           <template #default="{ row }">
             <el-tag :type="row.type === 0 ? 'success' : 'warning'" size="small">
-              {{ row.type === 0 ? '依赖仓库' : '插件仓库' }}
+              {{ row.type === 0 ? t('repositories.dependencyRepo') : t('repositories.pluginRepo') }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="repoId" label="仓库ID" width="150" />
-        <el-table-column prop="name" label="名称" width="150" />
+        <el-table-column prop="repoId" :label="t('repositories.repoId')" width="150" />
+        <el-table-column prop="name" :label="t('repositories.name')" width="150" />
         <el-table-column prop="url" label="URL" min-width="300" show-overflow-tooltip />
-        <el-table-column prop="status" label="状态" width="90" align="center">
+        <el-table-column prop="status" :label="t('repositories.status')" width="90" align="center">
           <template #default="{ row }">
             <el-tag :type="row.status === 1 ? 'success' : 'info'" size="small">
-              {{ row.status === 1 ? '启用' : '禁用' }}
+              {{ row.status === 1 ? t('common.enable') : t('common.disable') }}
             </el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="releasesEnabled" label="Releases" width="110" align="center">
           <template #default="{ row }">
             <el-tag :type="row.releasesEnabled ? 'success' : 'info'" size="small">
-              {{ row.releasesEnabled ? '启用' : '禁用' }}
+              {{ row.releasesEnabled ? t('common.enable') : t('common.disable') }}
             </el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="snapshotsEnabled" label="Snapshots" width="110" align="center">
           <template #default="{ row }">
             <el-tag :type="row.snapshotsEnabled ? 'success' : 'info'" size="small">
-              {{ row.snapshotsEnabled ? '启用' : '禁用' }}
+              {{ row.snapshotsEnabled ? t('common.enable') : t('common.disable') }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="createTime" label="创建时间" width="180">
+        <el-table-column prop="createTime" :label="t('repositories.createTime')" width="180">
           <template #default="{ row }">
             {{ formatDate(row.createTime) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="150">
+        <el-table-column :label="t('repositories.actions')" width="150">
           <template #default="{ row }">
-            <span class="action-btn" @click="handleEdit(row)">编辑</span>
-            <span class="action-btn action-btn--danger" @click="handleDelete(row)">删除</span>
+            <span class="action-btn" @click="handleEdit(row)">{{ t('common.edit') }}</span>
+            <span class="action-btn action-btn--danger" @click="handleDelete(row)">{{ t('common.delete') }}</span>
           </template>
         </el-table-column>
+        <template #empty>
+          <el-empty :description="t('repositories.empty')" />
+        </template>
       </el-table>
     </el-card>
 
     <!-- 新增/编辑仓库弹窗 -->
     <el-dialog v-model="dialogVisible" :title="dialogTitle" width="600px" @close="handleDialogClose">
       <el-form ref="formRef" :model="form" :rules="rules" label-width="100px">
-        <el-form-item label="类型" prop="type">
-          <el-select v-model="form.type" placeholder="请选择类型" style="width: 100%">
-            <el-option label="依赖仓库" :value="0" />
-            <el-option label="插件仓库" :value="1" />
+        <el-form-item :label="t('repositories.type')" prop="type">
+          <el-select v-model="form.type" :placeholder="t('repositories.typePlaceholder')" style="width: 100%">
+            <el-option :label="t('repositories.dependencyRepo')" :value="0" />
+            <el-option :label="t('repositories.pluginRepo')" :value="1" />
           </el-select>
         </el-form-item>
-        <el-form-item label="仓库ID" prop="repoId">
-          <el-input v-model="form.repoId" placeholder="唯一标识仓库的ID" />
+        <el-form-item :label="t('repositories.repoId')" prop="repoId">
+          <el-input v-model="form.repoId" :placeholder="t('repositories.repoIdPlaceholder')" />
         </el-form-item>
-        <el-form-item label="名称" prop="name">
-          <el-input v-model="form.name" placeholder="仓库显示名称" />
+        <el-form-item :label="t('repositories.name')" prop="name">
+          <el-input v-model="form.name" :placeholder="t('repositories.namePlaceholder')" />
         </el-form-item>
         <el-form-item label="URL" prop="url">
-          <el-input v-model="form.url" placeholder="仓库地址" />
+          <el-input v-model="form.url" :placeholder="t('repositories.urlPlaceholder')" />
         </el-form-item>
-        <el-form-item label="状态" prop="status">
-          <el-select v-model="form.status" placeholder="请选择状态" style="width: 100%">
-            <el-option label="启用" :value="1" />
-            <el-option label="禁用" :value="0" />
+        <el-form-item :label="t('repositories.status')" prop="status">
+          <el-select v-model="form.status" :placeholder="t('repositories.statusPlaceholder')" style="width: 100%">
+            <el-option :label="t('common.enable')" :value="1" />
+            <el-option :label="t('common.disable')" :value="0" />
           </el-select>
         </el-form-item>
 
         <!-- Releases 配置 -->
-        <el-divider content-position="left">Releases 配置</el-divider>
-        <el-form-item label="启用">
+        <el-divider content-position="left">{{ t('repositories.releasesConfig') }}</el-divider>
+        <el-form-item :label="t('repositories.enableLabel')">
           <el-switch v-model="form.releasesEnabled" />
         </el-form-item>
 
         <!-- Snapshots 配置 -->
-        <el-divider content-position="left">Snapshots 配置</el-divider>
-        <el-form-item label="启用">
+        <el-divider content-position="left">{{ t('repositories.snapshotsConfig') }}</el-divider>
+        <el-form-item :label="t('repositories.enableLabel')">
           <el-switch v-model="form.snapshotsEnabled" />
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleSubmit" :loading="submitLoading">确定</el-button>
+        <el-button @click="dialogVisible = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" @click="handleSubmit" :loading="submitLoading">{{ t('repositories.ok') }}</el-button>
       </template>
     </el-dialog>
   </div>
@@ -121,6 +124,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import {
@@ -133,6 +137,8 @@ import {
 import type { MavenRepositoryVO, MavenRepositoryDTO } from '@/api/repository'
 import { formatDateTime } from '@/utils/date'
 import { isDialogCanceled, shouldShowActionError } from '@/utils/error'
+
+const { t } = useI18n()
 
 const loading = ref(false)
 const submitLoading = ref(false)
@@ -164,17 +170,17 @@ const form = reactive<MavenRepositoryDTO>({
 })
 
 const rules: FormRules = {
-  type: [{ required: true, message: '请选择类型', trigger: 'change' }],
-  repoId: [{ required: true, message: '请输入仓库ID', trigger: 'blur' }],
-  name: [{ required: true, message: '请输入仓库名称', trigger: 'blur' }],
-  status: [{ required: true, message: '请选择状态', trigger: 'change' }],
+  type: [{ required: true, message: t('repositories.typeRequired'), trigger: 'change' }],
+  repoId: [{ required: true, message: t('repositories.repoIdRequired'), trigger: 'blur' }],
+  name: [{ required: true, message: t('repositories.nameRequired'), trigger: 'blur' }],
+  status: [{ required: true, message: t('repositories.statusRequired'), trigger: 'change' }],
   url: [
-    { required: true, message: '请输入仓库URL', trigger: 'blur' },
-    { type: 'url', message: '请输入有效的URL地址', trigger: 'blur' }
+    { required: true, message: t('repositories.urlRequired'), trigger: 'blur' },
+    { type: 'url', message: t('repositories.urlInvalid'), trigger: 'blur' }
   ]
 }
 
-const dialogTitle = computed(() => isEdit.value ? '编辑仓库' : '新增仓库')
+const dialogTitle = computed(() => isEdit.value ? t('repositories.editTitle') : t('repositories.addTitle'))
 
 const formatDate = formatDateTime
 
@@ -183,7 +189,7 @@ const loadData = async () => {
   try {
     repositories.value = await getMavenRepositories(filters.type ?? undefined, filters.status ?? undefined)
   } catch {
-    ElMessage.error('加载数据失败')
+    ElMessage.error(t('repositories.loadError'))
   } finally {
     loading.value = false
   }
@@ -243,7 +249,7 @@ const handleEdit = async (row: MavenRepositoryVO) => {
     })
     dialogVisible.value = true
   } catch {
-    ElMessage.error('加载仓库信息失败')
+    ElMessage.error(t('repositories.loadDetailError'))
   }
 }
 
@@ -260,16 +266,16 @@ const handleSubmit = async () => {
 
     if (isEdit.value && currentId.value) {
       await updateMavenRepository(currentId.value, submitData)
-      ElMessage.success('更新成功')
+      ElMessage.success(t('repositories.updateSuccess'))
     } else {
       await createMavenRepository(submitData)
-      ElMessage.success('创建成功')
+      ElMessage.success(t('repositories.createSuccess'))
     }
     dialogVisible.value = false
     loadData()
   } catch (error: unknown) {
     if (shouldShowActionError(error)) {
-      ElMessage.error(isEdit.value ? '更新失败' : '创建失败')
+      ElMessage.error(isEdit.value ? t('repositories.updateError') : t('repositories.createError'))
     }
   } finally {
     submitLoading.value = false
@@ -278,15 +284,15 @@ const handleSubmit = async () => {
 
 const handleDelete = async (row: MavenRepositoryVO) => {
   try {
-    await ElMessageBox.confirm('确定要删除该仓库吗？', '提示', {
+    await ElMessageBox.confirm(t('repositories.deleteConfirm'), t('repositories.deleteTitle'), {
       type: 'warning'
     })
     await deleteMavenRepository(row.id)
-    ElMessage.success('删除成功')
+    ElMessage.success(t('repositories.deleteSuccess'))
     loadData()
   } catch (error: unknown) {
     if (!isDialogCanceled(error)) {
-      ElMessage.error('删除失败')
+      ElMessage.error(t('repositories.deleteError'))
     }
   }
 }

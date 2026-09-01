@@ -3,8 +3,8 @@
     <el-card>
       <div class="filter-toolbar">
         <el-form :inline="true" class="filter-form">
-          <el-form-item label="类型">
-            <el-select v-model="filters.operationType" placeholder="全部类型" clearable style="width: 180px">
+          <el-form-item :label="t('logs.operationType')">
+            <el-select v-model="filters.operationType" :placeholder="t('logs.allTypes')" clearable style="width: 180px">
               <el-option
                 v-for="option in operationTypeOptions"
                 :key="option.value"
@@ -13,10 +13,10 @@
               />
             </el-select>
           </el-form-item>
-          <el-form-item label="用户">
+          <el-form-item :label="t('logs.operationUser')">
             <el-select
               v-model="filters.operationUserId"
-              placeholder="全部用户"
+              :placeholder="t('logs.allUsers')"
               clearable
               filterable
               style="width: 180px"
@@ -32,11 +32,11 @@
               </el-option>
             </el-select>
           </el-form-item>
-          <el-form-item label="时间">
+          <el-form-item :label="t('logs.time')">
             <el-date-picker
               v-model="filters.operationDate"
               type="date"
-              placeholder="选择日期"
+              :placeholder="t('logs.selectDate')"
               value-format="YYYY-MM-DD"
               clearable
               style="width: 160px"

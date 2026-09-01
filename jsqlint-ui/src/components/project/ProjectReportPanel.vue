@@ -65,7 +65,7 @@
         </div>
 
         <div class="report-tables">
-          <el-table :data="report.topRuleJson || []" size="small" stripe>
+          <el-table :data="report.topRuleJson || []" stripe>
             <el-table-column :label="t('projectDetail.report.topRule')" min-width="160">
               <template #default="{ row }">{{ displayReportField(row, ['ruleName', 'name', 'ruleCode', 'code']) }}</template>
             </el-table-column>
@@ -73,7 +73,7 @@
               <template #default="{ row }">{{ displayReportField(row, ['count', 'issueCount', 'hitCount']) }}</template>
             </el-table-column>
           </el-table>
-          <el-table :data="report.topFileJson || []" size="small" stripe>
+          <el-table :data="report.topFileJson || []" stripe>
             <el-table-column :label="t('projectDetail.report.topFile')" min-width="180" show-overflow-tooltip>
               <template #default="{ row }">{{ displayReportField(row, ['filePath', 'path', 'file']) }}</template>
             </el-table-column>
@@ -83,7 +83,7 @@
           </el-table>
         </div>
 
-        <el-table :data="highRiskSqlRows" size="small" stripe class="high-risk-table">
+        <el-table :data="highRiskSqlRows" stripe class="high-risk-table">
           <el-table-column :label="t('projectDetail.report.highRiskSql')" min-width="260" show-overflow-tooltip>
             <template #default="{ row }">{{ displayReportField(row, ['sql', 'sqlContent', 'content']) }}</template>
           </el-table-column>

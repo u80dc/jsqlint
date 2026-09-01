@@ -7,6 +7,8 @@ const STORAGE_KEY = 'jsqlint_theme'
 
 const preference = ref<ThemePreference>(loadInitialPreference())
 const currentTheme = ref<EffectiveTheme>(resolveEffective(preference.value))
+// 主题切换监听器（图表重绘等需要响应主题变化的消费方注册）
+const themeChangeListeners: Array<(theme: EffectiveTheme) => void> = []
 
 function loadInitialPreference(): ThemePreference {
   const stored = localStorage.getItem(STORAGE_KEY)
@@ -26,6 +28,7 @@ function resolveEffective(pref: ThemePreference): EffectiveTheme {
 function applyTheme(theme: EffectiveTheme) {
   document.documentElement.classList.toggle('dark', theme === 'dark')
   document.documentElement.setAttribute('data-theme', theme)
+  themeChangeListeners.forEach(listener => listener(theme))
 }
 
 export function useTheme() {
@@ -40,6 +43,10 @@ export function useTheme() {
     setTheme(currentTheme.value === 'dark' ? 'light' : 'dark')
   }
 
+  const onThemeChange = (listener: (theme: EffectiveTheme) => void) => {
+    themeChangeListeners.push(listener)
+  }
+
   // 跟随系统时监听 OS 主题变化实时切换
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
     if (preference.value === 'system') {
@@ -51,5 +58,5 @@ export function useTheme() {
   // 初始化时同步到 DOM（供 main.ts 首帧调用）
   applyTheme(currentTheme.value)
 
-  return { theme: currentTheme, themePreference: preference, setTheme, toggleTheme }
+  return { theme: currentTheme, themePreference: preference, setTheme, toggleTheme, onThemeChange }
 }

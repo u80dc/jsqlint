@@ -16,17 +16,31 @@ export const chartColors = {
   info: '#3b82f6'
 } as const
 
-/** 轴线/网格/文字等中性色 */
+/** 轴线/网格/文字等中性色（随主题切换） */
 export const chartNeutral = {
-  axisLine: '#e2e8f0',
-  splitLine: '#f1f5f9',
-  label: '#64748b',
-  labelDark: '#334155',
+  get axisLine() {
+    return isDark() ? '#334155' : '#e2e8f0'
+  },
+  get splitLine() {
+    return isDark() ? '#1e293b' : '#f1f5f9'
+  },
+  get label() {
+    return isDark() ? '#94a3b8' : '#64748b'
+  },
+  get labelDark() {
+    return isDark() ? '#cbd5e1' : '#334155'
+  },
   tooltipBg: '#1e293b',
   tooltipBorder: '#334155',
   tooltipText: '#f8fafc',
-  empty: '#e2e8f0'
+  get empty() {
+    return isDark() ? '#334155' : '#e2e8f0'
+  }
 } as const
+
+function isDark(): boolean {
+  return document.documentElement.classList.contains('dark')
+}
 
 /** 严重级别（critical/high/warning/info）语义色 */
 export const severityColors: Record<string, string> = {

@@ -180,6 +180,7 @@ import {
   type UserGroupVO,
   type UserSearchVO
 } from '@/api/projectMember'
+import { formatDateTime } from '@/utils/date'
 
 const props = defineProps<{
   active: boolean
@@ -187,7 +188,7 @@ const props = defineProps<{
   projectId: number
 }>()
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
 
 const membersLoading = ref(false)
 const members = ref<ProjectMemberVO[]>([])
@@ -314,10 +315,7 @@ const handleAddGroupMembers = async () => {
   }
 }
 
-const formatDate = (date?: string) => {
-  if (!date) return '-'
-  return new Date(date).toLocaleString(locale.value)
-}
+const formatDate = formatDateTime
 
 watch(() => props.active, (active) => {
   if (active && !loaded.value) {

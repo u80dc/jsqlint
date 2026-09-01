@@ -9,7 +9,7 @@
             :class="{ active: selectedWorkspace === 'all' }"
             @click="handleTabClick('all')"
           >
-            <span class="tab-label">所有</span>
+            <span class="tab-label">{{ t('projects.tabAll') }}</span>
           </div>
           <div
             v-for="ws in workspaces"
@@ -29,12 +29,12 @@
         </div>
         <el-button type="primary" @click="handleAdd" class="add-btn">
           <el-icon><Plus /></el-icon>
-          新增项目
+          {{ t('projects.addProject') }}
         </el-button>
       </div>
 
       <!-- 表格区域 -->
-      <div class="table-container" v-loading="loading" element-loading-text="加载中...">
+      <div class="table-container" v-loading="loading" :element-loading-text="t('common.loading')">
         <!-- 空状态 -->
         <div v-if="showEmptyState" class="empty-state">
           <div class="empty-icon">
@@ -47,9 +47,9 @@
               <path d="M52 47l6 6M52 53l6-6" stroke="#e2e8f0" stroke-width="2" stroke-linecap="round"/>
             </svg>
           </div>
-          <div class="empty-text">该工作空间暂无项目</div>
+          <div class="empty-text">{{ t('projects.emptyWorkspace') }}</div>
           <span class="action-btn action-btn--danger" @click="() => handleDeleteWorkspace()">
-            删除空间
+            {{ t('projects.deleteSpace') }}
           </span>
         </div>
 
@@ -57,7 +57,7 @@
         <el-table v-else-if="!loading" :data="projects" stripe>
           <el-table-column width="70" align="center" label="S">
             <template #header>
-              <el-tooltip content="上次审核状态" placement="top" :show-after="300">
+              <el-tooltip :content="t('projects.lastReviewStatus')" placement="top" :show-after="300">
                 <span class="header-letter">S</span>
               </el-tooltip>
             </template>
@@ -80,7 +80,7 @@
           </el-table-column>
           <el-table-column width="70" align="center" label="W">
             <template #header>
-              <el-tooltip content="审核晴雨表" placement="top" :show-after="300">
+              <el-tooltip :content="t('projects.reviewWeather')" placement="top" :show-after="300">
                 <span class="header-letter">W</span>
               </el-tooltip>
             </template>
@@ -104,67 +104,81 @@
               </span>
             </template>
           </el-table-column>
-          <el-table-column prop="name" label="项目名称" min-width="120" show-overflow-tooltip />
-          <el-table-column prop="description" label="描述" min-width="160" show-overflow-tooltip />
+          <el-table-column prop="name" :label="t('projects.projectName')" min-width="120" show-overflow-tooltip />
+          <el-table-column prop="description" :label="t('projects.description')" min-width="160" show-overflow-tooltip />
           <el-table-column width="180" align="center">
             <template #header>
-              <span>上次扫描</span>
+              <span>{{ t('projects.lastScan') }}</span>
             </template>
             <template #default="{ row }">
               <span class="scan-count">
-                <span class="scan-item" title="数据查询(DQL)"><span class="scan-label">Q</span><span class="scan-num">{{ row.lastScan?.dql || 0 }}</span></span>
-                <span class="scan-item" title="数据操作(DML)"><span class="scan-label">M</span><span class="scan-num">{{ row.lastScan?.dml || 0 }}</span></span>
-                <span class="scan-item" title="数据定义(DDL)"><span class="scan-label">L</span><span class="scan-num">{{ row.lastScan?.ddl || 0 }}</span></span>
-                <span class="scan-item" title="数据控制(DCL)"><span class="scan-label">C</span><span class="scan-num">{{ row.lastScan?.dcl || 0 }}</span></span>
+                <el-tooltip :content="t('projects.scanType.dql')" placement="top" :show-after="300">
+                  <span class="scan-item"><span class="scan-label">Q</span><span class="scan-num">{{ row.lastScan?.dql || 0 }}</span></span>
+                </el-tooltip>
+                <el-tooltip :content="t('projects.scanType.dml')" placement="top" :show-after="300">
+                  <span class="scan-item"><span class="scan-label">M</span><span class="scan-num">{{ row.lastScan?.dml || 0 }}</span></span>
+                </el-tooltip>
+                <el-tooltip :content="t('projects.scanType.ddl')" placement="top" :show-after="300">
+                  <span class="scan-item"><span class="scan-label">L</span><span class="scan-num">{{ row.lastScan?.ddl || 0 }}</span></span>
+                </el-tooltip>
+                <el-tooltip :content="t('projects.scanType.dcl')" placement="top" :show-after="300">
+                  <span class="scan-item"><span class="scan-label">C</span><span class="scan-num">{{ row.lastScan?.dcl || 0 }}</span></span>
+                </el-tooltip>
               </span>
             </template>
           </el-table-column>
           <el-table-column width="160" align="center">
             <template #header>
-              <span>上次扫描时间</span>
+              <span>{{ t('projects.lastScanTime') }}</span>
             </template>
             <template #default="{ row }">
-              <span class="time-cell">{{ row.lastScan?.scanTime || '无' }}</span>
+              <span class="time-cell">{{ row.lastScan?.scanTime || t('projects.none') }}</span>
             </template>
           </el-table-column>
           <el-table-column width="140" align="center">
             <template #header>
-              <span>上次审核</span>
+              <span>{{ t('projects.lastReview') }}</span>
             </template>
             <template #default="{ row }">
               <span class="review-count">
-                <span class="count-passed" title="通过">{{ row.lastReview?.passed || 0 }}</span>
-                <span class="count-warning" title="警告">{{ row.lastReview?.warning || 0 }}</span>
-                <span class="count-critical" title="致命">{{ row.lastReview?.critical || 0 }}</span>
+                <el-tooltip :content="t('projects.reviewResult.passed')" placement="top" :show-after="300">
+                  <span class="count-passed">{{ row.lastReview?.passed || 0 }}</span>
+                </el-tooltip>
+                <el-tooltip :content="t('projects.reviewResult.warning')" placement="top" :show-after="300">
+                  <span class="count-warning">{{ row.lastReview?.warning || 0 }}</span>
+                </el-tooltip>
+                <el-tooltip :content="t('projects.reviewResult.critical')" placement="top" :show-after="300">
+                  <span class="count-critical">{{ row.lastReview?.critical || 0 }}</span>
+                </el-tooltip>
               </span>
             </template>
           </el-table-column>
           <el-table-column width="160" align="center">
             <template #header>
-              <span>上次审核时间</span>
+              <span>{{ t('projects.lastReviewTime') }}</span>
             </template>
             <template #default="{ row }">
-              <span class="time-cell">{{ row.lastReview?.reviewTime || '无' }}</span>
+              <span class="time-cell">{{ row.lastReview?.reviewTime || t('projects.none') }}</span>
             </template>
           </el-table-column>
-          <el-table-column prop="status" label="状态" width="90" align="center">
+          <el-table-column prop="status" :label="t('projects.status')" width="90" align="center">
             <template #default="{ row }">
               <el-tag :type="row.status === 1 ? 'success' : 'info'" effect="light" round size="small">
-                {{ row.status === 1 ? '已就绪' : '未就绪' }}
+                {{ row.status === 1 ? t('projects.ready') : t('projects.notReady') }}
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column v-if="selectedWorkspace === 'all'" label="空间" width="140" align="center">
+          <el-table-column v-if="selectedWorkspace === 'all'" :label="t('projects.workspaceColumn')" width="140" align="center">
             <template #default="{ row }">
               <el-dropdown trigger="click" @command="(cmd: number | null) => handleMoveToWorkspace(row, cmd)">
                 <span class="workspace-dropdown">
                   <span v-if="row.workspaceName" class="workspace-tag">{{ row.workspaceName }}</span>
-                  <span v-else class="no-workspace">未分配</span>
+                  <span v-else class="no-workspace">{{ t('projects.unassigned') }}</span>
                   <el-icon class="dropdown-arrow"><ArrowDown /></el-icon>
                 </span>
                 <template #dropdown>
                   <el-dropdown-menu>
-                    <el-dropdown-item :command="null" :class="{ 'is-active': !row.workspaceId }">移除</el-dropdown-item>
+                    <el-dropdown-item :command="null" :class="{ 'is-active': !row.workspaceId }">{{ t('projects.remove') }}</el-dropdown-item>
                     <el-dropdown-item v-for="ws in workspaces" :key="ws.id" :command="ws.id" :class="{ 'is-active': row.workspaceId === ws.id }">
                       {{ ws.name }}
                     </el-dropdown-item>
@@ -173,12 +187,12 @@
               </el-dropdown>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="240" align="center">
+          <el-table-column :label="t('projects.actions')" width="240" align="center">
             <template #default="{ row }">
-              <span class="action-btn" @click="handleUpdate(row)">更新</span>
-              <span class="action-btn action-btn--success" @click="handleScan(row)">扫描</span>
-              <span class="action-btn action-btn--warning" @click="handleAudit(row)">审核</span>
-              <span class="action-btn action-btn--info" @click="handleView(row)">查看</span>
+              <span class="action-btn" @click="handleUpdate(row)">{{ t('projects.update') }}</span>
+              <span class="action-btn action-btn--success" @click="handleScan(row)">{{ t('projects.scan') }}</span>
+              <span class="action-btn action-btn--warning" @click="handleAudit(row)">{{ t('projects.audit') }}</span>
+              <span class="action-btn action-btn--info" @click="handleView(row)">{{ t('projects.view') }}</span>
             </template>
           </el-table-column>
         </el-table>
@@ -200,55 +214,55 @@
     </div>
 
     <!-- 创建工作空间弹窗 -->
-    <el-dialog v-model="createDialogVisible" title="创建工作空间" width="420px" align-center>
-      <el-form ref="createFormRef" :model="createForm" :rules="createRules" label-width="80px">
-        <el-form-item label="名称" prop="name">
-          <el-input v-model="createForm.name" placeholder="请输入工作空间名称" />
+    <el-dialog v-model="createDialogVisible" :title="t('projects.createWorkspaceTitle')" width="420px" align-center>
+      <el-form ref="createFormRef" :model="createForm" :rules="createRules" label-width="100px">
+        <el-form-item :label="t('projects.name')" prop="name">
+          <el-input v-model="createForm.name" :placeholder="t('projects.workspaceNamePlaceholder')" />
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="createDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleCreateSubmit" :loading="createLoading">确定</el-button>
+        <el-button @click="createDialogVisible = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" @click="handleCreateSubmit" :loading="createLoading">{{ t('common.confirm') }}</el-button>
       </template>
     </el-dialog>
 
     <!-- 新增项目弹窗 -->
-    <el-dialog v-model="projectDialogVisible" title="新增项目" width="520px" align-center @close="handleProjectDialogClose">
+    <el-dialog v-model="projectDialogVisible" :title="t('projects.addProject')" width="520px" align-center @close="handleProjectDialogClose">
       <el-form ref="projectFormRef" :model="projectForm" :rules="projectRules" label-width="100px">
-        <el-form-item label="项目名称" prop="name">
-          <el-input v-model="projectForm.name" placeholder="请输入项目名称" />
+        <el-form-item :label="t('projects.projectName')" prop="name">
+          <el-input v-model="projectForm.name" :placeholder="t('projects.projectNamePlaceholder')" />
         </el-form-item>
-        <el-form-item label="描述" prop="description">
+        <el-form-item :label="t('projects.description')" prop="description">
           <el-input
             v-model="projectForm.description"
             type="textarea"
             :rows="3"
             maxlength="128"
             show-word-limit
-            placeholder="请输入项目描述（选填）"
+            :placeholder="t('projects.descriptionPlaceholder')"
           />
         </el-form-item>
-        <el-form-item label="地址" prop="gitUrl">
-          <el-input v-model="projectForm.gitUrl" placeholder="请输入Git仓库地址" />
+        <el-form-item :label="t('projects.gitUrl')" prop="gitUrl">
+          <el-input v-model="projectForm.gitUrl" :placeholder="t('projects.gitUrlPlaceholder')" />
         </el-form-item>
-        <el-form-item label="分支或Tag" prop="ref">
-          <el-input v-model="projectForm.ref" placeholder="请输入分支或Tag" />
+        <el-form-item :label="t('projects.ref')" prop="ref">
+          <el-input v-model="projectForm.ref" :placeholder="t('projects.refPlaceholder')" />
         </el-form-item>
-        <el-form-item label="凭证" prop="credentialId">
-          <el-select v-model="projectForm.credentialId" placeholder="请选择凭证" style="width: 100%">
+        <el-form-item :label="t('projects.credential')" prop="credentialId">
+          <el-select v-model="projectForm.credentialId" :placeholder="t('projects.credentialPlaceholder')" style="width: 100%">
             <el-option v-for="cred in credentials" :key="cred.id" :label="cred.name" :value="cred.id" />
           </el-select>
         </el-form-item>
-        <el-form-item label="工作空间" prop="workspaceId">
-          <el-select v-model="projectForm.workspaceId" placeholder="请选择工作空间" style="width: 100%">
-            <el-option label="无" :value="0" />
+        <el-form-item :label="t('projects.workspace')" prop="workspaceId">
+          <el-select v-model="projectForm.workspaceId" :placeholder="t('projects.workspacePlaceholder')" style="width: 100%">
+            <el-option :label="t('projects.none')" :value="0" />
             <el-option v-for="ws in workspaces" :key="ws.id" :label="ws.name" :value="ws.id" />
           </el-select>
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="projectDialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleProjectSubmit" :loading="projectLoading">确定</el-button>
+        <el-button @click="projectDialogVisible = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" @click="handleProjectSubmit" :loading="projectLoading">{{ t('common.confirm') }}</el-button>
       </template>
     </el-dialog>
   </div>
@@ -256,6 +270,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted, watch, computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { Plus, Close, ArrowDown } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
@@ -273,6 +288,7 @@ import type { WorkspaceVO, WorkspaceCreateDTO, ProjectVO, CredentialVO, ProjectC
 import { isDialogCanceled, shouldShowActionError } from '@/utils/error'
 
 const router = useRouter()
+const { t } = useI18n()
 
 const loading = ref(false)
 const createLoading = ref(false)
@@ -296,9 +312,9 @@ const createFormRef = ref<FormInstance>()
 const createForm = reactive({
   name: ''
 })
-const createRules: FormRules = {
-  name: [{ required: true, message: '请输入工作空间名称', trigger: 'blur' }]
-}
+const createRules = computed<FormRules>(() => ({
+  name: [{ required: true, message: t('projects.workspaceNameRequired'), trigger: 'blur' }]
+}))
 
 const projectDialogVisible = ref(false)
 const projectFormRef = ref<FormInstance>()
@@ -310,13 +326,13 @@ const projectForm = reactive({
   credentialId: null as number | null,
   workspaceId: 0
 })
-const projectRules: FormRules = {
-  name: [{ required: true, message: '请输入项目名称', trigger: 'blur' }],
-  gitUrl: [{ required: true, message: '请输入Git仓库地址', trigger: 'blur' }],
-  ref: [{ required: true, message: '请输入分支或Tag', trigger: 'blur' }],
-  credentialId: [{ required: true, message: '请选择凭证', trigger: 'change' }],
-  workspaceId: [{ required: true, message: '请选择工作空间', trigger: 'change' }]
-}
+const projectRules = computed<FormRules>(() => ({
+  name: [{ required: true, message: t('projects.projectNameRequired'), trigger: 'blur' }],
+  gitUrl: [{ required: true, message: t('projects.gitUrlRequired'), trigger: 'blur' }],
+  ref: [{ required: true, message: t('projects.refRequired'), trigger: 'blur' }],
+  credentialId: [{ required: true, message: t('projects.credentialRequired'), trigger: 'change' }],
+  workspaceId: [{ required: true, message: t('projects.workspaceRequired'), trigger: 'change' }]
+}))
 
 const loadWorkspaces = async () => {
   try {
@@ -331,7 +347,7 @@ const loadWorkspaces = async () => {
       }
     }
   } catch {
-    ElMessage.error('加载工作空间列表失败')
+    ElMessage.error(t('projects.loadWorkspacesError'))
   }
 }
 
@@ -339,7 +355,7 @@ const loadCredentials = async () => {
   try {
     credentials.value = await getProjectCredentials()
   } catch {
-    ElMessage.error('加载凭证列表失败')
+    ElMessage.error(t('projects.loadCredentialsError'))
   }
 }
 
@@ -352,7 +368,7 @@ const loadProjects = async () => {
     total.value = data.length
     currentPage.value = 1
   } catch {
-    ElMessage.error('加载项目列表失败')
+    ElMessage.error(t('projects.loadProjectsError'))
   } finally {
     loading.value = false
   }
@@ -410,15 +426,15 @@ const handleAdd = () => {
 }
 
 const handleScan = (row: ProjectVO) => {
-  ElMessage.info(`开始扫描项目: ${row.name}`)
+  ElMessage.info(t('projects.scanStarted', { name: row.name }))
 }
 
 const handleUpdate = (row: ProjectVO) => {
-  ElMessage.info(`更新项目: ${row.name}`)
+  ElMessage.info(t('projects.updateStarted', { name: row.name }))
 }
 
 const handleAudit = (row: ProjectVO) => {
-  ElMessage.info(`审核项目: ${row.name}`)
+  ElMessage.info(t('projects.auditStarted', { name: row.name }))
 }
 
 const handleView = (row: ProjectVO) => {
@@ -442,9 +458,12 @@ const handleMoveToWorkspace = async (row: ProjectVO, workspaceId: number | null)
     // 更新本地数据
     row.workspaceId = workspaceId || undefined
     row.workspaceName = targetName || undefined
-    ElMessage.success(`已将「${row.name}」移动到${targetName ? '「' + targetName + '」' : '无空间'}`)
+    ElMessage.success(t('projects.moveSuccess', {
+      name: row.name,
+      target: targetName ? t('projects.moveTarget', { target: targetName }) : t('projects.noSpace')
+    }))
   } catch {
-    ElMessage.error('移动项目失败')
+    ElMessage.error(t('projects.moveError'))
   }
 }
 
@@ -453,17 +472,17 @@ const handleDeleteWorkspace = async (wsId?: number) => {
   if (idToDelete === 0 || selectedWorkspace.value === 'all') return
 
   try {
-    await ElMessageBox.confirm('确定要删除该工作空间吗？', '确认删除', {
+    await ElMessageBox.confirm(t('projects.deleteWorkspaceConfirm'), t('projects.deleteConfirmTitle'), {
       type: 'warning'
     })
     await deleteWorkspace(idToDelete)
-    ElMessage.success('删除成功')
+    ElMessage.success(t('projects.deleteSuccess'))
     selectedWorkspace.value = 'all'
     loadWorkspaces()
     loadProjects()
   } catch (error: unknown) {
     if (!isDialogCanceled(error)) {
-      ElMessage.error('删除失败')
+      ElMessage.error(t('projects.deleteError'))
     }
   }
 }
@@ -475,14 +494,14 @@ const handleCreateSubmit = async () => {
 
     const data: WorkspaceCreateDTO = { name: createForm.name }
     const result = await createWorkspace(data)
-    ElMessage.success('创建成功')
+    ElMessage.success(t('projects.createSuccess'))
     createDialogVisible.value = false
     createForm.name = ''
     loadWorkspaces()
     selectedWorkspace.value = String(result.id)
   } catch (error: unknown) {
     if (shouldShowActionError(error)) {
-      ElMessage.error('创建失败')
+      ElMessage.error(t('projects.createError'))
     }
   } finally {
     createLoading.value = false
@@ -513,12 +532,12 @@ const handleProjectSubmit = async () => {
       workspaceId: projectForm.workspaceId === 0 ? undefined : projectForm.workspaceId
     }
     await createProject(data)
-    ElMessage.success('创建成功')
+    ElMessage.success(t('projects.createSuccess'))
     projectDialogVisible.value = false
     loadProjects()
   } catch (error: unknown) {
     if (shouldShowActionError(error)) {
-      ElMessage.error('创建失败')
+      ElMessage.error(t('projects.createError'))
     }
   } finally {
     projectLoading.value = false

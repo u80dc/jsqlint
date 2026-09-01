@@ -13,25 +13,25 @@
               <el-col :span="6">
                 <div class="quick-access" @click="navigateTo('/workspace/projects')">
                   <el-icon class="icon"><Collection /></el-icon>
-                  <span class="text">项目管理</span>
+                  <span class="text">{{ t('nav.projects') }}</span>
                 </div>
               </el-col>
               <el-col :span="6">
                 <div class="quick-access" @click="navigateTo('/workspace/inspection')">
                   <el-icon class="icon"><Monitor /></el-icon>
-                  <span class="text">自动巡检</span>
+                  <span class="text">{{ t('nav.inspection') }}</span>
                 </div>
               </el-col>
               <el-col :span="6">
                 <div class="quick-access" @click="navigateTo('/workspace/alert')">
                   <el-icon class="icon"><Bell /></el-icon>
-                  <span class="text">告警配置</span>
+                  <span class="text">{{ t('nav.alert') }}</span>
                 </div>
               </el-col>
               <el-col :span="6" v-if="userInfo.role === 'ROLE_ADMIN'">
                 <div class="quick-access" @click="navigateTo('/users')">
                   <el-icon class="icon"><Setting /></el-icon>
-                  <span class="text">系统管理</span>
+                  <span class="text">{{ t('nav.system') }}</span>
                 </div>
               </el-col>
             </el-row>
@@ -44,28 +44,28 @@
       <el-col :span="12">
         <el-card>
           <template #header>
-            <span>最近活动</span>
+            <span>{{ t('workspace.recentActivity') }}</span>
           </template>
-          <el-empty description="暂无最近活动" />
+          <el-empty :description="t('workspace.noRecentActivity')" />
         </el-card>
       </el-col>
       <el-col :span="12">
         <el-card>
           <template #header>
-            <span>系统状态</span>
+            <span>{{ t('workspace.systemStatus') }}</span>
           </template>
           <div class="status-list">
             <div class="status-item">
-              <span class="label">服务状态</span>
-              <el-tag type="success">正常</el-tag>
+              <span class="label">{{ t('workspace.serviceStatus') }}</span>
+              <el-tag type="success">{{ t('workspace.normal') }}</el-tag>
             </div>
             <div class="status-item">
-              <span class="label">数据库连接</span>
-              <el-tag type="success">已连接</el-tag>
+              <span class="label">{{ t('workspace.databaseStatus') }}</span>
+              <el-tag type="success">{{ t('workspace.connected') }}</el-tag>
             </div>
             <div class="status-item">
-              <span class="label">扫描引擎</span>
-              <el-tag type="success">就绪</el-tag>
+              <span class="label">{{ t('workspace.scanEngine') }}</span>
+              <el-tag type="success">{{ t('workspace.ready') }}</el-tag>
             </div>
           </div>
         </el-card>

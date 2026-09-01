@@ -2,20 +2,20 @@
   <div class="profile">
     <el-card v-loading="loading">
       <template #header>
-        <span>个人信息</span>
+        <span>{{ t('profile.title') }}</span>
       </template>
       <el-descriptions :column="2" border>
-        <el-descriptions-item label="用户名">{{ userInfo?.username || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="姓名">{{ userInfo?.realName || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="角色">{{ userInfo?.roleDescription || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="状态">
-          <el-tag type="success">启用</el-tag>
+        <el-descriptions-item :label="t('profile.username')">{{ userInfo?.username || '-' }}</el-descriptions-item>
+        <el-descriptions-item :label="t('profile.realName')">{{ userInfo?.realName || '-' }}</el-descriptions-item>
+        <el-descriptions-item :label="t('profile.role')">{{ userInfo?.roleDescription || '-' }}</el-descriptions-item>
+        <el-descriptions-item :label="t('profile.status')">
+          <el-tag type="success">{{ t('profile.enabled') }}</el-tag>
         </el-descriptions-item>
-        <el-descriptions-item label="注册时间">{{ formatDateTime(userInfo?.createTime) }}</el-descriptions-item>
-        <el-descriptions-item label="手机号码">{{ userInfo?.phone || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="邮箱">{{ userInfo?.email || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="更新时间">{{ formatDateTime(userInfo?.updateTime) }}</el-descriptions-item>
-        <el-descriptions-item label="所属用户组" :span="2">
+        <el-descriptions-item :label="t('profile.registerTime')">{{ formatDateTime(userInfo?.createTime) }}</el-descriptions-item>
+        <el-descriptions-item :label="t('profile.phone')">{{ userInfo?.phone || '-' }}</el-descriptions-item>
+        <el-descriptions-item :label="t('profile.email')">{{ userInfo?.email || '-' }}</el-descriptions-item>
+        <el-descriptions-item :label="t('profile.updateTime')">{{ formatDateTime(userInfo?.updateTime) }}</el-descriptions-item>
+        <el-descriptions-item :label="t('profile.userGroups')" :span="2">
           <template v-if="groupNames.length">
             <el-tag v-for="name in groupNames" :key="name" class="group-tag" size="small">
               {{ name }}
@@ -25,46 +25,46 @@
         </el-descriptions-item>
       </el-descriptions>
       <div class="profile-actions">
-        <el-button type="primary" @click="openPasswordDialog">修改密码</el-button>
-        <el-button @click="openEditDialog">编辑信息</el-button>
+        <el-button type="primary" @click="openPasswordDialog">{{ t('profile.changePassword') }}</el-button>
+        <el-button @click="openEditDialog">{{ t('profile.editInfo') }}</el-button>
       </div>
     </el-card>
 
     <!-- 修改密码弹窗 -->
-    <el-dialog v-model="passwordDialogVisible" title="修改密码" width="440px" @close="resetPasswordForm">
-      <el-form ref="passwordFormRef" :model="passwordForm" :rules="passwordRules" label-width="80px">
-        <el-form-item label="旧密码" prop="oldPassword">
+    <el-dialog v-model="passwordDialogVisible" :title="t('profile.changePassword')" width="440px" @close="resetPasswordForm">
+      <el-form ref="passwordFormRef" :model="passwordForm" :rules="passwordRules" label-width="100px">
+        <el-form-item :label="t('profile.oldPassword')" prop="oldPassword">
           <el-input v-model="passwordForm.oldPassword" type="password" show-password autocomplete="off" />
         </el-form-item>
-        <el-form-item label="新密码" prop="newPassword">
+        <el-form-item :label="t('profile.newPassword')" prop="newPassword">
           <el-input v-model="passwordForm.newPassword" type="password" show-password autocomplete="off" />
         </el-form-item>
-        <el-form-item label="确认密码" prop="confirmPassword">
+        <el-form-item :label="t('profile.confirmPassword')" prop="confirmPassword">
           <el-input v-model="passwordForm.confirmPassword" type="password" show-password autocomplete="off" />
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="passwordDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="passwordSaving" @click="submitPassword">确定</el-button>
+        <el-button @click="passwordDialogVisible = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" :loading="passwordSaving" @click="submitPassword">{{ t('common.confirm') }}</el-button>
       </template>
     </el-dialog>
 
     <!-- 编辑信息弹窗 -->
-    <el-dialog v-model="editDialogVisible" title="编辑信息" width="440px" @close="resetEditForm">
-      <el-form ref="editFormRef" :model="editForm" :rules="editRules" label-width="80px">
-        <el-form-item label="姓名" prop="realName">
+    <el-dialog v-model="editDialogVisible" :title="t('profile.editInfo')" width="440px" @close="resetEditForm">
+      <el-form ref="editFormRef" :model="editForm" :rules="editRules" label-width="100px">
+        <el-form-item :label="t('profile.realName')" prop="realName">
           <el-input v-model="editForm.realName" maxlength="64" />
         </el-form-item>
-        <el-form-item label="邮箱" prop="email">
+        <el-form-item :label="t('profile.email')" prop="email">
           <el-input v-model="editForm.email" maxlength="128" />
         </el-form-item>
-        <el-form-item label="手机号码" prop="phone">
+        <el-form-item :label="t('profile.phone')" prop="phone">
           <el-input v-model="editForm.phone" maxlength="20" />
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="editDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="editSaving" @click="submitEdit">确定</el-button>
+        <el-button @click="editDialogVisible = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" :loading="editSaving" @click="submitEdit">{{ t('common.confirm') }}</el-button>
       </template>
     </el-dialog>
   </div>
@@ -72,6 +72,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import {
@@ -82,6 +83,8 @@ import {
 } from '@/api/auth'
 import { getMyUserGroups } from '@/api/userGroup'
 import { formatDateTime } from '@/utils/date'
+
+const { t } = useI18n()
 
 const loading = ref(false)
 const userInfo = ref<UserInfoVO>()
@@ -98,18 +101,18 @@ const passwordForm = reactive({
   confirmPassword: ''
 })
 
-const passwordRules: FormRules = {
-  oldPassword: [{ required: true, message: '请输入旧密码', trigger: 'blur' }],
+const passwordRules = computed<FormRules>(() => ({
+  oldPassword: [{ required: true, message: t('profile.oldPasswordRequired'), trigger: 'blur' }],
   newPassword: [
-    { required: true, message: '请输入新密码', trigger: 'blur' },
-    { min: 6, max: 64, message: '新密码长度须为6-64位', trigger: 'blur' }
+    { required: true, message: t('profile.newPasswordRequired'), trigger: 'blur' },
+    { min: 6, max: 64, message: t('profile.newPasswordLength'), trigger: 'blur' }
   ],
   confirmPassword: [
-    { required: true, message: '请再次输入新密码', trigger: 'blur' },
+    { required: true, message: t('profile.confirmPasswordRequired'), trigger: 'blur' },
     {
       validator: (_rule, value, callback) => {
         if (value !== passwordForm.newPassword) {
-          callback(new Error('两次输入的密码不一致'))
+          callback(new Error(t('profile.passwordMismatch')))
           return
         }
         callback()
@@ -117,7 +120,7 @@ const passwordRules: FormRules = {
       trigger: 'blur'
     }
   ]
-}
+}))
 
 const editDialogVisible = ref(false)
 const editSaving = ref(false)
@@ -128,14 +131,14 @@ const editForm = reactive({
   phone: ''
 })
 
-const editRules: FormRules = {
-  realName: [{ max: 64, message: '姓名长度不能超过64个字符', trigger: 'blur' }],
+const editRules = computed<FormRules>(() => ({
+  realName: [{ max: 64, message: t('profile.realNameMaxLength'), trigger: 'blur' }],
   email: [
-    { type: 'email', message: '邮箱格式不正确', trigger: 'blur' },
-    { max: 128, message: '邮箱长度不能超过128个字符', trigger: 'blur' }
+    { type: 'email', message: t('profile.emailInvalid'), trigger: 'blur' },
+    { max: 128, message: t('profile.emailMaxLength'), trigger: 'blur' }
   ],
-  phone: [{ max: 20, message: '手机号长度不能超过20个字符', trigger: 'blur' }]
-}
+  phone: [{ max: 20, message: t('profile.phoneMaxLength'), trigger: 'blur' }]
+}))
 
 const loadUserInfo = async () => {
   const [info, myGroups] = await Promise.all([
@@ -174,7 +177,7 @@ const submitPassword = async () => {
       oldPassword: passwordForm.oldPassword,
       newPassword: passwordForm.newPassword
     })
-    ElMessage.success('密码修改成功')
+    ElMessage.success(t('profile.passwordChanged'))
     passwordDialogVisible.value = false
   } finally {
     passwordSaving.value = false
@@ -204,7 +207,7 @@ const submitEdit = async () => {
       email: editForm.email.trim(),
       phone: editForm.phone.trim()
     })
-    ElMessage.success('个人信息已更新')
+    ElMessage.success(t('profile.profileUpdated'))
     editDialogVisible.value = false
   } finally {
     editSaving.value = false

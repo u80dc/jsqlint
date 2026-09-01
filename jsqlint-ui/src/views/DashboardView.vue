@@ -139,7 +139,7 @@
         </el-table-column>
         <el-table-column prop="statusDescription" :label="t('dashboard.status')" width="110" align="center">
           <template #default="{ row }">
-            <el-tag :type="getTaskStatusType(row.status)" effect="light">
+            <el-tag :type="getTaskStatusType(row.status)" effect="light" size="small">
               {{ row.statusDescription || getTaskStatusText(row.status) }}
             </el-tag>
           </template>
@@ -189,7 +189,7 @@
         </el-table-column>
         <el-table-column prop="statusDescription" :label="t('dashboard.status')" width="120" align="center">
           <template #default="{ row }">
-            <el-tag :type="getProjectStatusType(row.status)" effect="light">
+            <el-tag :type="getProjectStatusType(row.status)" effect="light" size="small">
               {{ row.statusDescription || getProjectStatusText(row.status) }}
             </el-tag>
           </template>
@@ -230,6 +230,7 @@ import {
   darkTooltip
 } from '@/utils/chartPalette'
 import { ElMessage } from 'element-plus'
+import { useTheme } from '@/composables/useTheme'
 import { Document, SuccessFilled, WarningFilled, CircleCloseFilled, ArrowRight } from '@element-plus/icons-vue'
 import {
   getOverviewAnalysisTrend,
@@ -250,6 +251,7 @@ import {
 
 const router = useRouter()
 const { t, locale } = useI18n()
+const { onThemeChange } = useTheme()
 const trendChartRef = ref<HTMLElement>()
 const pieChartRef = ref<HTMLElement>()
 const ruleHitChartRef = ref<HTMLElement>()
@@ -744,6 +746,11 @@ onMounted(async () => {
   initCharts()
   loadDashboard()
   window.addEventListener('resize', handleResize)
+  // 主题切换时重绘图表，使中性色（轴线/文字）适配深浅色
+  onThemeChange(() => {
+    renderPieChart()
+    loadOverviewCharts()
+  })
 })
 
 onUnmounted(() => {

@@ -136,7 +136,7 @@
               </el-tooltip>
             </div>
           </template>
-            <el-table :data="displayVersions" size="small" class="version-table">
+            <el-table :data="displayVersions" class="version-table">
             <el-table-column prop="ref" :label="t('projectDetail.overview.ref')" width="120" />
             <el-table-column prop="commitId" label="COMMIT ID" width="130" show-overflow-tooltip>
               <template #default="{ row }">
@@ -281,7 +281,7 @@
             {{ t('common.refresh') }}
           </el-button>
         </div>
-        <el-table :data="projectSqlList" v-loading="projectSqlLoading" size="small" class="project-sql-table" stripe>
+        <el-table :data="projectSqlList" v-loading="projectSqlLoading" class="project-sql-table" stripe>
           <el-table-column prop="statementId" :label="t('projectDetail.projectSql.statementId')" min-width="220" show-overflow-tooltip />
           <el-table-column prop="statementType" :label="t('projectDetail.projectSql.statementType')" width="100" align="center">
             <template #default="{ row }">{{ row.statementType || '-' }}</template>
@@ -365,7 +365,7 @@
             </el-button>
           </div>
         </div>
-        <el-table :data="ruleList" v-loading="ruleLoading" size="small" class="rules-table" stripe>
+        <el-table :data="ruleList" v-loading="ruleLoading" class="rules-table" stripe>
           <el-table-column prop="name" :label="t('projectDetail.rules.ruleName')" min-width="150" show-overflow-tooltip />
           <el-table-column prop="code" :label="t('projectDetail.rules.ruleCode')" min-width="150" show-overflow-tooltip />
           <el-table-column prop="categoryDescription" :label="t('projectDetail.rules.category')" width="110" align="center" />
@@ -423,7 +423,7 @@
             {{ t('common.refresh') }}
           </el-button>
         </div>
-        <el-table :data="whitelistList" v-loading="whitelistLoading" size="small" class="whitelist-table" stripe>
+        <el-table :data="whitelistList" v-loading="whitelistLoading" class="whitelist-table" stripe>
           <el-table-column prop="sqlSample" :label="t('projectDetail.whitelist.sql')" min-width="280" show-overflow-tooltip />
           <el-table-column prop="ruleName" :label="t('projectDetail.whitelist.rule')" min-width="160" show-overflow-tooltip>
             <template #default="{ row }">{{ row.ruleName || row.ruleId || '-' }}</template>
@@ -468,7 +468,7 @@
       align-center
       @close="handleRuleDialogClose"
     >
-      <el-form ref="ruleFormRef" :model="ruleForm" :rules="ruleFormRules" label-width="110px">
+      <el-form ref="ruleFormRef" :model="ruleForm" :rules="ruleFormRules" label-width="100px">
         <el-form-item :label="t('projectDetail.rules.ruleName')" prop="name">
           <el-input v-model="ruleForm.name" :placeholder="t('projectDetail.rules.namePlaceholder')" />
         </el-form-item>
@@ -577,6 +577,7 @@ import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'elem
 import { Lock, Download, DataAnalysis, Search, CircleCheck, Refresh, Plus, Top, Bottom, Tools, Document, VideoPlay, Close } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 import { chartColors, chartNeutral, seriesPalette } from '@/utils/chartPalette'
+import { useTheme } from '@/composables/useTheme'
 import ProjectLogsPanel from '@/components/project/ProjectLogsPanel.vue'
 import ProjectMembersPanel from '@/components/project/ProjectMembersPanel.vue'
 import ProjectReportPanel from '@/components/project/ProjectReportPanel.vue'
@@ -602,6 +603,7 @@ const route = useRoute()
 const router = useRouter()
 const userStore = useUserStore()
 const { t, locale } = useI18n()
+const { onThemeChange } = useTheme()
 
 const loading = ref(false)
 const statusLoading = ref(false)
@@ -1431,6 +1433,10 @@ onMounted(() => {
   loadProjectOverview()
   loadRules()
   startStatusRefresh()
+  // 主题切换时重绘图表适配深浅色
+  onThemeChange(() => {
+    updateOverviewCharts()
+  })
 })
 
 onUnmounted(() => {

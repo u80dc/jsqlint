@@ -22,6 +22,9 @@
         <el-table-column prop="operationUserName" :label="t('projectDetail.logs.operationUser')" width="120" />
         <el-table-column prop="operationMessage" :label="t('projectDetail.logs.details')" min-width="300" show-overflow-tooltip />
         <el-table-column prop="ipAddress" :label="t('projectDetail.logs.ipAddress')" width="140" />
+        <template #empty>
+          <el-empty description="暂无日志" />
+        </template>
       </el-table>
 
       <div class="pagination">
@@ -45,13 +48,14 @@ import { useI18n } from 'vue-i18n'
 import { ElMessage } from 'element-plus'
 import { Refresh } from '@element-plus/icons-vue'
 import { getProjectLogsByProjectId, type ProjectLog } from '@/api/projectLog'
+import { formatDateTime } from '@/utils/date'
 
 const props = defineProps<{
   active: boolean
   projectId: number
 }>()
 
-const { t, locale } = useI18n()
+const { t } = useI18n()
 
 const logsLoading = ref(false)
 const projectLogs = ref<ProjectLog[]>([])
@@ -86,10 +90,7 @@ const handleCurrentChange = (page: number) => {
   loadProjectLogs()
 }
 
-const formatDate = (date?: string) => {
-  if (!date) return '-'
-  return new Date(date).toLocaleString(locale.value)
-}
+const formatDate = formatDateTime
 
 watch(() => props.active, (active) => {
   if (active) {

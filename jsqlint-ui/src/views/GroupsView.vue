@@ -6,7 +6,7 @@
           <span></span>
           <el-button type="primary" @click="handleAdd">
             <el-icon><Plus /></el-icon>
-            新增用户组
+            {{ t('groups.addGroup') }}
           </el-button>
         </div>
       </template>
@@ -15,42 +15,45 @@
         <span></span>
         <el-button type="primary" @click="handleAdd">
           <el-icon><Plus /></el-icon>
-          新增用户组
+          {{ t('groups.addGroup') }}
         </el-button>
       </div>
 
       <el-table :data="groups" v-loading="loading" stripe>
-        <el-table-column prop="name" label="名称" width="150" />
-        <el-table-column prop="description" label="描述" min-width="200" />
-        <el-table-column prop="creatorName" label="创建者" width="100" />
-        <el-table-column label="成员数" prop="memberCount" width="80" />
-        <el-table-column prop="createTime" label="创建时间" width="170">
+        <el-table-column prop="name" :label="t('groups.name')" width="150" />
+        <el-table-column prop="description" :label="t('groups.description')" min-width="200" />
+        <el-table-column prop="creatorName" :label="t('groups.creator')" width="100" />
+        <el-table-column :label="t('groups.memberCount')" prop="memberCount" width="80" />
+        <el-table-column prop="createTime" :label="t('groups.createTime')" width="170">
           <template #default="{ row }">
             {{ formatDate(row.createTime) }}
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="180" fixed="right">
+        <el-table-column :label="t('groups.actions')" width="180" fixed="right">
           <template #default="{ row }">
-            <span class="action-btn" @click="handleEdit(row)">编辑</span>
-            <span class="action-btn action-btn--danger" @click="handleDelete(row)">删除</span>
+            <span class="action-btn" @click="handleEdit(row)">{{ t('common.edit') }}</span>
+            <span class="action-btn action-btn--danger" @click="handleDelete(row)">{{ t('common.delete') }}</span>
           </template>
         </el-table-column>
+        <template #empty>
+          <el-empty :description="t('groups.empty')" />
+        </template>
       </el-table>
     </component>
 
     <!-- 新增/编辑弹窗 -->
     <el-dialog v-model="dialogVisible" :title="dialogTitle" width="500px" @close="handleDialogClose">
-      <el-form ref="formRef" :model="form" :rules="rules" label-width="80px">
-        <el-form-item label="名称" prop="name">
-          <el-input v-model="form.name" placeholder="请输入用户组名称" />
+      <el-form ref="formRef" :model="form" :rules="rules" label-width="100px">
+        <el-form-item :label="t('groups.name')" prop="name">
+          <el-input v-model="form.name" :placeholder="t('groups.namePlaceholder')" />
         </el-form-item>
-        <el-form-item label="描述" prop="description">
-          <el-input v-model="form.description" type="textarea" :rows="3" placeholder="请输入描述" />
+        <el-form-item :label="t('groups.description')" prop="description">
+          <el-input v-model="form.description" type="textarea" :rows="3" :placeholder="t('groups.descriptionPlaceholder')" />
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleSubmit" :loading="submitLoading">确定</el-button>
+        <el-button @click="dialogVisible = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" @click="handleSubmit" :loading="submitLoading">{{ t('common.confirm') }}</el-button>
       </template>
     </el-dialog>
   </div>
@@ -58,6 +61,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { getUserGroups, createUserGroup, updateUserGroup, deleteUserGroup } from '@/api/userGroup'
@@ -68,6 +72,8 @@ import { isDialogCanceled, shouldShowActionError } from '@/utils/error'
 defineProps<{
   embedded?: boolean
 }>()
+
+const { t } = useI18n()
 
 const loading = ref(false)
 const submitLoading = ref(false)
@@ -82,11 +88,11 @@ const form = reactive({
   description: ''
 })
 
-const rules: FormRules = {
-  name: [{ required: true, message: '请输入用户组名称', trigger: 'blur' }]
-}
+const rules = computed<FormRules>(() => ({
+  name: [{ required: true, message: t('groups.nameRequired'), trigger: 'blur' }]
+}))
 
-const dialogTitle = computed(() => isEdit.value ? '编辑用户组' : '新增用户组')
+const dialogTitle = computed(() => isEdit.value ? t('groups.editTitle') : t('groups.addGroup'))
 
 const formatDate = formatDateTime
 
@@ -95,7 +101,7 @@ const loadGroups = async () => {
   try {
     groups.value = await getUserGroups()
   } catch {
-    ElMessage.error('加载用户组列表失败')
+    ElMessage.error(t('groups.loadError'))
   } finally {
     loading.value = false
   }
@@ -138,21 +144,21 @@ const handleSubmit = async () => {
         description: form.description || undefined
       }
       await updateUserGroup(form.id, data)
-      ElMessage.success('更新成功')
+      ElMessage.success(t('groups.updateSuccess'))
     } else {
       const data: UserGroupCreateDTO = {
         name: form.name,
         description: form.description || undefined
       }
       await createUserGroup(data)
-      ElMessage.success('创建成功')
+      ElMessage.success(t('groups.createSuccess'))
     }
 
     dialogVisible.value = false
     loadGroups()
   } catch (error: unknown) {
     if (shouldShowActionError(error)) {
-      ElMessage.error(isEdit.value ? '更新失败' : '创建失败')
+      ElMessage.error(isEdit.value ? t('groups.updateError') : t('groups.createError'))
     }
   } finally {
     submitLoading.value = false
@@ -161,15 +167,15 @@ const handleSubmit = async () => {
 
 const handleDelete = async (row: UserGroupVO) => {
   try {
-    await ElMessageBox.confirm(`确定要删除用户组「${row.name}」吗？`, '提示', {
+    await ElMessageBox.confirm(t('groups.deleteConfirm', { name: row.name }), t('groups.deleteTitle'), {
       type: 'warning'
     })
     await deleteUserGroup(row.id)
-    ElMessage.success('删除成功')
+    ElMessage.success(t('groups.deleteSuccess'))
     loadGroups()
   } catch (error: unknown) {
     if (!isDialogCanceled(error)) {
-      ElMessage.error('删除失败')
+      ElMessage.error(t('groups.deleteError'))
     }
   }
 }
