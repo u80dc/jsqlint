@@ -145,15 +145,13 @@
             {{ formatDate(row.joinTime) }}
           </template>
         </el-table-column>
-        <el-table-column :label="t('projectDetail.members.actions')" width="100" align="center">
+        <el-table-column :label="t('projectDetail.members.actions')" width="80" align="center">
           <template #default="{ row }">
-            <span
-              v-if="isProjectAdmin"
-              class="action-btn action-btn--danger"
-              @click="handleRemoveMember(row)"
-            >
-              {{ t('projectDetail.members.remove') }}
-            </span>
+            <div class="action-icons-row">
+              <el-tooltip v-if="isProjectAdmin" :content="t('projectDetail.members.remove')" placement="top">
+                <el-icon class="action-icon action-icon--danger" @click="handleRemoveMember(row)"><Delete /></el-icon>
+              </el-tooltip>
+            </div>
           </template>
         </el-table-column>
         <template #empty>
@@ -168,6 +166,7 @@
 import { ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Delete } from '@element-plus/icons-vue'
 import {
   addProjectGroupMembers,
   addProjectMembers,

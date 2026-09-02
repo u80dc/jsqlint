@@ -53,11 +53,19 @@
             </el-table-column>
             <el-table-column prop="triggerCount" :label="t('alert.triggerCount')" width="70" align="center" />
             <el-table-column prop="lastTriggeredAt" :label="t('alert.lastTriggeredAt')" width="170" />
-            <el-table-column :label="t('alert.operation')" width="180" align="center" fixed="right">
+            <el-table-column :label="t('alert.operation')" width="130" align="center" fixed="right">
               <template #default="{ row }">
-                <span class="action-btn action-btn--info" @click="showInstance(row)">{{ t('alert.detail') }}</span>
-                <span v-if="row.status === 'OPEN'" class="action-btn action-btn--warning" @click="changeStatus(row, 'ACKED')">{{ t('alert.ack') }}</span>
-                <span v-if="row.status !== 'RESOLVED'" class="action-btn action-btn--success" @click="changeStatus(row, 'RESOLVED')">{{ t('alert.resolve') }}</span>
+                <div class="action-icons-row">
+                  <el-tooltip :content="t('alert.detail')" placement="top">
+                    <el-icon class="action-icon" @click="showInstance(row)"><View /></el-icon>
+                  </el-tooltip>
+                  <el-tooltip v-if="row.status === 'OPEN'" :content="t('alert.ack')" placement="top">
+                    <el-icon class="action-icon action-icon--warning" @click="changeStatus(row, 'ACKED')"><Warning /></el-icon>
+                  </el-tooltip>
+                  <el-tooltip v-if="row.status !== 'RESOLVED'" :content="t('alert.resolve')" placement="top">
+                    <el-icon class="action-icon action-icon--success" @click="changeStatus(row, 'RESOLVED')"><CircleCheck /></el-icon>
+                  </el-tooltip>
+                </div>
               </template>
             </el-table-column>
             <template #empty>
@@ -110,10 +118,16 @@
                 <el-switch v-model="row.enabledFlag" @change="handleToggle(row)" />
               </template>
             </el-table-column>
-            <el-table-column :label="t('alert.operation')" width="150" align="center" fixed="right">
+            <el-table-column :label="t('alert.operation')" width="100" align="center" fixed="right">
               <template #default="{ row }">
-                <span class="action-btn" @click="handleEdit(row)">{{ t('common.edit') }}</span>
-                <span class="action-btn action-btn--danger" @click="handleDelete(row)">{{ t('common.delete') }}</span>
+                <div class="action-icons-row">
+                  <el-tooltip :content="t('common.edit')" placement="top">
+                    <el-icon class="action-icon" @click="handleEdit(row)"><Edit /></el-icon>
+                  </el-tooltip>
+                  <el-tooltip :content="t('common.delete')" placement="top">
+                    <el-icon class="action-icon action-icon--danger" @click="handleDelete(row)"><Delete /></el-icon>
+                  </el-tooltip>
+                </div>
               </template>
             </el-table-column>
             <template #empty>
@@ -189,7 +203,7 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox, FormInstance, FormRules } from 'element-plus'
 import { useI18n } from 'vue-i18n'
-import { Plus, Refresh } from '@element-plus/icons-vue'
+import { Plus, Refresh, Edit, Delete, View, Warning, CircleCheck } from '@element-plus/icons-vue'
 import { getProjects, ProjectVO } from '@/api/workspace'
 import {
   AlertInstanceVO,

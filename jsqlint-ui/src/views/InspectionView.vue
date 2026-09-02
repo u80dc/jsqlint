@@ -44,10 +44,16 @@
             {{ row.lastMessage || '-' }}
           </template>
         </el-table-column>
-        <el-table-column :label="t('inspection.actions')" width="140" align="center" fixed="right">
+        <el-table-column :label="t('inspection.actions')" width="100" align="center" fixed="right">
           <template #default="{ row }">
-            <span class="action-btn" @click="editConfig(row)">{{ t('common.edit') }}</span>
-            <span class="action-btn action-btn--danger" @click="confirmRemove(row)">{{ t('common.delete') }}</span>
+            <div class="action-icons-row">
+              <el-tooltip :content="t('common.edit')" placement="top">
+                <el-icon class="action-icon" @click="editConfig(row)"><Edit /></el-icon>
+              </el-tooltip>
+              <el-tooltip :content="t('common.delete')" placement="top">
+                <el-icon class="action-icon action-icon--danger" @click="confirmRemove(row)"><Delete /></el-icon>
+              </el-tooltip>
+            </div>
           </template>
         </el-table-column>
         <template #empty>
@@ -147,7 +153,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus } from '@element-plus/icons-vue'
+import { Plus, Edit, Delete } from '@element-plus/icons-vue'
 import { getProjects, type ProjectVO } from '@/api/workspace'
 import {
   deleteInspectionConfig,

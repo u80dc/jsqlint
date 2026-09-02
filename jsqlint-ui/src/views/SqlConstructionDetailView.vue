@@ -207,15 +207,13 @@
           <el-table-column :label="t('sqlConstruction.suggestion')" min-width="180" show-overflow-tooltip>
             <template #default="{ row }">{{ row.suggestion || '-' }}</template>
           </el-table-column>
-          <el-table-column :label="t('sqlConstruction.operation')" width="130" align="center" fixed="right">
+          <el-table-column :label="t('sqlConstruction.operation')" width="80" align="center" fixed="right">
             <template #default="{ row }">
-              <span
-                v-if="canIgnoreAuditResult(row)"
-                class="action-btn action-btn--danger"
-                @click="handleIgnoreAuditResult(row)"
-              >
-                {{ t('sqlConstruction.ignoreIssue') }}
-              </span>
+              <div v-if="canIgnoreAuditResult(row)" class="action-icons-row">
+                <el-tooltip :content="t('sqlConstruction.ignoreIssue')" placement="top">
+                  <el-icon class="action-icon action-icon--danger" @click="handleIgnoreAuditResult(row)"><Delete /></el-icon>
+                </el-tooltip>
+              </div>
               <span v-else class="text-secondary">-</span>
             </template>
           </el-table-column>
@@ -239,6 +237,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Delete } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 import {
   getSqlConstructionDetail,

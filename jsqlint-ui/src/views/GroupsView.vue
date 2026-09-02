@@ -29,10 +29,16 @@
             {{ formatDate(row.createTime) }}
           </template>
         </el-table-column>
-        <el-table-column :label="t('groups.actions')" width="180" fixed="right">
+        <el-table-column :label="t('groups.actions')" width="100" align="center" fixed="right">
           <template #default="{ row }">
-            <span class="action-btn" @click="handleEdit(row)">{{ t('common.edit') }}</span>
-            <span class="action-btn action-btn--danger" @click="handleDelete(row)">{{ t('common.delete') }}</span>
+            <div class="action-icons-row">
+              <el-tooltip :content="t('common.edit')" placement="top">
+                <el-icon class="action-icon" @click="handleEdit(row)"><Edit /></el-icon>
+              </el-tooltip>
+              <el-tooltip :content="t('common.delete')" placement="top">
+                <el-icon class="action-icon action-icon--danger" @click="handleDelete(row)"><Delete /></el-icon>
+              </el-tooltip>
+            </div>
           </template>
         </el-table-column>
         <template #empty>
@@ -63,7 +69,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
-import { Plus } from '@element-plus/icons-vue'
+import { Plus, Edit, Delete } from '@element-plus/icons-vue'
 import { getUserGroups, createUserGroup, updateUserGroup, deleteUserGroup } from '@/api/userGroup'
 import type { UserGroupVO, UserGroupCreateDTO, UserGroupUpdateDTO } from '@/api/userGroup'
 import { formatDateTime } from '@/utils/date'

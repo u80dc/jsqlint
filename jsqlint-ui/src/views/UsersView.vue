@@ -85,14 +85,29 @@
                 {{ formatDate(row.createTime) }}
               </template>
             </el-table-column>
-            <el-table-column :label="t('users.operation')" width="280" fixed="right" align="center">
+            <el-table-column :label="t('users.operation')" width="160" fixed="right" align="center">
               <template #default="{ row }">
-                <span class="action-btn" @click="handleEdit(row)">{{ t('common.edit') }}</span>
-                <span class="action-btn action-btn--warning" @click="handleResetPassword(row)">{{ t('users.resetPassword') }}</span>
-                <span class="action-btn" :class="row.status === 1 ? 'action-btn--warning' : 'action-btn--success'" @click="handleToggle(row)">
-                  {{ row.status === 1 ? t('common.disable') : t('common.enable') }}
-                </span>
-                <span class="action-btn action-btn--danger" @click="handleDelete(row)">{{ t('common.delete') }}</span>
+                <div class="action-icons-row">
+                  <el-tooltip :content="t('common.edit')" placement="top">
+                    <el-icon class="action-icon" @click="handleEdit(row)"><Edit /></el-icon>
+                  </el-tooltip>
+                  <el-tooltip :content="t('users.resetPassword')" placement="top">
+                    <el-icon class="action-icon action-icon--warning" @click="handleResetPassword(row)"><Key /></el-icon>
+                  </el-tooltip>
+                  <el-tooltip :content="row.status === 1 ? t('common.disable') : t('common.enable')" placement="top">
+                    <el-icon
+                      class="action-icon"
+                      :class="row.status === 1 ? 'action-icon--warning' : 'action-icon--success'"
+                      @click="handleToggle(row)"
+                    >
+                      <SwitchButton v-if="row.status === 1" />
+                      <CircleCheck v-else />
+                    </el-icon>
+                  </el-tooltip>
+                  <el-tooltip :content="t('common.delete')" placement="top">
+                    <el-icon class="action-icon action-icon--danger" @click="handleDelete(row)"><Delete /></el-icon>
+                  </el-tooltip>
+                </div>
               </template>
             </el-table-column>
             <template #empty>
@@ -157,7 +172,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { useI18n } from 'vue-i18n'
-import { Plus, ArrowDown, ArrowUp } from '@element-plus/icons-vue'
+import { Plus, ArrowDown, ArrowUp, Edit, Delete, Key, SwitchButton, CircleCheck } from '@element-plus/icons-vue'
 import {
   getUsers,
   createUser,

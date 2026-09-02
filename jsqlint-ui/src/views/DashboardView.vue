@@ -212,9 +212,13 @@
             {{ formatDate(row.analysisTime) }}
           </template>
         </el-table-column>
-        <el-table-column :label="t('dashboard.actions')" width="120" align="center">
+        <el-table-column :label="t('dashboard.actions')" width="80" align="center">
           <template #default="{ row }">
-            <span class="action-btn action-btn--info" @click="handleView(row)">{{ t('dashboard.view') }}</span>
+            <div class="action-icons-row">
+              <el-tooltip :content="t('dashboard.view')" placement="top">
+                <el-icon class="action-icon" @click="handleView(row)"><View /></el-icon>
+              </el-tooltip>
+            </div>
           </template>
         </el-table-column>
         <template #empty>
@@ -251,7 +255,7 @@ import {
 } from '@/utils/chartPalette'
 import { ElMessage } from 'element-plus'
 import { useTheme } from '@/composables/useTheme'
-import { Document, SuccessFilled, WarningFilled, CircleCloseFilled, ArrowDown, ArrowUp } from '@element-plus/icons-vue'
+import { Document, SuccessFilled, WarningFilled, CircleCloseFilled, ArrowDown, ArrowUp, View } from '@element-plus/icons-vue'
 import {
   getOverviewAnalysisTrend,
   getOverviewCurrentTasks,

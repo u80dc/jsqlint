@@ -52,10 +52,16 @@
         </el-table-column>
         <el-table-column prop="createUserName" :label="t('rules.creator')" width="100" align="center" />
         <el-table-column prop="updateTime" :label="t('rules.updateTime')" width="160" align="center" />
-        <el-table-column :label="t('rules.operation')" width="140" align="center" fixed="right">
+        <el-table-column :label="t('rules.operation')" width="100" align="center" fixed="right">
           <template #default="{ row }">
-            <span class="action-btn" @click="handleEdit(row)">{{ t('common.edit') }}</span>
-            <span class="action-btn action-btn--danger" @click="handleDelete(row)">{{ t('common.delete') }}</span>
+            <div class="action-icons-row">
+              <el-tooltip :content="t('common.edit')" placement="top">
+                <el-icon class="action-icon" @click="handleEdit(row)"><Edit /></el-icon>
+              </el-tooltip>
+              <el-tooltip :content="t('common.delete')" placement="top">
+                <el-icon class="action-icon action-icon--danger" @click="handleDelete(row)"><Delete /></el-icon>
+              </el-tooltip>
+            </div>
           </template>
         </el-table-column>
         <template #empty>
@@ -127,7 +133,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { useI18n } from 'vue-i18n'
-import { Plus } from '@element-plus/icons-vue'
+import { Plus, Edit, Delete } from '@element-plus/icons-vue'
 import {
   getAuditRules,
   createAuditRule,

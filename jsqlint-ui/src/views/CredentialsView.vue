@@ -43,13 +43,26 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column :label="t('credentials.actions')" width="220">
+        <el-table-column :label="t('credentials.actions')" width="130" align="center">
           <template #default="{ row }">
-            <span class="action-btn" @click="handleEdit(row)">{{ t('common.edit') }}</span>
-            <span class="action-btn" :class="row.status === 1 ? 'action-btn--warning' : 'action-btn--success'" @click="handleToggle(row)">
-              {{ row.status === 1 ? t('common.disable') : t('common.enable') }}
-            </span>
-            <span class="action-btn action-btn--danger" @click="handleDelete(row)">{{ t('common.delete') }}</span>
+            <div class="action-icons-row">
+              <el-tooltip :content="t('common.edit')" placement="top">
+                <el-icon class="action-icon" @click="handleEdit(row)"><Edit /></el-icon>
+              </el-tooltip>
+              <el-tooltip :content="row.status === 1 ? t('common.disable') : t('common.enable')" placement="top">
+                <el-icon
+                  class="action-icon"
+                  :class="row.status === 1 ? 'action-icon--warning' : 'action-icon--success'"
+                  @click="handleToggle(row)"
+                >
+                  <SwitchButton v-if="row.status === 1" />
+                  <CircleCheck v-else />
+                </el-icon>
+              </el-tooltip>
+              <el-tooltip :content="t('common.delete')" placement="top">
+                <el-icon class="action-icon action-icon--danger" @click="handleDelete(row)"><Delete /></el-icon>
+              </el-tooltip>
+            </div>
           </template>
         </el-table-column>
         <template #empty>
@@ -103,7 +116,7 @@
 import { ref, reactive, computed, onMounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
-import { Plus } from '@element-plus/icons-vue'
+import { Plus, Edit, Delete, SwitchButton, CircleCheck } from '@element-plus/icons-vue'
 import { listCredentials, getCredentialById, createCredential, updateCredential, deleteCredential, toggleCredential } from '@/api/credential'
 import type { CredentialVO, CredentialDTO } from '@/api/credential'
 import { formatDateTime } from '@/utils/date'

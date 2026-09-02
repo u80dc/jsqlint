@@ -201,6 +201,25 @@
               </template>
             </el-table-column>
           </el-table>
+          <div v-if="versions.length > VERSION_PAGE_SIZE" class="version-load-more">
+            <el-button
+              v-if="displayVersions.length < versions.length"
+              text
+              type="primary"
+              :icon="ArrowDown"
+              @click="showMoreVersions"
+            >
+              {{ t('projectDetail.overview.showMoreVersions', { count: versions.length - displayVersions.length }) }}
+            </el-button>
+            <el-button
+              v-if="displayVersions.length > VERSION_PAGE_SIZE"
+              text
+              :icon="ArrowUp"
+              @click="collapseVersions"
+            >
+              {{ t('projectDetail.overview.collapseVersions') }}
+            </el-button>
+          </div>
         </el-card>
       </div>
 
@@ -298,12 +317,19 @@
             {{ t('common.refresh') }}
           </el-button>
         </div>
-        <el-table :data="projectSqlList" v-loading="projectSqlLoading" class="project-sql-table" stripe>
+        <el-table
+          :data="projectSqlList"
+          v-loading="projectSqlLoading"
+          class="project-sql-table"
+          stripe
+          row-class-name="clickable-row"
+          @row-dblclick="handleViewSqlConstruction"
+        >
           <el-table-column prop="statementId" :label="t('projectDetail.projectSql.statementId')" min-width="220" show-overflow-tooltip />
           <el-table-column prop="statementType" :label="t('projectDetail.projectSql.statementType')" width="100" align="center">
             <template #default="{ row }">{{ row.statementType || '-' }}</template>
           </el-table-column>
-          <el-table-column :label="t('projectDetail.projectSql.sql')" min-width="260" show-overflow-tooltip>
+          <el-table-column :label="t('projectDetail.projectSql.sql')" min-width="440" show-overflow-tooltip>
             <template #default="{ row }">{{ row.rawSql || '-' }}</template>
           </el-table-column>
           <el-table-column prop="sourceType" :label="t('projectDetail.projectSql.sourceType')" width="130" align="center">
@@ -311,9 +337,6 @@
           </el-table-column>
           <el-table-column :label="t('projectDetail.projectSql.location')" min-width="180" show-overflow-tooltip>
             <template #default="{ row }">{{ formatSqlLocation(row) }}</template>
-          </el-table-column>
-          <el-table-column :label="t('projectDetail.projectSql.mapper')" min-width="180" show-overflow-tooltip>
-            <template #default="{ row }">{{ formatSqlMapper(row) }}</template>
           </el-table-column>
           <el-table-column :label="t('projectDetail.projectSql.dynamic')" width="90" align="center">
             <template #default="{ row }">
@@ -325,11 +348,13 @@
           <el-table-column prop="paramCount" :label="t('projectDetail.projectSql.paramCount')" width="90" align="center">
             <template #default="{ row }">{{ row.paramCount ?? 0 }}</template>
           </el-table-column>
-          <el-table-column :label="t('projectDetail.projectSql.operation')" width="120" align="center" fixed="right">
+          <el-table-column :label="t('projectDetail.projectSql.operation')" width="80" align="center" fixed="right">
             <template #default="{ row }">
-              <span class="action-btn" @click="handleViewSqlConstruction(row)">
-                {{ t('projectDetail.report.constructionDetail') }}
-              </span>
+              <div class="action-icons-row">
+                <el-tooltip :content="t('projectDetail.report.constructionDetail')" placement="top">
+                  <el-icon class="action-icon" @click="handleViewSqlConstruction(row)"><View /></el-icon>
+                </el-tooltip>
+              </div>
             </template>
           </el-table-column>
         </el-table>
@@ -406,10 +431,16 @@
               {{ formatDate(row.updateTime) }}
             </template>
           </el-table-column>
-          <el-table-column :label="t('projectDetail.rules.operation')" width="130" align="center" fixed="right">
+          <el-table-column :label="t('projectDetail.rules.operation')" width="100" align="center" fixed="right">
             <template #default="{ row }">
-              <span class="action-btn" @click="handleEditProjectRule(row)">{{ t('common.edit') }}</span>
-              <span class="action-btn action-btn--danger" @click="handleDeleteProjectRule(row)">{{ t('common.delete') }}</span>
+              <div class="action-icons-row">
+                <el-tooltip :content="t('common.edit')" placement="top">
+                  <el-icon class="action-icon" @click="handleEditProjectRule(row)"><Edit /></el-icon>
+                </el-tooltip>
+                <el-tooltip :content="t('common.delete')" placement="top">
+                  <el-icon class="action-icon action-icon--danger" @click="handleDeleteProjectRule(row)"><Delete /></el-icon>
+                </el-tooltip>
+              </div>
             </template>
           </el-table-column>
         </el-table>
@@ -455,11 +486,13 @@
           <el-table-column prop="createTime" :label="t('projectDetail.whitelist.createTime')" width="170" align="center">
             <template #default="{ row }">{{ formatDate(row.createTime) }}</template>
           </el-table-column>
-          <el-table-column :label="t('projectDetail.whitelist.operation')" width="110" align="center" fixed="right">
+          <el-table-column :label="t('projectDetail.whitelist.operation')" width="80" align="center" fixed="right">
             <template #default="{ row }">
-              <span class="action-btn action-btn--danger" @click="handleRemoveWhitelist(row)">
-                {{ t('projectDetail.whitelist.remove') }}
-              </span>
+              <div class="action-icons-row">
+                <el-tooltip :content="t('projectDetail.whitelist.remove')" placement="top">
+                  <el-icon class="action-icon action-icon--danger" @click="handleRemoveWhitelist(row)"><Delete /></el-icon>
+                </el-tooltip>
+              </div>
             </template>
           </el-table-column>
         </el-table>
@@ -632,7 +665,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { getWorkspaces, addProjectToWorkspace, removeProjectFromWorkspace, type WorkspaceVO } from '@/api/workspace'
-import { Lock, Download, DataAnalysis, Search, CircleCheck, Refresh, Plus, Top, Bottom, Tools, Document, VideoPlay, Close, EditPen, CopyDocument } from '@element-plus/icons-vue'
+import { Lock, Download, DataAnalysis, Search, CircleCheck, Refresh, Plus, Top, Bottom, Tools, Document, VideoPlay, Close, EditPen, CopyDocument, View, Edit, Delete, ArrowDown, ArrowUp } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 import { chartColors, chartNeutral, seriesPalette } from '@/utils/chartPalette'
 import { useTheme } from '@/composables/useTheme'
@@ -1089,10 +1122,21 @@ const formatReportFileTime = (date?: string) => {
   ].join('-')
 }
 
-// 版本列表显示逻辑
+// 版本列表显示逻辑：默认 5 条，每次"更多"追加 5 条，可收起回 5 条
+const VERSION_PAGE_SIZE = 5
+const VERSION_STEP = 5
+const versionVisibleCount = ref(VERSION_PAGE_SIZE)
 const displayVersions = computed(() => {
-  return versions.value.slice(0, 5)
+  return versions.value.slice(0, versionVisibleCount.value)
 })
+
+const showMoreVersions = () => {
+  versionVisibleCount.value = Math.min(versionVisibleCount.value + VERSION_STEP, versions.value.length)
+}
+
+const collapseVersions = () => {
+  versionVisibleCount.value = VERSION_PAGE_SIZE
+}
 
 const projectSqlVersionLabel = computed(() => {
   if (!projectSqlVersion.value) {
@@ -1234,6 +1278,9 @@ const loadVersions = async () => {
     versions.value = await getProjectVersions(projectId)
   } catch {
     versions.value = []
+  } finally {
+    // 数据刷新后回到默认展示条数
+    versionVisibleCount.value = VERSION_PAGE_SIZE
   }
 }
 
@@ -2067,6 +2114,13 @@ const loadProjectOverview = async () => {
       padding: 16px;
     }
 
+    .version-load-more {
+      display: flex;
+      justify-content: center;
+      gap: 8px;
+      padding-top: 12px;
+    }
+
     .version-list-header {
       display: flex;
       align-items: center;
@@ -2385,6 +2439,11 @@ const loadProjectOverview = async () => {
 
   .project-sql-table {
     width: 100%;
+
+    // 行双击进入构造详情，手型提示可交互
+    :deep(.clickable-row) {
+      cursor: pointer;
+    }
   }
 }
 

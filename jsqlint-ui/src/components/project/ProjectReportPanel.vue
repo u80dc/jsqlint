@@ -111,23 +111,23 @@
           <el-table-column :label="t('projectDetail.report.suggestion')" min-width="180" show-overflow-tooltip>
             <template #default="{ row }">{{ displayReportField(row, ['suggestion']) }}</template>
           </el-table-column>
-          <el-table-column :label="t('projectDetail.report.operation')" width="220" align="center" fixed="right">
+          <el-table-column :label="t('projectDetail.report.operation')" width="100" align="center" fixed="right">
             <template #default="{ row }">
-              <span class="high-risk-actions">
-                <span
+              <span class="high-risk-actions action-icons-row">
+                <el-tooltip
                   v-if="displayReportField(row, ['scanId']) !== '-'"
-                  class="action-btn"
-                  @click="handleViewConstruction(row)"
+                  :content="t('projectDetail.report.constructionDetail')"
+                  placement="top"
                 >
-                  {{ t('projectDetail.report.constructionDetail') }}
-                </span>
-                <span
+                  <el-icon class="action-icon" @click="handleViewConstruction(row)"><View /></el-icon>
+                </el-tooltip>
+                <el-tooltip
                   v-if="canIgnoreIssue(row)"
-                  class="action-btn danger"
-                  @click="openIgnoreDialog(row)"
+                  :content="t('projectDetail.report.ignoreIssue')"
+                  placement="top"
                 >
-                  {{ t('projectDetail.report.ignoreIssue') }}
-                </span>
+                  <el-icon class="action-icon action-icon--danger" @click="openIgnoreDialog(row)"><Delete /></el-icon>
+                </el-tooltip>
                 <span v-if="displayReportField(row, ['scanId']) === '-' && !canIgnoreIssue(row)" class="text-secondary">-</span>
               </span>
             </template>
@@ -179,7 +179,7 @@ import { computed, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
-import { Download } from '@element-plus/icons-vue'
+import { Download, View, Delete } from '@element-plus/icons-vue'
 import type { ProjectReportVO } from '@/api/projectReport'
 import { createSqlWhitelist } from '@/api/sqlWhitelist'
 
@@ -535,28 +535,11 @@ const formatDate = (date?: string) => {
 }
 
 .high-risk-actions {
+  // 图标形态由全局 action-icons-row / action-icon 提供，这里仅保留行内对齐
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
   white-space: nowrap;
-
-  .action-btn {
-    cursor: pointer;
-    color: $primary-hover;
-
-    &:hover {
-      color: $primary-hover;
-    }
-
-    &.danger {
-      color: $danger-color;
-
-      &:hover {
-        color: $danger-color;
-      }
-    }
-  }
 }
 
 .ignore-dialog {
