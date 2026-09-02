@@ -26,7 +26,8 @@ export default {
     success: '操作成功',
     error: '操作失败',
     yes: '是',
-    no: '否'
+    no: '否',
+    close: '收起'
   },
   nav: {
     dashboard: '首页概览',
@@ -1031,13 +1032,14 @@ export default {
     type: '类型',
     possibleValues: '可能值',
     noPossibleValues: '暂无可能值',
-    propagationPaths: '传播路径',
+    propagationPaths: '参数轨迹',
+    viewTrace: '展示轨迹图',
     rootValueLabel: '根值: {value}',
-    noFullPropagation: '当前记录未保存完整传播路径',
-    propagationSection: '参数传播路径',
+    noFullPropagation: '当前记录未保存完整参数轨迹',
+    propagationSection: '参数轨迹',
     propagationStats: '{pathCount} 条路径 / {stepCount} 个节点',
-    noPropagation: '暂无参数传播路径',
-    propagationLoadError: '参数传播路径加载失败',
+    noPropagation: '暂无参数轨迹',
+    propagationLoadError: '参数轨迹加载失败',
     renderedSql: '渲染 SQL',
     sampleCount: '{count} 条样例',
     noRenderedSql: '暂无渲染 SQL 样例',
@@ -1074,7 +1076,9 @@ export default {
       callSite: '调用点: {value}',
       argumentIndex: '实参下标: {value}',
       argument: '实参: {value}',
-      parameterFallback: '参数{index}'
+      parameterFallback: '参数{index}',
+      edgeTitle: '调用关系',
+      callCount: '被调用 {count} 次'
     }
   }
 }

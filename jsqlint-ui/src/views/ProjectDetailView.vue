@@ -312,10 +312,11 @@
             <strong>{{ projectSqlVersionLabel }}</strong>
             <span class="project-sql-count">{{ t('projectDetail.projectSql.total', { count: projectSqlList.length }) }}</span>
           </div>
-          <el-button :loading="projectSqlLoading" @click="loadProjectSql">
-            <el-icon><Refresh /></el-icon>
-            {{ t('common.refresh') }}
-          </el-button>
+          <el-tooltip :content="t('common.refresh')" placement="top">
+            <el-button text class="toolbar-refresh-btn" :loading="projectSqlLoading" @click="loadProjectSql()">
+              <el-icon><Refresh /></el-icon>
+            </el-button>
+          </el-tooltip>
         </div>
         <el-table
           :data="projectSqlList"
@@ -325,7 +326,15 @@
           row-class-name="clickable-row"
           @row-dblclick="handleViewSqlConstruction"
         >
-          <el-table-column prop="statementId" :label="t('projectDetail.projectSql.statementId')" min-width="220" show-overflow-tooltip />
+          <el-table-column prop="statementId" :label="t('projectDetail.projectSql.statementId')" min-width="220">
+            <template #default="{ row }">
+              <el-tooltip :content="row.statementId || '-'" :disabled="!row.statementId" placement="top">
+                <span class="statement-id-cell" @click="copyStatementId(row.statementId)">
+                  {{ shortenStatementId(row.statementId) }}
+                </span>
+              </el-tooltip>
+            </template>
+          </el-table-column>
           <el-table-column prop="statementType" :label="t('projectDetail.projectSql.statementType')" width="100" align="center">
             <template #default="{ row }">{{ row.statementType || '-' }}</template>
           </el-table-column>
@@ -1387,6 +1396,39 @@ const formatSqlLocation = (row: SqlStatementVO) => {
   return row.sourceLine ? `${row.sourceFile}:${row.sourceLine}` : row.sourceFile
 }
 
+/**
+ * statementId 缩短展示：去掉方法名前的包名前缀，保留"类.方法(参数)"。
+ * 例：cn.jnu.mapper.BookMapper.count(cn.jnu.entity.Book) → BookMapper.count(cn.jnu.entity.Book)
+ */
+const shortenStatementId = (statementId?: string) => {
+  if (!statementId) {
+    return '-'
+  }
+  const openParen = statementId.indexOf('(')
+  if (openParen < 0) {
+    return statementId
+  }
+  const beforeParen = statementId.slice(0, openParen)
+  // 从括号前往前找第二个点，保留最后两段（类名.方法名）
+  const lastDot = beforeParen.lastIndexOf('.')
+  const secondLastDot = lastDot > 0 ? beforeParen.lastIndexOf('.', lastDot - 1) : -1
+  const methodPart = secondLastDot > 0 ? beforeParen.slice(secondLastDot + 1) : beforeParen
+  return `${methodPart}${statementId.slice(openParen)}`
+}
+
+/** 单击复制完整 statementId */
+const copyStatementId = async (statementId?: string) => {
+  if (!statementId) {
+    return
+  }
+  try {
+    await navigator.clipboard.writeText(statementId)
+    ElMessage.success(t('common.copySuccess'))
+  } catch {
+    ElMessage.error(t('common.copyFailed'))
+  }
+}
+
 const formatSqlMapper = (row: SqlStatementVO) => {
   if (!row.mapperClass && !row.mapperMethod) {
     return '-'
@@ -2415,6 +2457,20 @@ const loadProjectOverview = async () => {
     justify-content: space-between;
     gap: 16px;
     margin-bottom: 14px;
+
+    // 纯图标刷新按钮，悬浮 tooltip 提示
+    .toolbar-refresh-btn {
+      padding: 4px;
+      color: var(--jsp-text-secondary);
+
+      &:hover {
+        color: $primary-color;
+      }
+
+      .el-icon {
+        font-size: 16px;
+      }
+    }
   }
 
   .project-sql-summary {
@@ -2444,6 +2500,17 @@ const loadProjectOverview = async () => {
     :deep(.clickable-row) {
       cursor: pointer;
     }
+  }
+
+  // statementId 缩短展示：默认只显示"类.方法(参数)"，悬浮完整、单击复制
+  .statement-id-cell {
+    display: inline-block;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: copy;
+    color: var(--jsp-text-primary);
   }
 }
 

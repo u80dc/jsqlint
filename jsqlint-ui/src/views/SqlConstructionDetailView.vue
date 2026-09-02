@@ -26,7 +26,7 @@
         </div>
       </section>
 
-      <section class="definition-section">
+      <el-card class="definition-section">
         <div class="section-heading">
           <h2>{{ t('sqlConstruction.definitionLocation') }}</h2>
         </div>
@@ -49,10 +49,10 @@
           </div>
         </div>
         <pre class="sql-block">{{ detail.definition.rawSql || t('sqlConstruction.noRawSql') }}</pre>
-      </section>
+      </el-card>
 
       <div class="workbench">
-        <section class="timeline-section">
+        <el-card class="timeline-section">
           <div class="section-heading">
             <h2>{{ t('sqlConstruction.constructionProcess') }}</h2>
             <span>{{ t('sqlConstruction.nodeCount', { count: detail.constructionSteps.length }) }}</span>
@@ -65,7 +65,9 @@
               class="timeline-row"
               :style="{ '--depth': step.depth }"
             >
-              <div class="timeline-marker">{{ step.order }}</div>
+              <div class="timeline-rail">
+                <div class="timeline-marker">{{ step.order }}</div>
+              </div>
               <div class="timeline-content">
                 <div class="step-header">
                   <div>
@@ -86,9 +88,9 @@
               </div>
             </div>
           </div>
-        </section>
+        </el-card>
 
-        <section class="parameter-section">
+        <el-card class="parameter-section">
           <div class="section-heading">
             <h2>{{ t('sqlConstruction.parameters') }}</h2>
             <span>{{ t('sqlConstruction.parameterCountLabel', { count: detail.parameters.length }) }}</span>
@@ -131,7 +133,18 @@
             </div>
             <el-empty v-else :description="t('sqlConstruction.noPossibleValues')" :image-size="70" />
 
-            <div class="subsection-title">{{ t('sqlConstruction.propagationPaths') }}</div>
+            <div class="subsection-title trace-title-row">
+              <span>{{ t('sqlConstruction.propagationPaths') }}</span>
+              <el-button
+                text
+                type="primary"
+                size="small"
+                :icon="DataAnalysis"
+                @click="showTracePanel"
+              >
+                {{ t('sqlConstruction.viewTrace') }}
+              </el-button>
+            </div>
             <div v-if="selectedParameter.propagationPaths?.length" class="path-list">
               <div v-for="(path, pathIndex) in selectedParameter.propagationPaths" :key="pathIndex" class="path-item">
                 <div class="path-root">{{ t('sqlConstruction.rootValueLabel', { value: formatValue(path.rootValue) }) }}</div>
@@ -144,21 +157,24 @@
             </div>
             <el-empty v-else :description="t('sqlConstruction.noFullPropagation')" :image-size="70" />
           </div>
-        </section>
+        </el-card>
       </div>
 
-      <section class="flow-section">
+      <el-card v-if="traceVisible" class="flow-section">
         <div class="section-heading">
           <h2>{{ t('sqlConstruction.propagationSection') }}</h2>
           <span v-if="!propagation && propagationLoading">{{ t('common.loading') }}</span>
           <span v-else-if="propagation && hasPropagationSteps">{{ t('sqlConstruction.propagationStats', { pathCount: propagationStats.pathCount, stepCount: propagationStats.stepCount }) }}</span>
+          <el-button text size="small" :icon="Close" @click="closeTracePanel">
+            {{ t('common.close') }}
+          </el-button>
         </div>
         <el-empty v-if="propagation && !hasPropagationSteps" :description="t('sqlConstruction.noPropagation')" />
         <el-empty v-else-if="propagationLoadError" :description="t('sqlConstruction.propagationLoadError')" />
         <div v-show="hasPropagationSteps" ref="flowChartRef" class="flow-chart" :style="{ height: flowChartHeight }"></div>
-      </section>
+      </el-card>
 
-      <section class="rendered-section">
+      <el-card class="rendered-section">
         <div class="section-heading">
           <h2>{{ t('sqlConstruction.renderedSql') }}</h2>
           <span>{{ t('sqlConstruction.sampleCount', { count: detail.renderedSqls.length }) }}</span>
@@ -179,9 +195,9 @@
             </div>
           </el-collapse-item>
         </el-collapse>
-      </section>
+      </el-card>
 
-      <section class="audit-section">
+      <el-card class="audit-section">
         <div class="section-heading">
           <h2>{{ t('sqlConstruction.auditIssues') }}</h2>
           <span>{{ t('sqlConstruction.issueCount', { count: visibleAuditResults.length }) }}</span>
@@ -218,16 +234,16 @@
             </template>
           </el-table-column>
         </el-table>
-      </section>
+      </el-card>
 
-      <section v-if="detail.diagnostics.length" class="diagnostic-section">
+      <el-card v-if="detail.diagnostics.length" class="diagnostic-section">
         <div class="section-heading">
           <h2>{{ t('sqlConstruction.diagnostics') }}</h2>
         </div>
         <ul>
           <li v-for="item in detail.diagnostics" :key="item">{{ item }}</li>
         </ul>
-      </section>
+      </el-card>
     </div>
   </div>
 </template>
@@ -237,7 +253,7 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Delete } from '@element-plus/icons-vue'
+import { Delete, Close, DataAnalysis } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 import {
   getSqlConstructionDetail,
@@ -258,10 +274,29 @@ const detail = ref<SqlConstructionDetailVO | null>(null)
 const selectedParameterKey = ref('')
 const ignoredAuditKeys = ref<Set<string>>(new Set())
 
-// 参数传播路径（来源于 propagation-paths 接口）
+// 参数轨迹（来源于 propagation-paths 接口）；面板默认隐藏，由参数面板的"查看"按钮展开
 const propagation = ref<SqlPropagationPathVO | null>(null)
 const propagationLoading = ref(false)
 const propagationLoadError = ref(false)
+const traceVisible = ref(false)
+
+const showTracePanel = () => {
+  traceVisible.value = true
+  // 数据未加载（或之前加载失败）时先请求，再等渲染完成初始化图表
+  if (!propagation.value && !propagationLoading.value) {
+    loadPropagationPaths()
+  } else {
+    // 面板由隐藏变可见后容器尺寸才有效，需等待渲染完成再重绘
+    initFlowChart()
+  }
+}
+
+/** 收起面板：v-if 会销毁图表容器 DOM，须同步 dispose echarts 实例，否则下次打开渲染空白 */
+const closeTracePanel = () => {
+  traceVisible.value = false
+  flowChart?.dispose()
+  flowChart = null
+}
 const flowChartRef = ref<HTMLElement>()
 let flowChart: echarts.ECharts | null = null
 
@@ -287,7 +322,7 @@ const visibleAuditResults = computed(() => {
   return (detail.value?.auditResults || []).filter(result => !ignoredAuditKeys.value.has(auditResultKey(result)))
 })
 
-// 传播路径统计：以 parameters[].paths[].steps 中的 step 为节点依据
+// 参数轨迹统计：以 parameters[].paths[].steps 中的 step 为节点依据
 const propagationSteps = computed(() => {
   const result: SqlPropagationCallTraceStepVO[] = []
   for (const parameter of propagation.value?.parameters || []) {
@@ -322,8 +357,9 @@ const propagationStats = computed(() => {
 })
 
 const flowChartHeight = computed(() => {
-  const rows = propagationStats.value.pathCount || 1
-  return `${Math.min(760, Math.max(360, rows * 132 + 96))}px`
+  // DAG 布局按列排布，高度取决于最宽列的节点数（收敛在合理区间）
+  const rows = Math.max(propagationStats.value.methodCount, propagationStats.value.pathCount, 3)
+  return `${Math.min(860, Math.max(380, rows * 88 + 96))}px`
 })
 
 const loadPropagationPaths = async () => {
@@ -353,7 +389,7 @@ const loadDetail = async () => {
     detail.value = await getSqlConstructionDetail(sqlId.value)
     ignoredAuditKeys.value = new Set()
     selectedParameterKey.value = detail.value.parameters[0] ? parameterKey(detail.value.parameters[0]) : ''
-    loadPropagationPaths()
+    // 参数轨迹面板默认隐藏，数据延迟到用户点击"查看"时再请求
   } catch {
     detail.value = null
   } finally {
@@ -461,90 +497,180 @@ const pathSteps = (path: Record<string, unknown>) => {
   return steps.length > 0 ? steps as Array<Record<string, unknown>> : valueFlow as Array<Record<string, unknown>>
 }
 
-// 流程图只使用 parameters[].paths[].steps。每个 step 是一个节点，节点内展示 caller -> callee。
+// DAG 调用图：节点 = 去重后的方法（根值入口 + 中间方法 + SQL 终点），边 = 调用关系（多路径合并）。
+// 同一方法被多条路径复用时自然汇合/分叉，参数名作为边的悬浮明细展示。
 const buildFlowOption = (data: SqlPropagationPathVO): echarts.EChartsOption => {
   type FlowNode = {
     id: string
     name: string
-    caller?: string
-    callee?: string
-    parameter?: string
-    rootValue?: string
-    stepNumber: number
-    detail?: string
-    itemStyle?: Record<string, unknown>
+    method: string
+    kind: 'root' | 'method' | 'sql'
+    depth: number
+    detail: string[]
+    calls: number
     x: number
     y: number
+    itemStyle: Record<string, unknown>
   }
-  type FlowLink = { source: string; target: string }
+  type FlowLink = {
+    source: string
+    target: string
+    params: Set<string>
+    detail: string[]
+  }
 
-  const nodes: FlowNode[] = []
-  const links: FlowLink[] = []
-  let rowIndex = 0
+  const NODE_W = 210
+  const NODE_H = 62
+  const COL_GAP = 90
+  const ROW_GAP = 26
 
-  const pushLink = (source: string, target: string) => {
-    if (source && target && !links.some(l => l.source === source && l.target === target)) {
-      links.push({ source, target })
+  const nodeMap = new Map<string, FlowNode>()
+  const linkMap = new Map<string, FlowLink>()
+  // 每列（depth）内已占行数，用于纵向错开
+  const columnRows = new Map<number, number>()
+
+  const ensureNode = (
+    id: string,
+    method: string,
+    kind: FlowNode['kind'],
+    depth: number,
+    detail: string[]
+  ): FlowNode => {
+    const existing = nodeMap.get(id)
+    if (existing) {
+      // 深度取更浅的（离根更近的层次），明细合并去重
+      existing.depth = Math.min(existing.depth, depth)
+      detail.forEach(line => {
+        if (!existing.detail.includes(line)) {
+          existing.detail.push(line)
+        }
+      })
+      return existing
     }
+    const row = columnRows.get(depth) || 0
+    columnRows.set(depth, row + 1)
+    const node: FlowNode = {
+      id,
+      name: method,
+      method,
+      kind,
+      depth,
+      detail: [...detail],
+      calls: 0,
+      x: depth * (NODE_W + COL_GAP) + NODE_W / 2 + 24,
+      y: row * (NODE_H + ROW_GAP) + NODE_H / 2 + 24,
+      itemStyle: {}
+    }
+    nodeMap.set(id, node)
+    return node
+  }
+
+  const ensureLink = (source: string, target: string, param: string, detail: string[]) => {
+    const key = `${source}->${target}`
+    const existing = linkMap.get(key)
+    if (existing) {
+      existing.params.add(param)
+      detail.forEach(line => {
+        if (!existing.detail.includes(line)) {
+          existing.detail.push(line)
+        }
+      })
+      return
+    }
+    linkMap.set(key, { source, target, params: new Set([param]), detail: [...detail] })
+    const targetNode = nodeMap.get(target)
+    if (targetNode) {
+      targetNode.calls += 1
+    }
+  }
+
+  const stepDetailLines = (step: Record<string, unknown>): string[] => {
+    return [
+      step.callSite ? t('sqlConstruction.flow.callSite', { value: String(step.callSite) }) : '',
+      step.argumentIndex != null ? t('sqlConstruction.flow.argumentIndex', { value: String(step.argumentIndex) }) : '',
+      step.argument ? t('sqlConstruction.flow.argument', { value: String(step.argument) }) : '',
+      step.summary ? String(step.summary) : ''
+    ].filter(Boolean)
   }
 
   ;(data.parameters || []).forEach((parameter, paramIndex) => {
     const paramLabel = parameter.name || (parameter.index != null ? `param${parameter.index}` : t('sqlConstruction.flow.parameterFallback', { index: paramIndex + 1 }))
-    ;(parameter.paths || []).forEach((path, pathIndex) => {
-      const steps = path.steps || []
+    ;(parameter.paths || []).forEach(path => {
+      const steps = pathSteps(path as unknown as Record<string, unknown>)
       if (steps.length === 0) {
         return
       }
+      const rootLabel = `'${truncate(formatValue(path.rootValue), 12)}'`
+      const rootId = `root:${paramLabel}:${rootLabel}`
+      ensureNode(rootId, rootLabel, 'root', 0, [
+        t('sqlConstruction.flow.parameter', { name: paramLabel }),
+        t('sqlConstruction.flow.rootValue', { value: formatValue(path.rootValue) })
+      ])
 
-      const y = rowIndex * 132 + 84
-      let previousNodeId = ''
+      let previousId = rootId
       steps.forEach((step, stepIndex) => {
-        const callerName = shortMethod(step.caller) || t('sqlConstruction.flow.caller')
-        const calleeName = shortMethod(step.callee) || t('sqlConstruction.flow.callee')
-        const nodeId = `param-${paramIndex}-path-${pathIndex}-step-${stepIndex}`
-        const isFirst = stepIndex === 0
+        const callerName = shortMethod(step.caller as string | undefined) || t('sqlConstruction.flow.caller')
+        const calleeName = shortMethod(step.callee as string | undefined) || t('sqlConstruction.flow.callee')
         const isLast = stepIndex === steps.length - 1
-
-        nodes.push({
-          id: nodeId,
-          name: `${callerName} -> ${calleeName}`,
-          caller: callerName,
-          callee: calleeName,
-          parameter: paramLabel,
-          rootValue: path.rootValue,
-          stepNumber: stepIndex + 1,
-          detail: [
-            step.callSite ? t('sqlConstruction.flow.callSite', { value: step.callSite }) : '',
-            step.argumentIndex != null ? t('sqlConstruction.flow.argumentIndex', { value: step.argumentIndex }) : '',
-            step.argument ? t('sqlConstruction.flow.argument', { value: step.argument }) : '',
-            step.summary
-          ].filter(Boolean).join('\n'),
-          itemStyle: flowStepNodeStyle(isFirst, isLast),
-          x: stepIndex * 292 + 150,
-          y
-        })
-        pushLink(previousNodeId, nodeId)
-        previousNodeId = nodeId
+        const calleeId = `method:${callerName}->${calleeName}`
+        // 悬浮明细保留完整签名（含参数包名），节点显示名由 stripParamPackages 单独缩短
+        ensureNode(calleeId, calleeName, isLast ? 'sql' : 'method', stepIndex + 1, [
+          `callee: ${calleeName}`,
+          ...stepDetailLines(step as unknown as Record<string, unknown>)
+        ])
+        ensureLink(previousId, calleeId, paramLabel, stepDetailLines(step as unknown as Record<string, unknown>))
+        previousId = calleeId
       })
-      rowIndex += 1
     })
   })
+
+  const nodes = [...nodeMap.values()].map(node => ({
+    id: node.id,
+    name: stripParamPackages(node.name),
+    method: node.method,
+    kind: node.kind,
+    detail: node.detail,
+    calls: node.calls,
+    itemStyle: dagNodeStyle(node.kind, node.calls),
+    symbolSize: node.kind === 'root' ? [92, 40] : [NODE_W, NODE_H],
+    x: node.x,
+    y: node.y
+  }))
+
+  const links = [...linkMap.values()].map(link => ({
+    source: link.source,
+    target: link.target,
+    params: [...link.params].join(', '),
+    detail: link.detail,
+    lineStyle: {
+      color: '#94a3b8',
+      width: 1.4,
+      curveness: 0.08,
+      opacity: 0.7
+    }
+  }))
 
   return {
     tooltip: {
       trigger: 'item',
       formatter: (param: any) => {
         const data = param?.data || {}
+        if (param.dataType === 'edge') {
+          const lines = [`<strong>${t('sqlConstruction.flow.edgeTitle')}</strong>`]
+          if (data.params) lines.push(t('sqlConstruction.flow.parameter', { name: data.params }))
+          if (data.detail) lines.push(`<span style="color:#64748b">${(data.detail as string[]).join('<br/>')}</span>`)
+          return lines.join('<br/>')
+        }
         const lines = [`<strong>${data.name || ''}</strong>`]
-        if (data.parameter) lines.push(t('sqlConstruction.flow.parameter', { name: data.parameter }))
-        if (data.rootValue) lines.push(t('sqlConstruction.flow.rootValue', { value: data.rootValue }))
-        if (data.caller) lines.push(`caller: ${data.caller}`)
-        if (data.callee) lines.push(`callee: ${data.callee}`)
-        if (data.detail) lines.push(`<span style="color:#64748b">${String(data.detail).replace(/\n/g, '<br/>')}</span>`)
+        if (data.kind === 'root') {
+          lines.push(String(data.detail?.[0] || ''))
+        } else if (data.calls > 1) {
+          lines.push(t('sqlConstruction.flow.callCount', { count: data.calls }))
+        }
+        if (data.detail) lines.push(`<span style="color:#64748b">${(data.detail as string[]).join('<br/>')}</span>`)
         return lines.join('<br/>')
       }
     },
-    // graph 系列 TS 类型未收纳部分运行时字段，整体按 any 传入。
     series: [
       {
         type: 'graph',
@@ -552,94 +678,73 @@ const buildFlowOption = (data: SqlPropagationPathVO): echarts.EChartsOption => {
         roam: true,
         draggable: true,
         symbol: 'roundRect',
-        symbolSize: [246, 84],
         edgeSymbol: ['none', 'arrow'],
-        edgeSymbolSize: [0, 10],
+        edgeSymbolSize: [0, 9],
         label: {
           show: true,
           position: 'inside',
-          lineHeight: 18,
-          formatter: (params: any) => {
-            const node = params.data || {}
-            return [
-              `{step|STEP ${node.stepNumber || ''}}`,
-              `{caller|${truncate(node.caller || t('sqlConstruction.flow.caller'), 30)}}`
-            ].join('\n')
-          },
-          rich: {
-            step: {
-              color: '#64748b',
-              fontSize: 10,
-              fontWeight: 700,
-              lineHeight: 14
-            },
-            caller: {
-              color: '#0f172a',
-              fontSize: 12,
-              fontWeight: 700,
-              lineHeight: 18
-            }
-          }
-        },
-        lineStyle: {
-          color: '#64748b',
-          width: 1.4,
-          curveness: 0.04,
-          opacity: 0.75
+          overflow: 'truncate',
+          formatter: (params: any) => truncate(params.data?.name || '', 26),
+          color: '#1e293b',
+          fontSize: 12,
+          fontWeight: 700
         },
         emphasis: {
           focus: 'adjacency',
-          lineStyle: { width: 2.4, color: '#2563eb', opacity: 1 },
-          label: { color: '#1e293b' }
+          lineStyle: { width: 2.4, color: '#2563eb', opacity: 1 }
         },
-        data: nodes.map(node => ({
-          id: node.id,
-          name: node.name,
-          caller: node.caller,
-          callee: node.callee,
-          parameter: node.parameter,
-          rootValue: node.rootValue,
-          stepNumber: node.stepNumber,
-          detail: node.detail,
-          itemStyle: node.itemStyle,
-          x: node.x,
-          y: node.y
-        })),
+        data: nodes,
         links
       } as any
     ]
   }
 }
 
-const flowStepNodeStyle = (isFirst: boolean, isLast: boolean) => {
-  if (isFirst) {
+const dagNodeStyle = (kind: 'root' | 'method' | 'sql', calls: number) => {
+  if (kind === 'root') {
     return {
       color: '#ecfdf5',
       borderColor: '#10b981',
       borderWidth: 2,
       shadowColor: 'rgba(16, 185, 129, 0.18)',
-      shadowBlur: 12,
-      shadowOffsetY: 4
+      shadowBlur: 10,
+      shadowOffsetY: 3
     }
   }
-  if (isLast) {
+  if (kind === 'sql') {
     return {
       color: '#eef2ff',
       borderColor: '#6366f1',
       borderWidth: 2,
       shadowColor: 'rgba(99, 102, 241, 0.16)',
-      shadowBlur: 12,
-      shadowOffsetY: 4
+      shadowBlur: 10,
+      shadowOffsetY: 3
     }
   }
+  // 中间方法：被多个调用引用时描边加粗提示热点
+  const hotspot = calls > 1
   return {
     color: '#f8fafc',
-    borderColor: '#93c5fd',
-    borderWidth: 1.6,
+    borderColor: hotspot ? '#2563eb' : '#93c5fd',
+    borderWidth: hotspot ? 2 : 1.6,
     shadowColor: 'rgba(37, 99, 235, 0.12)',
-    shadowBlur: 10,
+    shadowBlur: hotspot ? 12 : 8,
     shadowOffsetY: 3
   }
+}
+
+/**
+ * 节点显示名的方法参数只保留类名：
+ * selectById(java.lang.Long) → selectById(Long)。完整签名仍在悬浮明细中。
+ */
+const stripParamPackages = (name: string) => {
+  return String(name).replace(/\(([^)]*)\)/, (_match, args: string) => {
+    if (!args.trim()) {
+      return '()'
+    }
+    const shortArgs = args.split(',').map(arg => arg.trim().split('.').pop()).join(', ')
+    return `(${shortArgs})`
+  })
 }
 
 const shortMethod = (signature?: string) => {
@@ -665,6 +770,11 @@ const updateFlowChart = () => {
 const initFlowChart = () => {
   nextTick(() => {
     if (!flowChartRef.value) return
+    // v-if 卸载会销毁容器 DOM，旧实例握着失效 DOM 无法复用，须重建
+    if (flowChart && flowChart.getHeight() === 0) {
+      flowChart.dispose()
+      flowChart = null
+    }
     if (!flowChart) {
       flowChart = echarts.init(flowChartRef.value)
     }
@@ -692,7 +802,6 @@ onUnmounted(() => {
 
 <style lang="scss" scoped>
 .sql-construction-page {
-  padding: 0;
   color: var(--jsp-text-primary);
 }
 
@@ -702,46 +811,34 @@ onUnmounted(() => {
   gap: 16px;
 }
 
-.summary-band,
-.definition-section,
-.timeline-section,
-.parameter-section,
-.flow-section,
-.rendered-section,
-.audit-section,
-.diagnostic-section {
-  background: var(--jsp-bg-card);
-  border-bottom: 1px solid var(--jsp-border-color);
-  border-radius: 8px;
-}
-
+// 摘要带：指标卡行（与总览页统计卡同语义的紧凑版）
 .summary-band {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
 }
 
 .summary-item {
-  padding: 16px;
-  border-bottom: 1px solid var(--jsp-border-color);
-
-  &:last-child {
-    border-right: 0;
-  }
+  background: var(--jsp-bg-card);
+  border: 1px solid var(--jsp-border-color);
+  border-radius: 8px;
+  padding: 12px 16px;
 
   span {
     display: block;
     color: var(--jsp-text-secondary);
     font-size: 12px;
-    margin-bottom: 8px;
+    margin-bottom: 6px;
   }
 
   strong {
     display: block;
-    font-size: 18px;
+    font-size: 17px;
     word-break: break-word;
   }
 }
 
+// 各内容区块统一走 el-card，仅需覆盖内边距节奏
 .definition-section,
 .timeline-section,
 .parameter-section,
@@ -749,7 +846,9 @@ onUnmounted(() => {
 .rendered-section,
 .audit-section,
 .diagnostic-section {
-  padding: 18px;
+  :deep(.el-card__body) {
+    padding: 18px 20px;
+  }
 }
 
 .section-heading {
@@ -791,24 +890,40 @@ onUnmounted(() => {
   }
 }
 
+// SQL 代码块：浅底深字，深色模式经 --jsp 变量自动适配
 .sql-block,
 .step-sql {
   margin: 0;
   padding: 12px;
-  background: $text-primary-dark;
-  color: $border-color;
+  background: var(--jsp-bg-page);
+  border: 1px solid var(--jsp-border-light);
+  color: var(--jsp-text-primary);
   border-radius: 6px;
   white-space: pre-wrap;
   word-break: break-word;
   font-size: 13px;
   line-height: 1.6;
+  font-family: 'Monaco', 'Menlo', monospace;
 }
 
 .workbench {
   display: grid;
   grid-template-columns: minmax(0, 1.5fr) minmax(360px, 0.9fr);
   gap: 16px;
-  align-items: start;
+  // 两面板等高：以较矮面板为基准（grid 默认拉伸），内容超出者内部滚动
+  align-items: stretch;
+}
+
+.workbench > .el-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+
+  :deep(.el-card__body) {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+  }
 }
 
 .flow-chart {
@@ -816,6 +931,7 @@ onUnmounted(() => {
   height: 320px;
 }
 
+// 构造步骤时间线：rail 列提供纵向连接线
 .construction-timeline {
   display: flex;
   flex-direction: column;
@@ -829,6 +945,25 @@ onUnmounted(() => {
   margin-left: calc(var(--depth) * 18px);
 }
 
+.timeline-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+
+  // 步骤圆点下方的连接线，最后一行无线
+  &::after {
+    content: '';
+    flex: 1;
+    width: 2px;
+    margin-top: 4px;
+    background: var(--jsp-border-color);
+  }
+}
+
+.timeline-row:last-child .timeline-rail::after {
+  display: none;
+}
+
 .timeline-marker {
   width: 28px;
   height: 28px;
@@ -840,13 +975,15 @@ onUnmounted(() => {
   justify-content: center;
   font-size: 12px;
   font-weight: 700;
+  flex-shrink: 0;
 }
 
 .timeline-content {
-  border-bottom: 1px solid var(--jsp-border-color);
+  background: var(--jsp-bg-page);
   border-radius: 8px;
   padding: 12px;
   min-width: 0;
+  padding-bottom: 12px;
 }
 
 .step-header {
@@ -887,7 +1024,8 @@ onUnmounted(() => {
   margin-top: 8px;
 
   span {
-    background: $border-light;
+    background: var(--jsp-bg-card);
+    border: 1px solid var(--jsp-border-light);
     border-radius: 6px;
     color: $text-secondary-dark;
     font-size: 12px;
@@ -907,13 +1045,18 @@ onUnmounted(() => {
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   align-items: center;
-  border-bottom: 1px solid var(--jsp-border-color);
+  border: 1px solid var(--jsp-border-light);
   border-radius: 8px;
-  background: var(--jsp-bg-card);
+  background: var(--jsp-bg-page);
   color: inherit;
   cursor: pointer;
   padding: 10px 12px;
   text-align: left;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+
+  &:hover {
+    border-color: $primary-color;
+  }
 
   &.active {
     border-color: $primary-color;
@@ -936,7 +1079,7 @@ onUnmounted(() => {
 
 .parameter-detail {
   margin-top: 16px;
-  border-bottom: 1px solid var(--jsp-border-color);
+  border-top: 1px solid var(--jsp-border-light);
   padding-top: 16px;
 }
 
@@ -965,6 +1108,14 @@ onUnmounted(() => {
   font-weight: 700;
 }
 
+// "参数轨迹"小节标题 + 查看按钮同行
+.trace-title-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
 .value-list,
 .path-list {
   display: flex;
@@ -974,7 +1125,8 @@ onUnmounted(() => {
 
 .value-item,
 .path-item {
-  border-bottom: 1px solid var(--jsp-border-color);
+  background: var(--jsp-bg-page);
+  border: 1px solid var(--jsp-border-light);
   border-radius: 8px;
   padding: 10px;
 
@@ -1019,24 +1171,6 @@ onUnmounted(() => {
   }
 }
 
-.action-btn {
-  cursor: pointer;
-  color: $primary-hover;
-  white-space: nowrap;
-
-  &:hover {
-    color: $primary-hover;
-  }
-
-  &.action-btn--danger {
-    color: $danger-color;
-
-    &:hover {
-      color: $danger-color;
-    }
-  }
-}
-
 .text-secondary {
   color: $text-placeholder;
 }
@@ -1046,15 +1180,6 @@ onUnmounted(() => {
   .workbench,
   .definition-grid {
     grid-template-columns: 1fr;
-  }
-
-  .summary-item {
-    border-right: 0;
-    border-bottom: 1px solid var(--jsp-border-color);
-
-    &:last-child {
-      border-bottom: 0;
-    }
   }
 
   .timeline-row {

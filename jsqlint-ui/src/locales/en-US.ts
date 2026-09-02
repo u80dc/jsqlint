@@ -26,7 +26,8 @@ export default {
     success: 'Success',
     error: 'Error',
     yes: 'Yes',
-    no: 'No'
+    no: 'No',
+    close: 'Close'
   },
   nav: {
     dashboard: 'Dashboard',
@@ -1032,13 +1033,14 @@ export default {
     type: 'Type',
     possibleValues: 'Possible Values',
     noPossibleValues: 'No possible values',
-    propagationPaths: 'Propagation Paths',
+    propagationPaths: 'Parameter Trace',
+    viewTrace: 'View Trace Diagram',
     rootValueLabel: 'Root value: {value}',
-    noFullPropagation: 'No complete propagation path saved for this record',
-    propagationSection: 'Parameter Propagation Paths',
+    noFullPropagation: 'No complete parameter trace saved for this record',
+    propagationSection: 'Parameter Trace',
     propagationStats: '{pathCount} paths / {stepCount} nodes',
-    noPropagation: 'No parameter propagation paths',
-    propagationLoadError: 'Failed to load parameter propagation paths',
+    noPropagation: 'No parameter trace',
+    propagationLoadError: 'Failed to load parameter trace',
     renderedSql: 'Rendered SQL',
     sampleCount: '{count} samples',
     noRenderedSql: 'No rendered SQL samples',
@@ -1075,7 +1077,9 @@ export default {
       callSite: 'Call site: {value}',
       argumentIndex: 'Argument index: {value}',
       argument: 'Argument: {value}',
-      parameterFallback: 'Parameter {index}'
+      parameterFallback: 'Parameter {index}',
+      edgeTitle: 'Call Relation',
+      callCount: 'Called {count} times'
     }
   }
 }
