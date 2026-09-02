@@ -11,6 +11,10 @@ public enum InferredValueOrigin {
      */
     LITERAL,
     /**
+     * 值来自 setXxx 绑定调用中的常量实参。
+     */
+    BIND_CONSTANT,
+    /**
      * 值来自调用链最上游的方法参数，按外部输入生成样例值。
      */
     EXTERNAL_INPUT,

@@ -30,7 +30,7 @@ class NativeJdbcSimpleSqlExtractionTest {
         List<SqlStatementResult> statements = assemble(context, result);
 
         assertAll(
-                () -> assertEquals(11, statements.size(), () -> "Expected SQL statements from native-jdbc-simple, got " + statements.size()),
+                () -> assertEquals(12, statements.size(), () -> "Expected SQL statements from native-jdbc-simple, got " + statements.size()),
                 () -> assertTrue(result.diagnostics().isEmpty(), () -> String.join("\n", result.diagnostics())),
                 () -> assertTrue(statements.stream()
                         .allMatch(statement -> statement.getSourceType() == SqlSourceType.PARAM_SQL)),
@@ -38,7 +38,21 @@ class NativeJdbcSimpleSqlExtractionTest {
                         .allMatch(statement -> statement.getMetadata().getTags().contains("jdbc"))),
                 () -> assertTrue(statements.stream()
                         .anyMatch(statement -> "Statement".equals(statement.getMetadata().getExtra().get("jdbcCategory")))),
-                () -> assertTrue(statements.stream().allMatch(SqlStatementResult::hasRenderedSqls))
+                () -> assertTrue(statements.stream().allMatch(SqlStatementResult::hasRenderedSqls)),
+                // 调用点语句的参数推断不应为空：值模型依赖调用者形参时必须能追溯参数轨迹
+                () -> assertTrue(statements.stream()
+                        .anyMatch(SqlStatementResult::hasInferredParameters),
+                        () -> "Expected at least one statement with inferred parameters, rawSql:\n"
+                                + statements.stream()
+                                .map(SqlStatementResult::getRawSql)
+                                .reduce((left, right) -> left + "\n---\n" + right)
+                                .orElse("")),
+                // 轨迹应跨方法传播：步骤非空说明从调用点向上游调用者完成了追踪
+                () -> assertTrue(statements.stream()
+                        .flatMap(statement -> statement.getParameterInferences().stream())
+                        .flatMap(inference -> inference.possibleValues().stream())
+                        .anyMatch(value -> !value.propagationPath().steps().isEmpty()),
+                        () -> "Expected cross-method propagation steps in parameter traces")
         );
 
         assertSql(statements, StatementType.INSERT,

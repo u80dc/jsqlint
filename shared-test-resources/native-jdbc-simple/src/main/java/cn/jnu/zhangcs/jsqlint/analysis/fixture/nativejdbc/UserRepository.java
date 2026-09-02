@@ -190,6 +190,18 @@ public class UserRepository {
         }
     }
 
+    /**
+     * 演示常量绑定：状态为固定值，不依赖任何形参。
+     */
+    public int deleteByFixedStatus(long minId) throws SQLException {
+        String sql = "DELETE FROM users WHERE status = ? AND id >= ?";
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, "DISABLED");
+            statement.setLong(2, minId);
+            return statement.executeUpdate();
+        }
+    }
+
     public int deleteByStatus(Collection<String> statuses, boolean requireInactive) throws SQLException {
         StringBuilder sql = new StringBuilder("DELETE FROM users");
         List<Object> parameters = new ArrayList<>();

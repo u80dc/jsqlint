@@ -148,9 +148,7 @@ public final class MybatisSqlExtractor implements SqlExtractor {
                 .toList();
 
         AnalyzeResult.Metadata metadata = SqlExtractionSupport.metadata(
-                callerNames.isEmpty() ? 0 : 1,
                 callerNames,
-                sqlNode,
                 List.of(name()),
                 Collections.emptyMap());
 

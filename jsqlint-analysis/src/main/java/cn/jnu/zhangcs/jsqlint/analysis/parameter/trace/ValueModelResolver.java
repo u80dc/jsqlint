@@ -2,6 +2,7 @@ package cn.jnu.zhangcs.jsqlint.analysis.parameter.trace;
 
 import sootup.core.jimple.basic.Local;
 import sootup.core.jimple.basic.Value;
+import sootup.core.signatures.MethodSignature;
 import sootup.core.jimple.common.constant.IntConstant;
 import sootup.core.jimple.common.constant.NullConstant;
 import sootup.core.jimple.common.constant.StringConstant;
@@ -34,6 +35,15 @@ public final class ValueModelResolver {
         this.method = method;
         this.statements = method.getBody().getStmts();
         this.parameterLocals = collectParameterLocals();
+    }
+
+    /**
+     * 返回解析器绑定的方法签名，供调用方构造参数引用。
+     *
+     * @return 方法签名
+     */
+    public MethodSignature methodSignature() {
+        return method.getSignature();
     }
 
     /**

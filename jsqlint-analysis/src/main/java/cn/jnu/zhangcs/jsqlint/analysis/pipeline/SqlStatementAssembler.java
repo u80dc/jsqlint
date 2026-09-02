@@ -1,11 +1,17 @@
 package cn.jnu.zhangcs.jsqlint.analysis.pipeline;
 
 import cn.jnu.zhangcs.jsqlint.analysis.AnalyzeResult;
+import cn.jnu.zhangcs.jsqlint.analysis.extractor.SqlExtractionSupport.BoundParameter;
 import cn.jnu.zhangcs.jsqlint.analysis.extractor.SqlStatement;
 import cn.jnu.zhangcs.jsqlint.analysis.extractor.SqlExtractionSupport;
 import cn.jnu.zhangcs.jsqlint.analysis.node.SqlNodeRenderer;
 import cn.jnu.zhangcs.jsqlint.analysis.parameter.ParameterAnalysisService;
+import cn.jnu.zhangcs.jsqlint.analysis.parameter.infer.InferredParameterValue;
+import cn.jnu.zhangcs.jsqlint.analysis.parameter.infer.InferredValueOrigin;
 import cn.jnu.zhangcs.jsqlint.analysis.parameter.infer.ParameterValueInferenceResult;
+import cn.jnu.zhangcs.jsqlint.analysis.parameter.trace.CallTrace;
+import cn.jnu.zhangcs.jsqlint.analysis.parameter.trace.MethodParameterRef;
+import cn.jnu.zhangcs.jsqlint.analysis.parameter.trace.ValueModel;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -16,7 +22,8 @@ import java.util.Objects;
  *
  * <p>负责把提取阶段的 {@link SqlStatement} 加工为对外的
  * {@link AnalyzeResult.SqlStatementResult}：执行参数值推断、渲染动态 SQL、
- * 汇总诊断信息。</p>
+ * 汇总诊断信息。常量绑定（setXxx 常量实参）在此生成 BIND_CONSTANT
+ * 轻量推断并合并进结果。</p>
  *
  * @author zhangcs
  */
@@ -50,6 +57,7 @@ public final class SqlStatementAssembler {
         Objects.requireNonNull(extracted, "extracted");
 
         List<ParameterValueInferenceResult> parameterInferences = inferParameters(extracted);
+        parameterInferences = mergeConstantBinds(extracted, parameterInferences);
         List<SqlNodeRenderer.RenderedSql> renderedSqls =
                 SqlNodeRenderer.render(extracted.sqlNode(), parameterInferences);
 
@@ -63,7 +71,6 @@ public final class SqlStatementAssembler {
                 .location(extracted.location())
                 .rawSql(extracted.rawSql())
                 .sqlNode(extracted.sqlNode())
-                .dynamic(extracted.dynamic())
                 .parameterInferences(parameterInferences)
                 .renderedSqls(renderedSqls)
                 .diagnostics(cleanDiagnostics(diagnostics))
@@ -82,6 +89,95 @@ public final class SqlStatementAssembler {
             return List.of();
         }
         return parameterAnalysisService.inferAll(extracted.parameters());
+    }
+
+    /**
+     * 将常量绑定合并进参数推断结果。
+     *
+     * <p>两类处理：</p>
+     * <ul>
+     *   <li>常量绑定（无形参依赖）：生成 origin 为 BIND_CONSTANT 的轻量推断，
+     *       target 指向绑定调用所在方法、parameterIndex 为该 ? 占位符下标；</li>
+     *   <li>形参绑定：值来源经追踪推断，将 possibleValues 的 parameterIndex
+     *       标注为绑定下标，使推断值与 SQL 占位符一一对应。</li>
+     * </ul>
+     */
+    private List<ParameterValueInferenceResult> mergeConstantBinds(
+            SqlStatement extracted,
+            List<ParameterValueInferenceResult> traced) {
+
+        List<BoundParameter> bindings = extracted.bindings();
+        if (bindings.isEmpty()) {
+            return traced;
+        }
+
+        List<ParameterValueInferenceResult> merged = new ArrayList<>(traced);
+
+        // 形参绑定：把追踪结果的值标注上对应占位符下标
+        for (BoundParameter binding : bindings) {
+            if (binding.isConstant()) {
+                continue;
+            }
+            for (int i = 0; i < merged.size(); i++) {
+                ParameterValueInferenceResult result = merged.get(i);
+                boolean matchesBinding = binding.dependencies().stream()
+                        .anyMatch(dependency -> dependency.method().equals(result.target().method())
+                                && dependency.index() == result.target().index());
+                if (!matchesBinding) {
+                    continue;
+                }
+                List<InferredParameterValue> indexed = result.possibleValues().stream()
+                        .map(value -> new InferredParameterValue(
+                                value.target(),
+                                value.value(),
+                                value.displayValue(),
+                                value.valueType(),
+                                value.origin(),
+                                binding.parameterIndex(),
+                                value.targetValue(),
+                                value.sourceValue(),
+                                value.propagationPath()))
+                        .toList();
+                merged.set(i, new ParameterValueInferenceResult(
+                        result.target(), indexed, result.diagnostics()));
+            }
+        }
+
+        // 常量绑定：生成 BIND_CONSTANT 轻量推断（不经调用链追踪）
+        for (BoundParameter constantBind : bindings.stream().filter(BoundParameter::isConstant).toList()) {
+            ParameterValueInferenceResult constantResult = constantBindResult(constantBind);
+            if (constantResult != null) {
+                merged.add(constantResult);
+            }
+        }
+        return merged;
+    }
+
+    /**
+     * 为常量绑定构造轻量推断结果：value 直接取绑定值模型的字面量内容，
+     * origin 为 BIND_CONSTANT，parameterIndex 对应 SQL 占位符下标，
+     * 传播路径为空链（值在绑定调用点即确定，无需向上追踪）。
+     */
+    private ParameterValueInferenceResult constantBindResult(BoundParameter binding) {
+        if (!(binding.value() instanceof ValueModel.LiteralValue literal)) {
+            // 非字面量模型（如表达式调用）不生成本地推断，交由渲染路径处理
+            return null;
+        }
+        MethodParameterRef target = MethodParameterRef.of(binding.bindCaller(), 0);
+        if (!target.isValid()) {
+            return null;
+        }
+        InferredParameterValue value = new InferredParameterValue(
+                target,
+                literal.value(),
+                literal.value(),
+                literal.type(),
+                InferredValueOrigin.BIND_CONSTANT,
+                binding.parameterIndex(),
+                literal,
+                literal,
+                new CallTrace(List.of(), literal));
+        return new ParameterValueInferenceResult(target, List.of(value), List.of());
     }
 
     /**

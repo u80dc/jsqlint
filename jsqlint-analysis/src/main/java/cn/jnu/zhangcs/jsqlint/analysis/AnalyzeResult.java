@@ -123,11 +123,6 @@ public class AnalyzeResult {
         private final SqlNode sqlNode;
 
         /**
-         * 是否为动态 SQL
-         */
-        private final boolean dynamic;
-
-        /**
          * 参数推断结果列表
          */
         private final List<ParameterValueInferenceResult> parameterInferences;
@@ -147,34 +142,64 @@ public class AnalyzeResult {
          */
         private final Metadata metadata;
 
+        @Builder
+        private SqlStatementResult(
+                String statementId,
+                StatementType statementType,
+                SqlSourceType sourceType,
+                SourceLocation location,
+                String rawSql,
+                SqlNode sqlNode,
+                List<ParameterValueInferenceResult> parameterInferences,
+                List<SqlNodeRenderer.RenderedSql> renderedSqls,
+                List<String> diagnostics,
+                Metadata metadata) {
+            this.statementId = statementId;
+            this.statementType = statementType;
+            this.sourceType = sourceType;
+            this.location = location;
+            this.rawSql = rawSql;
+            this.sqlNode = sqlNode;
+            // 列表字段统一兜底为空列表，消费方无需判空
+            this.parameterInferences = parameterInferences == null ? List.of() : List.copyOf(parameterInferences);
+            this.renderedSqls = renderedSqls == null ? List.of() : List.copyOf(renderedSqls);
+            this.diagnostics = diagnostics == null ? List.of() : List.copyOf(diagnostics);
+            this.metadata = metadata == null ? Metadata.empty() : metadata;
+        }
+
+        /**
+         * 是否为动态 SQL（由 sqlNode 树派生，不单独存储）
+         */
+        public boolean isDynamic() {
+            return sqlNode != null && sqlNode.isDynamic();
+        }
+
         /**
          * 判断是否有推断出的参数值
          */
         public boolean hasInferredParameters() {
-            return parameterInferences != null &&
-                    !parameterInferences.isEmpty() &&
-                    parameterInferences.stream().anyMatch(ParameterValueInferenceResult::hasValues);
+            return parameterInferences.stream().anyMatch(ParameterValueInferenceResult::hasValues);
         }
 
         /**
          * 判断是否有渲染后的 SQL
          */
         public boolean hasRenderedSqls() {
-            return renderedSqls != null && !renderedSqls.isEmpty();
+            return !renderedSqls.isEmpty();
         }
 
         /**
          * 获取参数数量
          */
         public int getParameterCount() {
-            return parameterInferences == null ? 0 : parameterInferences.size();
+            return parameterInferences.size();
         }
 
         /**
          * 获取渲染后 SQL 数量
          */
         public int getRenderedSqlCount() {
-            return renderedSqls == null ? 0 : renderedSqls.size();
+            return renderedSqls.size();
         }
     }
 
@@ -186,24 +211,9 @@ public class AnalyzeResult {
     public static class Metadata {
 
         /**
-         * 调用链深度
-         */
-        private final int callDepth;
-
-        /**
-         * 调用者列表
+         * 调用者列表（MyBatis 接口方法的调用方）
          */
         private final List<String> callers;
-
-        /**
-         * SQL 复杂度（如动态节点数量）
-         */
-        private final int complexity;
-
-        /**
-         * 涉及的表名
-         */
-        private final List<String> tableNames;
 
         /**
          * 自定义标签
@@ -215,15 +225,15 @@ public class AnalyzeResult {
          */
         private final java.util.Map<String, Object> extra;
 
+        @Builder
+        private Metadata(List<String> callers, List<String> tags, java.util.Map<String, Object> extra) {
+            this.callers = callers == null ? List.of() : List.copyOf(callers);
+            this.tags = tags == null ? List.of() : List.copyOf(tags);
+            this.extra = extra == null ? java.util.Collections.emptyMap() : java.util.Map.copyOf(extra);
+        }
+
         public static Metadata empty() {
-            return Metadata.builder()
-                    .callDepth(0)
-                    .callers(Collections.emptyList())
-                    .complexity(0)
-                    .tableNames(Collections.emptyList())
-                    .tags(Collections.emptyList())
-                    .extra(Collections.emptyMap())
-                    .build();
+            return Metadata.builder().build();
         }
     }
 

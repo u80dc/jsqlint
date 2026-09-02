@@ -95,7 +95,6 @@ class SqlStatementServiceImplTest {
                 .location(SourceLocation.of("com.example.UserMapper", "selectById",
                         "java.util.List", List.of("java.lang.Long"), "UserMapper.java", 42))
                 .rawSql(rawSql)
-                .dynamic(false)
                 .build();
     }
 

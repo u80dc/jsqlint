@@ -930,10 +930,7 @@ public class SqlStatementServiceImpl implements SqlStatementService {
 
         AnalyzeResult.Metadata sourceMetadata = source.getMetadata();
         if (sourceMetadata != null) {
-            metadata.put("callDepth", sourceMetadata.getCallDepth());
             metadata.put("callers", sourceMetadata.getCallers());
-            metadata.put("complexity", sourceMetadata.getComplexity());
-            metadata.put("tableNames", sourceMetadata.getTableNames());
             metadata.put("tags", sourceMetadata.getTags());
             metadata.put("extra", safeExtra(sourceMetadata.getExtra()));
         }

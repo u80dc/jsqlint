@@ -4,16 +4,19 @@ import cn.jnu.zhangcs.jsqlint.analysis.AnalyzeResult;
 import cn.jnu.zhangcs.jsqlint.analysis.SourceLocation;
 import cn.jnu.zhangcs.jsqlint.analysis.SqlSourceType;
 import cn.jnu.zhangcs.jsqlint.analysis.StatementType;
+import cn.jnu.zhangcs.jsqlint.analysis.jdbc.JdbcTargetMethod;
 import cn.jnu.zhangcs.jsqlint.analysis.node.SqlNode;
 import cn.jnu.zhangcs.jsqlint.analysis.node.SqlNodeBuilder;
 import cn.jnu.zhangcs.jsqlint.analysis.node.SqlNodeRenderer;
-import cn.jnu.zhangcs.jsqlint.analysis.node.SqlNodeUtils;
 import cn.jnu.zhangcs.jsqlint.analysis.parameter.infer.ParameterValueInferenceResult;
 import cn.jnu.zhangcs.jsqlint.analysis.parameter.infer.ValueModelStringResolver;
 import cn.jnu.zhangcs.jsqlint.analysis.parameter.trace.MethodParameterRef;
 import cn.jnu.zhangcs.jsqlint.analysis.parameter.trace.ValueModel;
 import cn.jnu.zhangcs.jsqlint.analysis.parameter.trace.ValueModelResolver;
+import sootup.core.jimple.basic.Local;
+import sootup.core.jimple.basic.Value;
 import sootup.core.jimple.common.constant.StringConstant;
+import sootup.core.jimple.common.expr.AbstractInstanceInvokeExpr;
 import sootup.core.jimple.common.expr.AbstractInvokeExpr;
 import sootup.core.jimple.common.stmt.JAssignStmt;
 import sootup.core.jimple.common.stmt.JInvokeStmt;
@@ -70,6 +73,11 @@ public final class SqlExtractionSupport {
     /**
      * 扫描单个方法中的语句，提取匹配目标调用点的 SQL 语句。
      *
+     * <p>除 SQL 文本实参自身的参数依赖外，还会归并同一语句对象上
+     * {@code setXxx(index, value)} 绑定调用的实参依赖：常量绑定的值来源为
+     * {@link cn.jnu.zhangcs.jsqlint.analysis.parameter.infer.InferredValueOrigin#LITERAL LITERAL}，
+     * 依赖调用者形参的为 EXTERNAL_INPUT，二者统一进入参数推断结果。</p>
+     *
      * @param method        当前方法
      * @param targetMatcher 方法签名到 SQL 调用目标的匹配器
      * @param statements    用于收集提取结果
@@ -112,16 +120,123 @@ public final class SqlExtractionSupport {
                 continue;
             }
 
+            // 归并绑定调用（setXxx）的记录：prepareStatement 返回的语句局部变量上
+            // 的后续 set 调用，其参数下标与绑定值随语句传递，供组装阶段合并推断
+            List<BoundParameter> boundParameters = collectBoundParameters(resolver, stmts, invoke, i);
+
             SqlStatement statement = buildCallSiteStatement(
                     method,
                     stmt,
                     i,
                     invoke,
                     target,
-                    sqlValue.get());
+                    sqlValue.get(),
+                    boundParameters);
             if (statement != null) {
                 statements.add(statement);
             }
+        }
+    }
+
+    /**
+     * 收集语句对象上的绑定调用（{@code setXxx(index, value)}）信息。
+     *
+     * <p>语句对象是 SQL 调用的<b>返回值</b>（{@code l3 = connection.prepareStatement(...)} 赋予
+     * 的局部变量），set 调用发生在该局部变量上。每个绑定返回一条记录：
+     * SQL 参数下标、绑定值模型、绑定值依赖的调用者形参。常量绑定（无依赖）同样记录，
+     * 由组装阶段生成 origin 为 BIND_CONSTANT 的轻量推断。</p>
+     */
+    private static List<BoundParameter> collectBoundParameters(
+            ValueModelResolver resolver,
+            List<Stmt> stmts,
+            AbstractInvokeExpr sqlInvoke,
+            int sqlIndex) {
+
+        // SQL 调用所在语句为赋值型（l3 = invoke ...）时，语句对象即左侧局部变量；
+        // 直接调用型（Statement.executeQuery）无返回值可跟踪
+        if (!(stmts.get(sqlIndex) instanceof JAssignStmt assign)
+                || !(assign.getLeftOp() instanceof Local statementLocal)) {
+            return List.of();
+        }
+        String statementLocalName = statementLocal.getName();
+
+        List<BoundParameter> bound = new ArrayList<>();
+        for (int i = sqlIndex + 1; i < stmts.size(); i++) {
+            Optional<AbstractInvokeExpr> next = invokeOf(stmts.get(i));
+            if (next.isEmpty()) {
+                continue;
+            }
+            AbstractInvokeExpr candidate = next.get();
+            if (!(candidate instanceof AbstractInstanceInvokeExpr instanceInvoke)
+                    || !(instanceInvoke.getBase() instanceof Local base)
+                    || !base.getName().equals(statementLocalName)) {
+                continue;
+            }
+
+            JdbcTargetMethod bindMethod = JdbcTargetMethod.fromMethod(
+                    candidate.getMethodSignature().getDeclClassType().getFullyQualifiedName(),
+                    candidate.getMethodSignature().getName());
+            if (bindMethod == null || !bindMethod.isSetterMethod()
+                    || candidate.getArgCount() < 2) {
+                continue;
+            }
+
+            // 第 0 参为参数下标常量（int），第 1 参为绑定值
+            Integer placeholderIndex = constantInt(candidate.getArg(0));
+            if (placeholderIndex == null || placeholderIndex < 1) {
+                continue;
+            }
+
+            Value boundValue = candidate.getArg(1);
+            ValueModel model = resolver.resolve(boundValue, i);
+            List<MethodParameterRef> dependencies = model.parameterDependencies().stream()
+                    .map(dependency -> MethodParameterRef.of(
+                            resolver.methodSignature(),
+                            dependency.index(),
+                            dependency.name()))
+                    .filter(MethodParameterRef::isValid)
+                    .toList();
+            bound.add(new BoundParameter(
+                    placeholderIndex,
+                    model,
+                    dependencies,
+                    resolver.methodSignature(),
+                    candidate.getMethodSignature().getName()));
+        }
+        return bound;
+    }
+
+    private static Integer constantInt(Value value) {
+        if (value instanceof sootup.core.jimple.common.constant.IntConstant intConstant) {
+            return intConstant.getValue();
+        }
+        return null;
+    }
+
+    /**
+     * 语句对象上一次 setXxx 绑定的记录。
+     *
+     * @param parameterIndex SQL 参数下标（第几个 ? 占位符，从 1 开始）
+     * @param value          绑定值的结构化模型（常量或含形参依赖的表达式）
+     * @param dependencies   绑定值依赖的调用者形参；常量绑定为空列表
+     * @param bindCaller     绑定调用所在方法签名
+     * @param bindMethod     绑定方法名（如 setLong），用于展示
+     */
+    public record BoundParameter(
+            int parameterIndex,
+            ValueModel value,
+            List<MethodParameterRef> dependencies,
+            sootup.core.signatures.MethodSignature bindCaller,
+            String bindMethod) {
+
+        public BoundParameter {
+            dependencies = dependencies == null ? List.of() : List.copyOf(dependencies);
+            bindMethod = bindMethod == null || bindMethod.isBlank() ? "bind" : bindMethod;
+        }
+
+        /** 该绑定是否为常量（无任何形参依赖）。 */
+        public boolean isConstant() {
+            return dependencies.isEmpty();
         }
     }
 
@@ -162,8 +277,17 @@ public final class SqlExtractionSupport {
 
         ValueModel model = resolver.resolve(invoke.getArg(sqlArgumentIndex), statementIndex);
         MethodParameterRef target = MethodParameterRef.of(invoke.getMethodSignature(), sqlArgumentIndex);
+        // SQL 依赖的调用者形参（拼接、数组、对象字段里的参数依赖）作为参数追踪入口，
+        // 缺失该列表时调用点语句的参数推断与轨迹为空。
+        List<MethodParameterRef> parameters = model.parameterDependencies().stream()
+                .map(dependency -> MethodParameterRef.of(
+                        resolver.methodSignature(),
+                        dependency.index(),
+                        dependency.name()))
+                .filter(MethodParameterRef::isValid)
+                .toList();
         return STRING_VALUE_RESOLVER.resolve(model, target)
-                .map(value -> new SqlValue(value.value(), model, value.diagnostics()));
+                .map(value -> new SqlValue(value.value(), model, parameters, value.diagnostics()));
     }
 
     /**
@@ -179,6 +303,7 @@ public final class SqlExtractionSupport {
      * @param invoke         调用表达式
      * @param target         SQL 调用目标
      * @param sqlValue       解析出的 SQL 值
+     * @param boundParameters 语句对象上 setXxx 绑定记录（下标 + 值模型 + 依赖）
      * @return 构造出的 SQL 语句；无法识别返回 {@code null}
      */
     public static SqlStatement buildCallSiteStatement(
@@ -187,7 +312,8 @@ public final class SqlExtractionSupport {
             int statementIndex,
             AbstractInvokeExpr invoke,
             SqlCallTarget target,
-            SqlValue sqlValue) {
+            SqlValue sqlValue,
+            List<BoundParameter> boundParameters) {
 
         String rawSql = sqlValue.rawSql().trim();
         StatementType statementType = detectStatementType(rawSql);
@@ -208,11 +334,19 @@ public final class SqlExtractionSupport {
         extra.put("sqlValue", sqlValue.model().display());
 
         AnalyzeResult.Metadata metadata = metadata(
-                0,
                 Collections.emptyList(),
-                sqlNode,
                 target.tags(),
                 extra);
+
+        // SQL 文本实参依赖 + 绑定调用（setXxx）实参依赖合并，去重保持顺序
+        List<MethodParameterRef> parameters = new ArrayList<>(sqlValue.parameters());
+        for (BoundParameter bound : boundParameters) {
+            for (MethodParameterRef dependency : bound.dependencies()) {
+                if (!parameters.contains(dependency)) {
+                    parameters.add(dependency);
+                }
+            }
+        }
 
         return new SqlStatement(
                 callSiteStatementId(caller, target.kind(), invoke.getMethodSignature(), statementIndex),
@@ -221,9 +355,23 @@ public final class SqlExtractionSupport {
                 sourceLocation(caller, caller.getDeclClassType().getFullyQualifiedName()),
                 rawSql,
                 sqlNode,
-                List.of(),
+                List.copyOf(parameters),
+                boundParameters,
                 sqlValue.diagnostics(),
                 metadata);
+    }
+
+    /**
+     * 兼容无绑定参数调用的旧签名。
+     */
+    public static SqlStatement buildCallSiteStatement(
+            SootMethod method,
+            Stmt stmt,
+            int statementIndex,
+            AbstractInvokeExpr invoke,
+            SqlCallTarget target,
+            SqlValue sqlValue) {
+        return buildCallSiteStatement(method, stmt, statementIndex, invoke, target, sqlValue, List.of());
     }
 
     /**
@@ -263,9 +411,7 @@ public final class SqlExtractionSupport {
         }
 
         AnalyzeResult.Metadata metadata = metadata(
-                0,
                 Collections.emptyList(),
-                sqlNode,
                 tags,
                 extra);
 
@@ -292,17 +438,12 @@ public final class SqlExtractionSupport {
      * @return 元数据
      */
     public static AnalyzeResult.Metadata metadata(
-            int callDepth,
             List<String> callers,
-            SqlNode sqlNode,
             List<String> tags,
             Map<String, Object> extra) {
 
         return AnalyzeResult.Metadata.builder()
-                .callDepth(callDepth)
                 .callers(callers == null ? Collections.emptyList() : List.copyOf(callers))
-                .complexity(sqlNode == null ? 0 : SqlNodeUtils.countDynamicNodes(sqlNode))
-                .tableNames(Collections.emptyList())
                 .tags(tags == null ? Collections.emptyList() : List.copyOf(tags))
                 .extra(extra == null ? Collections.emptyMap() : Map.copyOf(extra))
                 .build();

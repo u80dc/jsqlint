@@ -380,9 +380,7 @@ public final class SqlResourceExtractor implements SqlExtractor {
                 List.of(),
                 List.of(),
                 SqlExtractionSupport.metadata(
-                        0,
                         List.of(),
-                        sqlNode,
                         List.of(name(), "sql-file"),
                         extra));
     }
