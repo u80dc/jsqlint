@@ -608,10 +608,13 @@ const buildFlowOption = (data: SqlPropagationPathVO): echarts.EChartsOption => {
       ])
 
       let previousId = rootId
-      steps.forEach((step, stepIndex) => {
+      // steps 为"调用点 → 入口"的反序（追踪算法的展开顺序），
+      // 倒序消费使图中链路按 入口 → ... → SQL调用点 的值流向展示
+      const orderedSteps = [...steps].reverse()
+      orderedSteps.forEach((step, stepIndex) => {
         const callerName = shortMethod(step.caller as string | undefined) || t('sqlConstruction.flow.caller')
         const calleeName = shortMethod(step.callee as string | undefined) || t('sqlConstruction.flow.callee')
-        const isLast = stepIndex === steps.length - 1
+        const isLast = stepIndex === orderedSteps.length - 1
         const calleeId = `method:${callerName}->${calleeName}`
         // 悬浮明细保留完整签名（含参数包名），节点显示名由 stripParamPackages 单独缩短
         ensureNode(calleeId, calleeName, isLast ? 'sql' : 'method', stepIndex + 1, [
