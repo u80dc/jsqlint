@@ -329,7 +329,7 @@
           <el-table-column prop="statementId" :label="t('projectDetail.projectSql.statementId')" min-width="220">
             <template #default="{ row }">
               <el-tooltip :content="row.statementId || '-'" :disabled="!row.statementId" placement="top">
-                <span class="statement-id-cell" @click="copyStatementId(row.statementId)">
+                <span class="copyable-cell" @click="copyText(row.statementId)">
                   {{ shortenStatementId(row.statementId) }}
                 </span>
               </el-tooltip>
@@ -338,14 +338,26 @@
           <el-table-column prop="statementType" :label="t('projectDetail.projectSql.statementType')" width="100" align="center">
             <template #default="{ row }">{{ row.statementType || '-' }}</template>
           </el-table-column>
-          <el-table-column :label="t('projectDetail.projectSql.sql')" min-width="440" show-overflow-tooltip>
-            <template #default="{ row }">{{ row.rawSql || '-' }}</template>
+          <el-table-column :label="t('projectDetail.projectSql.sql')" min-width="440">
+            <template #default="{ row }">
+              <el-tooltip :content="row.rawSql || '-'" :disabled="!row.rawSql" placement="top">
+                <span class="copyable-cell copyable-cell--sql" @click="copyText(row.rawSql)">
+                  {{ row.rawSql || '-' }}
+                </span>
+              </el-tooltip>
+            </template>
           </el-table-column>
           <el-table-column prop="sourceType" :label="t('projectDetail.projectSql.sourceType')" width="130" align="center">
             <template #default="{ row }">{{ row.sourceType || '-' }}</template>
           </el-table-column>
-          <el-table-column :label="t('projectDetail.projectSql.location')" min-width="180" show-overflow-tooltip>
-            <template #default="{ row }">{{ formatSqlLocation(row) }}</template>
+          <el-table-column :label="t('projectDetail.projectSql.location')" min-width="180">
+            <template #default="{ row }">
+              <el-tooltip :content="formatSqlLocation(row) || '-'" :disabled="!formatSqlLocation(row)" placement="top">
+                <span class="copyable-cell" @click="copyText(formatSqlLocation(row))">
+                  {{ formatSqlLocation(row) || '-' }}
+                </span>
+              </el-tooltip>
+            </template>
           </el-table-column>
           <el-table-column :label="t('projectDetail.projectSql.dynamic')" width="90" align="center">
             <template #default="{ row }">
@@ -1417,12 +1429,13 @@ const shortenStatementId = (statementId?: string) => {
 }
 
 /** 单击复制完整 statementId */
-const copyStatementId = async (statementId?: string) => {
-  if (!statementId) {
+/** 单击复制文本到剪贴板，空值忽略 */
+const copyText = async (text?: string | null) => {
+  if (!text) {
     return
   }
   try {
-    await navigator.clipboard.writeText(statementId)
+    await navigator.clipboard.writeText(text)
     ElMessage.success(t('common.copySuccess'))
   } catch {
     ElMessage.error(t('common.copyFailed'))
@@ -2503,14 +2516,22 @@ const loadProjectOverview = async () => {
   }
 
   // statementId 缩短展示：默认只显示"类.方法(参数)"，悬浮完整、单击复制
-  .statement-id-cell {
+  // 可单击复制的单元格：单击复制完整内容（非显示的缩短文本），悬浮 tooltip 展示全文
+  .copyable-cell {
     display: inline-block;
     max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    vertical-align: middle;
     cursor: copy;
     color: var(--jsp-text-primary);
+
+    // SQL 列保留换行语义的单行省略展示
+    &--sql {
+      font-family: 'Monaco', 'Menlo', monospace;
+      font-size: 13px;
+    }
   }
 }
 

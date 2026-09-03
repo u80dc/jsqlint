@@ -651,6 +651,13 @@ const buildFlowOption = (data: SqlPropagationPathVO): echarts.EChartsOption => {
       width: 1.6,
       curveness: 0.08,
       opacity: 0.8
+    },
+    emphasis: {
+      lineStyle: {
+        width: 3,
+        color: '#2563eb',
+        opacity: 1
+      }
     }
   }))
 
@@ -694,8 +701,16 @@ const buildFlowOption = (data: SqlPropagationPathVO): echarts.EChartsOption => {
           fontWeight: 700
         },
         emphasis: {
+          // 悬浮节点时高亮相邻连线与邻居节点，突出该方法的上下游调用链
           focus: 'adjacency',
-          lineStyle: { width: 2.4, color: '#2563eb', opacity: 1 }
+          lineStyle: { width: 3, color: '#2563eb', opacity: 1 },
+          itemStyle: {
+            borderColor: '#2563eb',
+            borderWidth: 2.4,
+            shadowBlur: 14,
+            shadowColor: 'rgba(37, 99, 235, 0.28)'
+          },
+          label: { color: '#1d4ed8' }
         },
         data: nodes,
         links
