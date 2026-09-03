@@ -521,7 +521,8 @@ const buildFlowOption = (data: SqlPropagationPathVO): echarts.EChartsOption => {
 
   const NODE_W = 210
   const NODE_H = 62
-  const COL_GAP = 90
+  // 列间距加大到 150：为箭头留出卡片边缘之外的可见空隙
+  const COL_GAP = 150
   const ROW_GAP = 26
 
   const nodeMap = new Map<string, FlowNode>()
@@ -646,10 +647,10 @@ const buildFlowOption = (data: SqlPropagationPathVO): echarts.EChartsOption => {
     params: [...link.params].join(', '),
     detail: link.detail,
     lineStyle: {
-      color: '#94a3b8',
-      width: 1.4,
+      color: '#64748b',
+      width: 1.6,
       curveness: 0.08,
-      opacity: 0.7
+      opacity: 0.8
     }
   }))
 
@@ -681,8 +682,8 @@ const buildFlowOption = (data: SqlPropagationPathVO): echarts.EChartsOption => {
         roam: true,
         draggable: true,
         symbol: 'roundRect',
-        edgeSymbol: ['none', 'arrow'],
-        edgeSymbolSize: [0, 9],
+        // 不用箭头：链路默认从左到右为执行顺序，连线仅表示相邻关系
+        edgeSymbol: ['none', 'none'],
         label: {
           show: true,
           position: 'inside',
