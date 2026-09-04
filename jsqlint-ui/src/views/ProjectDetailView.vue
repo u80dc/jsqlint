@@ -11,35 +11,6 @@
         <el-tab-pane :label="t('projectDetail.tabs.members')" name="members" />
         <el-tab-pane :label="t('projectDetail.tabs.logs')" name="logs" />
       </el-tabs>
-      <!--
-      <div class="top-actions">
-        <el-tooltip :content="t('projectDetail.actions.pull')" placement="bottom">
-          <el-button text @click="handlePullProject" class="top-action-btn">
-            <el-icon><Download /></el-icon>
-          </el-button>
-        </el-tooltip>
-        <el-tooltip :content="t('projectDetail.actions.compile')" placement="bottom">
-          <el-button text @click="handleCompile" class="top-action-btn">
-            <el-icon><Tools /></el-icon>
-          </el-button>
-        </el-tooltip>
-        <el-tooltip :content="t('projectDetail.actions.analyze')" placement="bottom">
-          <el-button text @click="handleAnalyze" class="top-action-btn">
-            <el-icon><DataAnalysis /></el-icon>
-          </el-button>
-        </el-tooltip>
-        <el-tooltip :content="t('projectDetail.actions.audit')" placement="bottom">
-          <el-button text @click="handleReview" class="top-action-btn">
-            <el-icon><CircleCheck /></el-icon>
-          </el-button>
-        </el-tooltip>
-        <el-tooltip :content="t('projectDetail.actions.generateReport')" placement="bottom">
-          <el-button text @click="handleGenerateReport" class="top-action-btn">
-            <el-icon><Document /></el-icon>
-          </el-button>
-        </el-tooltip>
-      </div>
-      -->
     </div>
 
     <!-- 概览页 -->
@@ -686,7 +657,7 @@ import { useI18n } from 'vue-i18n'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { getWorkspaces, addProjectToWorkspace, removeProjectFromWorkspace, type WorkspaceVO } from '@/api/workspace'
-import { Lock, Download, DataAnalysis, Search, CircleCheck, Refresh, Plus, Top, Bottom, Tools, Document, VideoPlay, Close, EditPen, CopyDocument, View, Edit, Delete, ArrowDown, ArrowUp } from '@element-plus/icons-vue'
+import { Lock, Search, Refresh, Plus, Top, Bottom, VideoPlay, Close, EditPen, CopyDocument, View, Edit, Delete, ArrowDown, ArrowUp } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 import { chartColors, chartNeutral, seriesPalette } from '@/utils/chartPalette'
 import { useTheme } from '@/composables/useTheme'
@@ -694,7 +665,7 @@ import ProjectLogsPanel from '@/components/project/ProjectLogsPanel.vue'
 import ProjectMembersPanel from '@/components/project/ProjectMembersPanel.vue'
 import ProjectReportPanel from '@/components/project/ProjectReportPanel.vue'
 import ExecutionSteps, { type ExecutionStep, type ExecutionStepStatus } from '@/components/project/ExecutionSteps.vue'
-import { analyzeProject, auditProject, compileProject, executeProject, generateReportProject, getProject, getProjectCredentials, getProjectStatus, getProjectVersions, syncProject, updateProject, updateProjectCredential, type CredentialVO, type ProjectVO, type ProjectVersionStepVO, type ProjectVersionVO } from '@/api/project'
+import { executeProject, getProject, getProjectCredentials, getProjectStatus, getProjectVersions, updateProject, updateProjectCredential, type CredentialVO, type ProjectVO, type ProjectVersionStepVO, type ProjectVersionVO } from '@/api/project'
 import type { AuditRuleVO } from '@/api/auditRule'
 import { checkIsProjectAdmin } from '@/api/projectMember'
 import { createProjectAuditRule, deleteProjectAuditRule, getProjectAuditRules, toggleProjectAuditRule, updateProjectAuditRule } from '@/api/projectAuditRule'
@@ -1525,64 +1496,6 @@ const loadProjectStatus = async (silent = false) => {
 }
 
 // 版本列表操作按钮处理函数
-const handlePullProject = async () => {
-  try {
-    await syncProject(projectId)
-    ElMessage.success(t('projectDetail.messages.syncSubmitted'))
-    await loadVersions()
-    await loadProjectStatus()
-  } catch {
-    ElMessage.error(t('projectDetail.messages.syncError'))
-  }
-}
-
-const handleCompile = async () => {
-  try {
-    await compileProject(projectId)
-    ElMessage.success(t('projectDetail.messages.compileSubmitted'))
-    await loadProjectStatus()
-  } catch {
-    ElMessage.error(t('projectDetail.messages.compileError'))
-  }
-}
-
-const handleAnalyze = async () => {
-  try {
-    const result = await analyzeProject(projectId)
-    if (!result || result.success !== false) {
-      ElMessage.success(result.message || t('projectDetail.messages.analyzeSubmitted'))
-      await loadProjectStatus()
-    } else {
-      ElMessage.error(result.message || t('projectDetail.messages.analyzeFailed'))
-    }
-  } catch {
-    ElMessage.error(t('projectDetail.messages.analyzeError'))
-  }
-}
-
-const handleReview = async () => {
-  try {
-    await auditProject(projectId)
-    ElMessage.success(t('projectDetail.messages.auditSubmitted'))
-    await loadVersions()
-    await loadProjectStatus()
-  } catch {
-    ElMessage.error(t('projectDetail.messages.auditError'))
-  }
-}
-
-const handleGenerateReport = async () => {
-  try {
-    await generateReportProject(projectId)
-    ElMessage.success(t('projectDetail.messages.reportSubmitted'))
-    await loadVersions()
-    await loadProjectStatus()
-    await loadProjectReport()
-  } catch {
-    ElMessage.error(t('projectDetail.messages.reportError'))
-  }
-}
-
 const loadProjectReport = async (versionId = getRouteVersionId()) => {
   reportLoading.value = true
   try {
@@ -1981,7 +1894,6 @@ const loadProjectOverview = async () => {
       getProjectOverviewSqlQualityTrend(projectId)
     ])
 
-    const totalSqlCount = scoreOverview.totalSqlCount || issueSqlRate.latestTotalSqlCount || sqlOverview.totalSqlCount || 0
     const issueRate = toPercent(issueSqlRate.issueSqlRate)
     const healthRate = toPercent(100 - issueRate)
     const issueRateTrend = issueSqlRate.trend === 'UP'

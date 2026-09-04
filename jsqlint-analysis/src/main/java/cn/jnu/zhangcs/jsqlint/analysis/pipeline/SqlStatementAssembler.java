@@ -157,9 +157,24 @@ public final class SqlStatementAssembler {
      * 为常量绑定构造轻量推断结果：value 直接取绑定值模型的字面量内容，
      * origin 为 BIND_CONSTANT，parameterIndex 对应 SQL 占位符下标，
      * 传播路径为空链（值在绑定调用点即确定，无需向上追踪）。
+     * 分支多定义（MultiValue）同样按常量处理，取候选集展示。
      */
     private ParameterValueInferenceResult constantBindResult(BoundParameter binding) {
-        if (!(binding.value() instanceof ValueModel.LiteralValue literal)) {
+        ValueModel.LiteralValue literal = null;
+        ValueModel.MultiValue alternatives = null;
+        if (binding.value() instanceof ValueModel.LiteralValue direct) {
+            literal = direct;
+        } else if (binding.value() instanceof ValueModel.MultiValue multi
+                && !multi.alternatives().isEmpty()) {
+            // 分支候选集：全部候选为字面量时才视为常量绑定
+            boolean allLiteral = multi.alternatives().stream()
+                    .allMatch(part -> part instanceof ValueModel.LiteralValue);
+            if (allLiteral) {
+                literal = (ValueModel.LiteralValue) multi.alternatives().getFirst();
+                alternatives = multi;
+            }
+        }
+        if (literal == null) {
             // 非字面量模型（如表达式调用）不生成本地推断，交由渲染路径处理
             return null;
         }
@@ -167,16 +182,20 @@ public final class SqlStatementAssembler {
         if (!target.isValid()) {
             return null;
         }
+        ValueModel displayModel = alternatives != null ? alternatives : literal;
+        String displayValue = alternatives != null
+                ? alternatives.display()
+                : literal.value();
         InferredParameterValue value = new InferredParameterValue(
                 target,
                 literal.value(),
-                literal.value(),
+                displayValue,
                 literal.type(),
                 InferredValueOrigin.BIND_CONSTANT,
                 binding.parameterIndex(),
-                literal,
-                literal,
-                new CallTrace(List.of(), literal));
+                displayModel,
+                displayModel,
+                new CallTrace(List.of(), displayModel));
         return new ParameterValueInferenceResult(target, List.of(value), List.of());
     }
 

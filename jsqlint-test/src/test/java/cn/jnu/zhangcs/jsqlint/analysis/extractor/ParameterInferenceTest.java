@@ -60,6 +60,14 @@ class ParameterInferenceTest {
                 .toList();
     }
 
+    private List<InferredParameterValue> boundValuesFor(String rawSql) {
+        return statements.stream()
+                .filter(statement -> rawSql.equals(statement.getRawSql()))
+                .flatMap(statement -> statement.getParameterInferences().stream())
+                .flatMap(inference -> inference.possibleValues().stream())
+                .toList();
+    }
+
     @Test
     void parameterInference_isPresentForCallSiteStatements() {
         assertThat(allInferences()).isNotEmpty();
@@ -232,6 +240,65 @@ class ParameterInferenceTest {
                     assertThat(value.parameterIndex()).isEqualTo(1);
                     assertThat(value.boundToPlaceholder()).isTrue();
                 });
+    }
+
+    @Test
+    void branchAssignedConstant_collectsAllAlternatives() {
+        // deleteByBranchStatus 的 if/else 两分支分别赋值 LOCKED / ACTIVE，
+        // setString(1, status) 应收集两个候选常量并标注占位符下标
+        List<InferredParameterValue> values = boundValuesFor(
+                "DELETE FROM users WHERE status = ? AND id = ?");
+
+        assertThat(values)
+                .anySatisfy(value -> {
+                    assertThat(value.origin()).isEqualTo(InferredValueOrigin.BIND_CONSTANT);
+                    assertThat(value.parameterIndex()).isEqualTo(1);
+                    // 候选集展示两个分支值
+                    assertThat(value.displayValue()).contains("ACTIVE").contains("LOCKED");
+                    assertThat(value.sourceValue()).isInstanceOf(ValueModel.MultiValue.class);
+                    assertThat(((ValueModel.MultiValue) value.sourceValue()).alternatives()).hasSize(2);
+                });
+        // id 绑定（占位符 2）依赖形参，本方法无上游调用者时追踪值为空，
+        // 仅验证常量分支的候选收集不受形参绑定影响
+        assertThat(values)
+                .allSatisfy(value -> assertThat(value.parameterIndex()).isPositive());
+    }
+
+    @Test
+    void nestedBranchAssignedConstant_collectsThreeAlternatives() {
+        // 两层二分支组成的 else-if 链只收集三个分支定义，不把 DEFAULT 初始值算入候选。
+        List<InferredParameterValue> values = boundValuesFor(
+                "DELETE FROM users WHERE status = ? AND id = ? AND age >= 0");
+
+        assertThat(values)
+                .anySatisfy(value -> {
+                    assertThat(value.origin()).isEqualTo(InferredValueOrigin.BIND_CONSTANT);
+                    assertThat(value.parameterIndex()).isEqualTo(1);
+                    assertThat(value.displayValue())
+                            .contains("ACTIVE")
+                            .contains("PENDING")
+                            .contains("LOCKED")
+                            .doesNotContain("DEFAULT");
+                    assertThat(value.sourceValue()).isInstanceOf(ValueModel.MultiValue.class);
+                    assertThat(((ValueModel.MultiValue) value.sourceValue()).alternatives()).hasSize(3);
+                });
+    }
+
+    @Test
+    void sequentialReassignment_keepsNearestDefinition() {
+        // 没有 if/else 菱形时不得把顺序重赋值误报成多个候选。
+        List<InferredParameterValue> values = boundValuesFor(
+                "DELETE FROM users WHERE status = ? AND id > ?");
+        List<InferredParameterValue> statusValues = values.stream()
+                .filter(value -> value.parameterIndex() == 1)
+                .toList();
+
+        assertThat(statusValues).hasSize(1);
+        InferredParameterValue statusValue = statusValues.getFirst();
+        assertThat(statusValue.origin()).isEqualTo(InferredValueOrigin.BIND_CONSTANT);
+        assertThat(statusValue.value()).isEqualTo("FINAL");
+        assertThat(statusValue.displayValue()).isEqualTo("FINAL");
+        assertThat(statusValue.sourceValue()).isInstanceOf(ValueModel.LiteralValue.class);
     }
 
     @Test

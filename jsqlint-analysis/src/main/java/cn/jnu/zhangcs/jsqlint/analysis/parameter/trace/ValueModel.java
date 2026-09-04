@@ -30,6 +30,7 @@ public sealed interface ValueModel {
                     objectValue.fields.values().forEach(part -> collectParameters(part, result));
             case FieldValue fieldValue -> collectParameters(fieldValue.base, result);
             case CastValue castValue -> collectParameters(castValue.value, result);
+            case MultiValue multiValue -> multiValue.alternatives.forEach(part -> collectParameters(part, result));
             case UnknownValue ignored -> {
             }
             case LocalValue ignored -> {
@@ -185,6 +186,26 @@ public sealed interface ValueModel {
         @Override
         public String display() {
             return "(" + targetType + ") " + value.display();
+        }
+    }
+
+    /**
+     * 同一变量在多条控制流路径上被赋予不同值的集合。
+     *
+     * <p>典型形态是 if/else 各分支对同一局部变量赋值后在调用点使用：
+     * 两处定义都到达使用点，无法用"线性最近定义"取舍时，以候选集表示。
+     * 推断阶段对每个候选独立求值，产生多条可能值。</p>
+     */
+    record MultiValue(List<ValueModel> alternatives) implements ValueModel {
+        public MultiValue {
+            alternatives = alternatives == null ? List.of() : List.copyOf(alternatives);
+        }
+
+        @Override
+        public String display() {
+            return alternatives.stream()
+                    .map(ValueModel::display)
+                    .collect(Collectors.joining(" | ", "{", "}"));
         }
     }
 }

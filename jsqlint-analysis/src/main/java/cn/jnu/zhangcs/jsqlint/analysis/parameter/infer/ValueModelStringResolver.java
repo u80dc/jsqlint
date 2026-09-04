@@ -89,12 +89,35 @@ public final class ValueModelStringResolver {
             case ValueModel.ParameterValue parameter ->
                     Optional.of(String.valueOf(sampleExternalValue(parameter.type(), parameter.name())));
             case ValueModel.InvokeValue invoke -> rawInvoke(invoke);
+            case ValueModel.MultiValue multi -> rawMulti(multi);
             case ValueModel.FieldValue ignored -> Optional.empty();
             case ValueModel.ArrayValue ignored -> Optional.empty();
             case ValueModel.ObjectValue ignored -> Optional.empty();
             case ValueModel.LocalValue ignored -> Optional.empty();
             case ValueModel.UnknownValue ignored -> Optional.empty();
         };
+    }
+
+    /**
+     * 分支候选集的字符串解析：所有候选都能直接确定字符串时拼接呈现（带分隔标记），
+     * 任一候选无法确定则整体失败，交由推断路径处理。
+     */
+    private static Optional<String> rawMulti(ValueModel.MultiValue multi) {
+        if (multi.alternatives().isEmpty()) {
+            return Optional.empty();
+        }
+        StringBuilder builder = new StringBuilder();
+        for (ValueModel alternative : multi.alternatives()) {
+            Optional<String> part = rawString(alternative);
+            if (part.isEmpty()) {
+                return Optional.empty();
+            }
+            if (!builder.isEmpty()) {
+                builder.append(" | ");
+            }
+            builder.append(part.get());
+        }
+        return Optional.of(builder.toString());
     }
 
     /**

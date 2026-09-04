@@ -30,7 +30,7 @@ export default {
     close: '收起'
   },
   nav: {
-    dashboard: '首页概览',
+    dashboard: '总览',
     workspace: '工作空间',
     projects: '项目管理',
     inspection: '自动巡检',
@@ -252,9 +252,9 @@ export default {
       pullStatus: '状态',
       operator: '操作者',
       operation: '操作',
-      viewSql: '查看SQL',
+      viewSql: 'SQL',
       viewSqlTip: '查看项目扫描SQL结果',
-      viewReport: '查看报告',
+      viewReport: '报告',
       viewReportTip: '查看项目审核报告',
       projectScore: '项目总分',
       monthCompliance: '本月合规率',

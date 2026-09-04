@@ -120,6 +120,9 @@ public final class ParameterValueInferencer {
             case ValueModel.CastValue castValue -> new ValueModel.CastValue(
                     castValue.targetType(),
                     substituteParameter(castValue.value(), parameterIndex, replacement));
+            case ValueModel.MultiValue multiValue -> new ValueModel.MultiValue(multiValue.alternatives().stream()
+                    .map(part -> substituteParameter(part, parameterIndex, replacement))
+                    .toList());
             case ValueModel.UnknownValue unknownValue -> unknownValue;
             case ValueModel.LocalValue localValue -> localValue;
             case ValueModel.LiteralValue literalValue -> literalValue;
@@ -140,10 +143,36 @@ public final class ParameterValueInferencer {
             case ValueModel.FieldValue fieldValue -> inferField(fieldValue, diagnostics, externalSamples);
             case ValueModel.CastValue castValue -> inferValue(castValue.value(), diagnostics, externalSamples)
                     .withType(castValue.targetType(), InferredValueOrigin.INVOCATION);
+            case ValueModel.MultiValue multiValue -> inferMulti(multiValue, diagnostics, externalSamples);
             case ValueModel.LocalValue localValue ->
                     unknown(localValue, "Unresolved local value: " + localValue.name());
             case ValueModel.UnknownValue unknownValue -> unknown(unknownValue, unknownValue.reason());
         };
+    }
+
+    private InferredValue inferMulti(
+            ValueModel.MultiValue multiValue,
+            List<String> diagnostics,
+            Map<ExternalParameterKey, Object> externalSamples) {
+        // 分支候选集无法折叠为单值：以首个可确定的候选为准，
+        // 其余候选记入诊断，保证值可用性的同时保留分支信息。
+        InferredValue resolved = null;
+        List<String> alternativeDisplays = new ArrayList<>();
+        for (ValueModel alternative : multiValue.alternatives()) {
+            InferredValue candidate = inferValue(alternative, diagnostics, externalSamples);
+            if (resolved == null
+                    || (resolved.origin() == InferredValueOrigin.UNKNOWN
+                    && candidate.origin() != InferredValueOrigin.UNKNOWN)) {
+                resolved = candidate;
+            }
+            alternativeDisplays.add(candidate.displayValue());
+        }
+        if (alternativeDisplays.size() > 1) {
+            diagnostics.add("Branch alternatives: " + String.join(" | ", alternativeDisplays));
+        }
+        return resolved == null
+                ? unknown(multiValue, "empty branch alternatives")
+                : resolved;
     }
 
     private InferredValue inferExternalInput(

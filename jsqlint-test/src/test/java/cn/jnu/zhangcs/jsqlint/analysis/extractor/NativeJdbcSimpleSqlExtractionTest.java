@@ -29,9 +29,13 @@ class NativeJdbcSimpleSqlExtractionTest {
         SqlExtractionResult result = new NativeJdbcSqlExtractor().extract(context);
         List<SqlStatementResult> statements = assemble(context, result);
 
+        // deleteByDynamicStatus 的 SQL 来自辅助方法返回值，无法解析时应记入诊断而非静默丢弃
         assertAll(
-                () -> assertEquals(12, statements.size(), () -> "Expected SQL statements from native-jdbc-simple, got " + statements.size()),
-                () -> assertTrue(result.diagnostics().isEmpty(), () -> String.join("\n", result.diagnostics())),
+                () -> assertEquals(15, statements.size(), () -> "Expected SQL statements from native-jdbc-simple, got " + statements.size()),
+                () -> assertTrue(result.diagnostics().stream()
+                                .anyMatch(diagnostic -> diagnostic.contains("deleteByDynamicStatus")),
+                        () -> "Expected skip diagnostic for deleteByDynamicStatus, got: "
+                                + String.join("\n", result.diagnostics())),
                 () -> assertTrue(statements.stream()
                         .allMatch(statement -> statement.getSourceType() == SqlSourceType.PARAM_SQL)),
                 () -> assertTrue(statements.stream()

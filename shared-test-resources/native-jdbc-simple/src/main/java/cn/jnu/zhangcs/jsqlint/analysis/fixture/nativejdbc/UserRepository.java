@@ -13,7 +13,7 @@ import java.util.Optional;
 /**
  * 数据访问层
  * <p>
- * 业务 JDBC SQL 共 9 条：SELECT（3）、INSERT（1）、UPDATE（2）、DELETE（3）
+ * 包含多种 JDBC SQL 调用形态，供提取与参数推断测试使用。
  * </p>
  *
  * @author zhangcs
@@ -200,6 +200,74 @@ public class UserRepository {
             statement.setLong(2, minId);
             return statement.executeUpdate();
         }
+    }
+
+    /**
+     * 演示分支多定义：if/else 各分支对同一变量赋不同值后在调用点使用。
+     */
+    public int deleteByBranchStatus(long id, boolean locked) throws SQLException {
+        String status = "DEFAULT";
+        if (locked) {
+            status = "LOCKED";
+        } else {
+            status = "ACTIVE";
+        }
+        String sql = "DELETE FROM users WHERE status = ? AND id = ?";
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, status);
+            statement.setLong(2, id);
+            return statement.executeUpdate();
+        }
+    }
+
+    /**
+     * 演示嵌套二分支：两个 if/else 菱形共同为同一绑定提供三个候选值。
+     */
+    public int deleteByThreeBranchStatus(long id, boolean locked, boolean pending) throws SQLException {
+        String status = "DEFAULT";
+        if (locked) {
+            status = "LOCKED";
+        } else if (pending) {
+            status = "PENDING";
+        } else {
+            status = "ACTIVE";
+        }
+        String sql = "DELETE FROM users WHERE status = ? AND id = ? AND age >= 0";
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, status);
+            statement.setLong(2, id);
+            return statement.executeUpdate();
+        }
+    }
+
+    /**
+     * 普通顺序重赋值不属于分支特判，绑定点应保持原有的最近定义语义。
+     */
+    public int deleteBySequentialStatus(long id) throws SQLException {
+        String status = "INITIAL";
+        status = "FINAL";
+        String sql = "DELETE FROM users WHERE status = ? AND id > ?";
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, status);
+            statement.setLong(2, id);
+            return statement.executeUpdate();
+        }
+    }
+
+    /**
+     * 演示能力边界：SQL 文本来自辅助方法返回值，过程内不求值返回值时无法解析，
+     * 提取结果应携带诊断而非静默丢弃该调用点。
+     */
+    public int deleteByDynamicStatus(long id, String tenant) throws SQLException {
+        String sql = buildDeleteSql(tenant);
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setLong(1, id);
+            return statement.executeUpdate();
+        }
+    }
+
+    private String buildDeleteSql(String tenant) {
+        return "DELETE FROM users WHERE tenant = '" + tenant + "' AND id = ?";
     }
 
     public int deleteByStatus(Collection<String> statuses, boolean requireInactive) throws SQLException {

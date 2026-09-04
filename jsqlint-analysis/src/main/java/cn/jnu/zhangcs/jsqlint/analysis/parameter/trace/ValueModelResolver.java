@@ -8,12 +8,16 @@ import sootup.core.jimple.common.constant.NullConstant;
 import sootup.core.jimple.common.constant.StringConstant;
 import sootup.core.jimple.common.expr.*;
 import sootup.core.jimple.common.ref.*;
+import sootup.core.jimple.common.stmt.BranchingStmt;
 import sootup.core.jimple.common.stmt.JAssignStmt;
+import sootup.core.jimple.common.stmt.JGotoStmt;
+import sootup.core.jimple.common.stmt.JIfStmt;
 import sootup.core.jimple.common.stmt.JIdentityStmt;
 import sootup.core.jimple.common.stmt.Stmt;
 import sootup.core.model.SootMethod;
 
 import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * 用于解析实际参数值的过程内解析器
@@ -21,6 +25,9 @@ import java.util.*;
  * @author zhangcs
  */
 public final class ValueModelResolver {
+
+    private static final int MAX_BRANCH_DEFINITIONS = 3;
+    private static final int MAX_BRANCH_NESTING = 3;
 
     private final SootMethod method;
     private final List<Stmt> statements;
@@ -156,51 +163,415 @@ public final class ValueModelResolver {
         }
 
         try {
-            // 从调用点向前回溯，使用最近的到达定义。这是有意的保守策略：
-            // 存在多条控制流路径时，以线性上最近的定义作为可读的首选模型。
-            for (int i = Math.min(beforeIndex - 1, statements.size() - 1); i >= 0; i--) {
-                Stmt stmt = statements.get(i);
-                if (stmt instanceof JAssignStmt assign && assign.getLeftOp() instanceof Local left
-                        && left.getName().equals(name)) {
-                    Set<String> rhsVisitingLocals = new LinkedHashSet<>(visitingLocals);
-                    rhsVisitingLocals.remove(name);
-                    ResolvedValue assigned = resolveInternal(assign.getRightOp(), i, rhsVisitingLocals);
-                    List<ValueFlowStep> flow = new ArrayList<>();
-                    flow.add(flowStep(i, stmt, ValueFlowStep.Kind.LOCAL_ASSIGN, left.getName(), assigned.value()));
-                    flow.addAll(assigned.flow());
-                    return withWritesAfterDefinition(name, assigned.value(), i, beforeIndex, visitingLocals, flow);
+            List<DefinitionSite> definitions = collectAssignmentSites(name, beforeIndex);
+            if (!definitions.isEmpty()) {
+                List<DefinitionSite> branchDefinitions = findBranchDefinitions(
+                        beforeIndex,
+                        definitions);
+                if (branchDefinitions != null) {
+                    List<CandidateDefinition> candidates = branchDefinitions.stream()
+                            .map(definition -> resolveDefinition(definition, name, visitingLocals))
+                            .toList();
+                    return withBranchAlternatives(name, candidates, beforeIndex, visitingLocals);
                 }
-                if (stmt instanceof JIdentityStmt identity && identity.getLeftOp() instanceof Local left
-                        && left.getName().equals(name)) {
-                    if (identity.getRightOp() instanceof JParameterRef parameterRef) {
-                        ValueModel.ParameterValue parameter = parameterValue(parameterRef.getIndex(), name);
-                        return new ResolvedValue(parameter, List.of(flowStep(
-                                i,
-                                stmt,
-                                ValueFlowStep.Kind.PARAMETER_BIND,
-                                left.getName(),
-                                parameter)));
-                    }
-                    if (identity.getRightOp() instanceof JThisRef) {
-                        return ResolvedValue.of(new ValueModel.LocalValue("this", typeName(identity.getRightOp())));
-                    }
-                }
+
+                CandidateDefinition nearest = resolveDefinition(definitions.getFirst(), name, visitingLocals);
+                return withWritesAfterDefinition(
+                        name,
+                        nearest.value(),
+                        nearest.definitionIndex(),
+                        beforeIndex,
+                        visitingLocals,
+                        nearest.flow());
             }
 
-            // 未找到更早的赋值时，回退到方法入口处收集的 identity 语句，
-            // 例如 id := @parameter0。
-            ValueModel.ParameterValue parameterValue = parameterLocals.get(name);
-            if (parameterValue != null) {
-                return new ResolvedValue(parameterValue, List.of(flowStep(
-                        -1,
-                        null,
-                        ValueFlowStep.Kind.PARAMETER_BIND,
-                        name,
-                        parameterValue)));
-            }
-            return ResolvedValue.of(new ValueModel.LocalValue(name, typeName(local)));
+            return resolveIdentityLocal(local, name, beforeIndex);
         } finally {
             visitingLocals.remove(name);
+        }
+    }
+
+    private List<DefinitionSite> collectAssignmentSites(String localName, int beforeIndex) {
+        int upperBound = Math.min(Math.max(beforeIndex, 0), statements.size());
+        List<DefinitionSite> definitions = new ArrayList<>();
+        for (int index = upperBound - 1; index >= 0; index--) {
+            Stmt statement = statements.get(index);
+            if (statement instanceof JAssignStmt assign
+                    && assign.getLeftOp() instanceof Local left
+                    && left.getName().equals(localName)) {
+                definitions.add(new DefinitionSite(index, assign));
+            }
+        }
+        return definitions;
+    }
+
+    private CandidateDefinition resolveDefinition(
+            DefinitionSite definition,
+            String localName,
+            Set<String> visitingLocals) {
+
+        Set<String> rhsVisitingLocals = new LinkedHashSet<>(visitingLocals);
+        rhsVisitingLocals.remove(localName);
+        ResolvedValue assigned = resolveInternal(
+                definition.statement().getRightOp(),
+                definition.index(),
+                rhsVisitingLocals);
+        List<ValueFlowStep> flow = new ArrayList<>();
+        flow.add(flowStep(
+                definition.index(),
+                definition.statement(),
+                ValueFlowStep.Kind.LOCAL_ASSIGN,
+                localName,
+                assigned.value()));
+        flow.addAll(assigned.flow());
+        return new CandidateDefinition(assigned.value(), flow, definition.index());
+    }
+
+    private ResolvedValue resolveIdentityLocal(Local local, String localName, int beforeIndex) {
+        int upperBound = Math.min(Math.max(beforeIndex, 0), statements.size());
+        for (int index = upperBound - 1; index >= 0; index--) {
+            Stmt statement = statements.get(index);
+            if (!(statement instanceof JIdentityStmt identity)
+                    || !(identity.getLeftOp() instanceof Local left)
+                    || !left.getName().equals(localName)) {
+                continue;
+            }
+            if (identity.getRightOp() instanceof JParameterRef parameterRef) {
+                ValueModel.ParameterValue parameter = parameterValue(parameterRef.getIndex(), localName);
+                return new ResolvedValue(parameter, List.of(flowStep(
+                        index,
+                        statement,
+                        ValueFlowStep.Kind.PARAMETER_BIND,
+                        localName,
+                        parameter)));
+            }
+            if (identity.getRightOp() instanceof JThisRef) {
+                return ResolvedValue.of(new ValueModel.LocalValue("this", typeName(identity.getRightOp())));
+            }
+        }
+
+        ValueModel.ParameterValue parameterValue = parameterLocals.get(localName);
+        if (parameterValue != null) {
+            return new ResolvedValue(parameterValue, List.of(flowStep(
+                    -1,
+                    null,
+                    ValueFlowStep.Kind.PARAMETER_BIND,
+                    localName,
+                    parameterValue)));
+        }
+        return ResolvedValue.of(new ValueModel.LocalValue(localName, typeName(local)));
+    }
+
+    /**
+     * 匹配有限的 if/else 菱形，不承担通用控制流或数据流分析职责。
+     * 返回值按“使用点向定义点”的顺序排列；无法确认是同一二分支结果时返回 null。
+     */
+    private List<DefinitionSite> findBranchDefinitions(
+            int beforeIndex,
+            List<DefinitionSite> definitions) {
+
+        if (definitions.size() < 2) {
+            return null;
+        }
+
+        Map<Integer, DefinitionSite> definitionsByIndex = definitions.stream()
+                .collect(Collectors.toMap(
+                        DefinitionSite::index,
+                        definition -> definition,
+                        (left, right) -> left,
+                        LinkedHashMap::new));
+        int upperBound = Math.min(Math.max(beforeIndex, 0), statements.size());
+        BranchMatch best = null;
+        for (int index = 0; index < upperBound; index++) {
+            if (!(statements.get(index) instanceof JIfStmt)) {
+                continue;
+            }
+            if (isNestedIfEntry(index)) {
+                continue;
+            }
+
+            BranchMatch match = matchIfElse(
+                    index,
+                    upperBound,
+                    definitionsByIndex,
+                    0);
+            if (match == null) {
+                continue;
+            }
+            if (best == null
+                    || match.joinIndex() > best.joinIndex()
+                    || (match.joinIndex() == best.joinIndex()
+                    && match.definitions().size() > best.definitions().size())) {
+                best = match;
+            }
+        }
+
+        if (best == null
+                || best.definitions().size() < 2
+                || best.definitions().size() > MAX_BRANCH_DEFINITIONS) {
+            return null;
+        }
+        return best.definitions().stream()
+                .sorted(Comparator.comparingInt(DefinitionSite::index).reversed())
+                .toList();
+    }
+
+    private BranchMatch matchIfElse(
+            int ifIndex,
+            int upperBound,
+            Map<Integer, DefinitionSite> definitionsByIndex,
+            int nestingDepth) {
+
+        if (nestingDepth > MAX_BRANCH_NESTING
+                || ifIndex < 0
+                || ifIndex >= upperBound
+                || !(statements.get(ifIndex) instanceof JIfStmt ifStatement)) {
+            return null;
+        }
+
+        int targetIndex = branchTargetIndex(ifStatement);
+        if (targetIndex <= ifIndex || targetIndex >= upperBound) {
+            return null;
+        }
+
+        int gotoIndex = targetIndex - 1;
+        if (!(statements.get(gotoIndex) instanceof JGotoStmt gotoStatement)) {
+            return null;
+        }
+        int joinIndex = gotoTargetIndex(gotoStatement);
+        if (joinIndex <= targetIndex || joinIndex > upperBound) {
+            return null;
+        }
+        if (hasDefinitionAfter(joinIndex, upperBound, definitionsByIndex)) {
+            return null;
+        }
+        if (!isCommonJoin(gotoIndex, targetIndex, joinIndex)) {
+            return null;
+        }
+        if (hasBackwardEdge(ifIndex, upperBound)) {
+            return null;
+        }
+
+        ArmMatch fallThroughArm = matchBranchArm(
+                ifIndex + 1,
+                gotoIndex,
+                joinIndex,
+                definitionsByIndex,
+                nestingDepth);
+        ArmMatch targetArm = matchBranchArm(
+                targetIndex,
+                joinIndex,
+                joinIndex,
+                definitionsByIndex,
+                nestingDepth);
+        if (fallThroughArm == null || targetArm == null) {
+            return null;
+        }
+
+        List<DefinitionSite> branchDefinitions = new ArrayList<>();
+        branchDefinitions.addAll(fallThroughArm.definitions());
+        branchDefinitions.addAll(targetArm.definitions());
+        if (branchDefinitions.size() > MAX_BRANCH_DEFINITIONS) {
+            return null;
+        }
+        return new BranchMatch(branchDefinitions, joinIndex);
+    }
+
+    private ArmMatch matchBranchArm(
+            int startIndex,
+            int endIndex,
+            int expectedJoinIndex,
+            Map<Integer, DefinitionSite> definitionsByIndex,
+            int nestingDepth) {
+
+        if (startIndex >= endIndex || endIndex > statements.size()) {
+            return null;
+        }
+
+        List<DefinitionSite> definitions = definitionsByIndex.values().stream()
+                .filter(definition -> definition.index() >= startIndex && definition.index() < endIndex)
+                .toList();
+        boolean containsBranch = statements.subList(startIndex, endIndex).stream()
+                .anyMatch(statement -> statement instanceof BranchingStmt);
+        if (!containsBranch) {
+            return definitions.size() == 1 ? new ArmMatch(definitions) : null;
+        }
+
+        if (!(statements.get(startIndex) instanceof JIfStmt)) {
+            return null;
+        }
+        BranchMatch nested = matchIfElse(
+                startIndex,
+                endIndex,
+                definitionsByIndex,
+                nestingDepth + 1);
+        if (nested == null || nested.joinIndex() != expectedJoinIndex) {
+            return null;
+        }
+        Set<Integer> armDefinitionIndexes = definitions.stream()
+                .map(DefinitionSite::index)
+                .collect(Collectors.toSet());
+        Set<Integer> nestedDefinitionIndexes = nested.definitions().stream()
+                .map(DefinitionSite::index)
+                .collect(Collectors.toSet());
+        return armDefinitionIndexes.equals(nestedDefinitionIndexes)
+                ? new ArmMatch(nested.definitions())
+                : null;
+    }
+
+    private boolean hasDefinitionAfter(
+            int startIndex,
+            int endIndex,
+            Map<Integer, DefinitionSite> definitionsByIndex) {
+        return definitionsByIndex.keySet().stream()
+                .anyMatch(index -> index >= startIndex && index < endIndex);
+    }
+
+    private boolean hasBackwardEdge(int startIndex, int endIndex) {
+        int lowerBound = Math.max(startIndex, 0);
+        int upperBound = Math.min(endIndex, statements.size());
+        for (int index = lowerBound; index < upperBound; index++) {
+            if (!(statements.get(index) instanceof BranchingStmt branching)) {
+                continue;
+            }
+            try {
+                for (Stmt target : branching.getTargetStmts(method.getBody())) {
+                    int targetIndex = statements.indexOf(target);
+                    if (targetIndex >= 0 && targetIndex <= index) {
+                        return true;
+                    }
+                }
+            } catch (RuntimeException ignored) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isCommonJoin(int gotoIndex, int targetIndex, int joinIndex) {
+        if (joinIndex < 0 || joinIndex >= statements.size()) {
+            return false;
+        }
+        try {
+            Stmt gotoStatement = statements.get(gotoIndex);
+            Stmt joinStatement = statements.get(joinIndex);
+            List<Stmt> predecessors = method.getBody().getStmtGraph().predecessors(joinStatement);
+            boolean hasFallThroughPredecessor = predecessors.stream()
+                    .anyMatch(predecessor -> predecessor == gotoStatement);
+            boolean hasTargetPredecessor = predecessors.stream()
+                    .mapToInt(statements::indexOf)
+                    .anyMatch(index -> index >= targetIndex && index < joinIndex);
+            return hasFallThroughPredecessor && hasTargetPredecessor;
+        } catch (RuntimeException ignored) {
+            return false;
+        }
+    }
+
+    private boolean isNestedIfEntry(int ifIndex) {
+        for (int index = 0; index < ifIndex; index++) {
+            if (!(statements.get(index) instanceof JIfStmt ifStatement)) {
+                continue;
+            }
+            if (branchTargetIndex(ifStatement) == ifIndex) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private int branchTargetIndex(JIfStmt ifStatement) {
+        try {
+            List<Stmt> targets = ifStatement.getTargetStmts(method.getBody());
+            return targets.isEmpty() ? -1 : statements.indexOf(targets.getFirst());
+        } catch (RuntimeException ignored) {
+            return -1;
+        }
+    }
+
+    private int gotoTargetIndex(JGotoStmt gotoStatement) {
+        try {
+            List<Stmt> targets = gotoStatement.getTargetStmts(method.getBody());
+            return targets.isEmpty() ? -1 : statements.indexOf(targets.getFirst());
+        } catch (RuntimeException ignored) {
+            return -1;
+        }
+    }
+
+    /**
+     * 将同一变量的多个到达定义折叠为单一结果。
+     *
+     * <p>单一定义时保持原有语义（含数组/对象/StringBuilder 的定义后写补齐）；
+     * 多个定义时取每个定义的值模型构成 {@link ValueModel.MultiValue}，值流合并各定义的流步骤。
+     * 候选去重后仅剩一个等价定义时同样退化为单值，避免无意义的集合包装。</p>
+     */
+    private ResolvedValue withBranchAlternatives(
+            String name,
+            List<CandidateDefinition> candidates,
+            int beforeIndex,
+            Set<String> visitingLocals) {
+
+        if (candidates.size() == 1) {
+            CandidateDefinition only = candidates.getFirst();
+            return withWritesAfterDefinition(
+                    name,
+                    only.value(),
+                    only.definitionIndex(),
+                    beforeIndex,
+                    visitingLocals,
+                    only.flow());
+        }
+
+        // 候选按语句位置降序（回溯序已保证）排列；去重等价定义
+        List<ValueModel> alternatives = new ArrayList<>();
+        List<ValueFlowStep> mergedFlow = new ArrayList<>();
+        for (CandidateDefinition candidate : candidates) {
+            boolean duplicated = alternatives.stream()
+                    .anyMatch(existing -> existing.display().equals(candidate.value().display()));
+            if (!duplicated) {
+                alternatives.add(candidate.value());
+            }
+            mergedFlow.addAll(candidate.flow());
+        }
+
+        if (alternatives.size() == 1) {
+            CandidateDefinition representative = candidates.getFirst();
+            return withWritesAfterDefinition(
+                    name,
+                    alternatives.getFirst(),
+                    representative.definitionIndex(),
+                    beforeIndex,
+                    visitingLocals,
+                    mergedFlow);
+        }
+
+        return new ResolvedValue(
+                new ValueModel.MultiValue(alternatives),
+                mergedFlow);
+    }
+
+    /**
+     * 一个到达定义：值模型 + 该定义处的值流 + 定义语句位置。
+     */
+    private record CandidateDefinition(
+            ValueModel value,
+            List<ValueFlowStep> flow,
+            int definitionIndex) {
+    }
+
+    private record DefinitionSite(int index, JAssignStmt statement) {
+    }
+
+    private record ArmMatch(List<DefinitionSite> definitions) {
+
+        private ArmMatch {
+            definitions = List.copyOf(definitions);
+        }
+    }
+
+    private record BranchMatch(List<DefinitionSite> definitions, int joinIndex) {
+
+        private BranchMatch {
+            definitions = List.copyOf(definitions);
         }
     }
 

@@ -3,7 +3,6 @@ package cn.jnu.zhangcs.jsqlint.server.security;
 import cn.jnu.zhangcs.jsqlint.server.common.enums.Role;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -19,7 +18,6 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
-@Slf4j
 @Configuration
 @EnableWebSecurity
 @RequiredArgsConstructor
@@ -49,9 +47,13 @@ public class SecurityConfig implements WebMvcConfigurer {
             )
                 .exceptionHandling(ex -> ex
                         .authenticationEntryPoint((request, response, authException) -> {
-                            log.debug("=== AuthenticationEntryPoint ===");
-                            log.debug("Auth Exception: {}", authException.getMessage());
-                            response.sendError(HttpServletResponse.SC_FORBIDDEN, "Authentication required");
+                            // 未认证（token 缺失/过期）返回 401，与"已认证但无权限"的 403 区分，
+                            // 供前端据此清理会话并跳转登录页
+                            response.setStatus(HttpServletResponse.SC_UNAUTHORIZED);
+                            response.setContentType("application/json;charset=UTF-8");
+                            response.getWriter().write(
+                                    "{\"code\":401,\"message\":\"登录已失效，请重新登录\",\"path\":\""
+                                            + request.getRequestURI() + "\"}");
                         })
                 )
             .addFilterBefore(jwtAuthenticationFilter, UsernamePasswordAuthenticationFilter.class);

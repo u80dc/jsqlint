@@ -58,14 +58,16 @@
 
 <script setup lang="ts">
 import { reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { User, Lock } from '@element-plus/icons-vue'
 import type { FormInstance } from 'element-plus'
 import { useUserStore } from '@/stores/user'
 import { login } from '@/api/auth'
+import { resetSessionExpired } from '@/api/request'
 
 const router = useRouter()
+const route = useRoute()
 const userStore = useUserStore()
 const { t } = useI18n()
 
@@ -91,6 +93,7 @@ const handleLogin = async () => {
       loading.value = true
       try {
         const response = await login(loginForm)
+        resetSessionExpired()
         userStore.setToken(response.token)
         userStore.setUserInfo({
           id: response.id,
@@ -102,7 +105,9 @@ const handleLogin = async () => {
         if (rememberMe.value) {
           localStorage.setItem('remember_me', 'true')
         }
-        router.push('/dashboard')
+        // 会话失效被踢出时带 redirect 参数，登录后回到原页面
+        const redirect = route.query.redirect
+        router.push(typeof redirect === 'string' && redirect.startsWith('/') ? redirect : '/dashboard')
       } finally {
         loading.value = false
       }

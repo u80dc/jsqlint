@@ -51,6 +51,8 @@ public final class SqlExtractionSupport {
      * <p>
      * 仅处理应用类（{@link SootClass#isApplicationClass()}），遍历其每个方法的语句，
      * 借助 {@code targetMatcher} 判断调用是否为目标 SQL 调用点。
+     * 匹配到目标但 SQL 文本无法解析、或语句无法构造的调用点不会静默丢弃，
+     * 而是记入结果诊断，便于定位遗漏。
      * </p>
      *
      * @param context       共享分析上下文
@@ -62,12 +64,13 @@ public final class SqlExtractionSupport {
             Function<MethodSignature, Optional<SqlCallTarget>> targetMatcher) {
 
         List<SqlStatement> statements = new ArrayList<>();
+        List<String> diagnostics = new ArrayList<>();
         context.view()
                 .getClasses()
                 .filter(SootClass::isApplicationClass)
                 .forEach(clazz -> clazz.getMethods().forEach(method ->
-                        extractCallSites(method, targetMatcher, statements)));
-        return new SqlExtractionResult(statements, List.of());
+                        extractCallSites(method, targetMatcher, statements, diagnostics)));
+        return new SqlExtractionResult(statements, diagnostics);
     }
 
     /**
@@ -81,11 +84,13 @@ public final class SqlExtractionSupport {
      * @param method        当前方法
      * @param targetMatcher 方法签名到 SQL 调用目标的匹配器
      * @param statements    用于收集提取结果
+     * @param diagnostics   用于收集被跳过调用点的诊断
      */
     private static void extractCallSites(
             SootMethod method,
             Function<MethodSignature, Optional<SqlCallTarget>> targetMatcher,
-            List<SqlStatement> statements) {
+            List<SqlStatement> statements,
+            List<String> diagnostics) {
 
         if (!method.hasBody()) {
             return;
@@ -117,6 +122,8 @@ public final class SqlExtractionSupport {
                     target.sqlArgumentIndex(),
                     i);
             if (sqlValue.isEmpty()) {
+                diagnostics.add("跳过SQL调用点（SQL文本无法解析为字符串）: "
+                        + method.getSignature() + " @语句" + i);
                 continue;
             }
 
@@ -134,8 +141,23 @@ public final class SqlExtractionSupport {
                     boundParameters);
             if (statement != null) {
                 statements.add(statement);
+            } else {
+                diagnostics.add("跳过SQL调用点（无法识别SQL语句）: "
+                        + method.getSignature() + " @语句" + i
+                        + ": " + abbreviate(sqlValue.get().rawSql()));
             }
         }
+    }
+
+    /**
+     * 将 SQL 文本截断为单行短串，避免诊断信息过长。
+     */
+    private static String abbreviate(String sql) {
+        if (sql == null) {
+            return "";
+        }
+        String flattened = sql.replaceAll("\\s+", " ").trim();
+        return flattened.length() <= 80 ? flattened : flattened.substring(0, 80) + "...";
     }
 
     /**
