@@ -93,7 +93,7 @@ export default {
     analysisTime: '分析时间',
     actions: '操作',
     view: '查看',
-    noCurrentTasks: '暂无当前任务',
+    noCurrentTasks: '暂无任务',
     showMoreTasks: '展示更多（还有 {count} 条）',
     collapseTasks: '收起',
     noAnalysisRecords: '暂无分析记录',

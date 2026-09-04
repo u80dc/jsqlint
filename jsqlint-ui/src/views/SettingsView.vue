@@ -582,20 +582,72 @@ const testEmailConnection = () => {
   .settings-form {
     max-width: 760px;
 
-    .el-select {
+    // ===== 宽度纪律：同类控件同宽，右边缘对齐 =====
+    // 短值控件（下拉、数字）窄基准；文本输入中基准；多行文本全宽
+    .el-select,
+    .el-input-number {
       width: 200px;
     }
 
     .el-input {
-      max-width: 420px;
+      width: 320px;
     }
 
     .el-textarea {
-      max-width: 520px;
+      width: 520px;
     }
 
+    // ===== 控件形态：边框色/圆角/背景对齐全站主题变量 =====
+    :deep(.el-input__wrapper),
+    :deep(.el-select__wrapper),
+    :deep(.el-textarea__inner) {
+      border-radius: 8px;
+      background: var(--jsp-bg-card);
+      box-shadow: 0 0 0 1px var(--jsp-border-color) inset;
+      transition: box-shadow 0.15s ease;
+
+      &:hover:not(:focus-within) {
+        box-shadow: 0 0 0 1px color-mix(in srgb, var(--jsp-primary) 40%, var(--jsp-border-color)) inset;
+      }
+    }
+
+    // focus 光环：主色描边 + 柔和外扩（Element Plus 不在 wrapper 上加 is-focus 类，用 :focus-within）
+    :deep(.el-input__wrapper:focus-within),
+    :deep(.el-select__wrapper.is-focused),
+    :deep(.el-textarea__inner:focus) {
+      box-shadow: 0 0 0 1px var(--jsp-primary) inset,
+                  0 0 0 3px color-mix(in srgb, var(--jsp-primary) 15%, transparent) !important;
+    }
+
+    // 数字输入：容器圆角后修正右侧步进按钮的分隔线与圆角
     .el-input-number {
-      width: 180px;
+      :deep(.el-input__wrapper) {
+        border-radius: 8px 0 0 8px;
+      }
+
+      :deep(.el-input-number__increase),
+      :deep(.el-input-number__decrease) {
+        background: var(--jsp-bg-card);
+        border-color: var(--jsp-border-color);
+        color: var(--jsp-text-secondary);
+
+        &:hover {
+          color: var(--jsp-primary);
+        }
+      }
+
+      :deep(.el-input-number__increase) {
+        border-radius: 0 8px 0 0;
+      }
+
+      :deep(.el-input-number__decrease) {
+        border-radius: 0 0 8px 0;
+      }
+    }
+
+    // 标签色与正文层级拉开
+    :deep(.el-form-item__label) {
+      color: var(--jsp-text-secondary);
     }
 
     .smtp-grid {
@@ -608,7 +660,6 @@ const testEmailConnection = () => {
       .el-input,
       .el-input-number {
         width: 100%;
-        max-width: none;
       }
     }
 
@@ -618,19 +669,25 @@ const testEmailConnection = () => {
       color: var(--jsp-text-secondary);
     }
 
-    .form-tip {
-      display: block;
-      margin-top: 8px;
-      font-size: 12px;
-      color: $text-placeholder;
-      line-height: 1.5;
-    }
-
+    // 行内单位（分钟/天）：与控件同高垂直居中，紧随控件
     .inline-tip {
       display: inline-flex;
+      align-items: center;
+      height: 32px;
       margin-top: 0;
-      margin-left: 10px;
+      margin-left: 8px;
+      font-size: 12px;
+      color: var(--jsp-text-secondary);
       vertical-align: middle;
+    }
+
+    // 说明文字：固定放控件下方，小字号次要色
+    .form-tip {
+      display: block;
+      margin-top: 6px;
+      font-size: 12px;
+      color: var(--jsp-text-placeholder);
+      line-height: 1.5;
     }
 
     :deep(.el-divider) {
