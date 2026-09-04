@@ -4,6 +4,7 @@ import cn.jnu.zhangcs.jsqlint.server.common.enums.TaskStatus;
 import cn.jnu.zhangcs.jsqlint.server.common.enums.TaskType;
 import cn.jnu.zhangcs.jsqlint.server.entity.ScheduledTask;
 import cn.jnu.zhangcs.jsqlint.server.mapper.ScheduledTaskMapper;
+import cn.jnu.zhangcs.jsqlint.server.service.SystemConfigService;
 import cn.jnu.zhangcs.jsqlint.server.service.TaskService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
@@ -24,7 +25,14 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class TaskServiceImpl implements TaskService {
 
+    /**
+     * RUNNING 任务超时回收时限兜底值（分钟）：系统配置缺失或非法时使用。
+     */
+    private static final int DEFAULT_RUNNING_TASK_TIMEOUT_MINUTES = 60;
+
     private final ScheduledTaskMapper mapper;
+
+    private final SystemConfigService systemConfigService;
 
     @Override
     @Transactional
@@ -223,6 +231,44 @@ public class TaskServiceImpl implements TaskService {
                         TaskStatus.RETRYING.getCode())
                 .le(ScheduledTask::getNextExecTime, System.currentTimeMillis());
         return mapper.update(wrapper) > 0;
+    }
+
+    @Override
+    @Transactional
+    public int reclaimStuckRunningTasks() {
+        int timeoutMinutes = runningTaskTimeoutMinutes();
+        LocalDateTime deadline = LocalDateTime.now().minusMinutes(timeoutMinutes);
+        List<ScheduledTask> stuckTasks = mapper.selectList(new LambdaQueryWrapper<ScheduledTask>()
+                .eq(ScheduledTask::getStatus, TaskStatus.RUNNING.getCode())
+                .lt(ScheduledTask::getUpdateTime, deadline));
+        for (ScheduledTask task : stuckTasks) {
+            mapper.update(null, new LambdaUpdateWrapper<ScheduledTask>()
+                    .set(ScheduledTask::getStatus, TaskStatus.FAILED.getCode())
+                    .set(ScheduledTask::getErrorMessage, "任务执行超时回收: 超过"
+                            + timeoutMinutes + "分钟未更新")
+                    .set(ScheduledTask::getUpdateTime, LocalDateTime.now())
+                    .eq(ScheduledTask::getId, task.getId()));
+            log.warn("回收僵死RUNNING任务: taskId={}, projectId={}, type={}, lastUpdate={}",
+                    task.getId(), task.getProjectId(), task.getType(), task.getUpdateTime());
+        }
+        return stuckTasks.size();
+    }
+
+    /**
+     * 从系统设置读取回收时限；配置缺失或非法时回退默认值，保证回收链路不因配置问题中断。
+     */
+    private int runningTaskTimeoutMinutes() {
+        try {
+            Integer configured = systemConfigService.getSettings()
+                    .getProjectAnalysis()
+                    .getRunningTaskTimeoutMinutes();
+            if (configured != null && configured > 0) {
+                return configured;
+            }
+        } catch (Exception e) {
+            log.warn("读取任务超时配置失败，使用默认值{}分钟", DEFAULT_RUNNING_TASK_TIMEOUT_MINUTES, e);
+        }
+        return DEFAULT_RUNNING_TASK_TIMEOUT_MINUTES;
     }
 
     @Override

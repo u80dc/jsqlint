@@ -98,6 +98,11 @@ public class AnalysisServiceImpl implements AnalysisService {
     @Override
     public boolean execute(Long projectId, Long userId) {
         checkRole(projectId, userId);
+        // EXECUTE 串行执行完整流水线（同步→编译→分析→审核→报告），耗时长；
+        // 已有活跃 EXECUTE 时拒绝重复提交，避免总览页堆积多条执行中任务
+        if (taskService.hasRunningTask(projectId, TaskType.EXECUTE)) {
+            throw new BizException("项目任务执行中，请稍后再试");
+        }
         Long taskId = taskService.submit(projectId, userId, TaskType.EXECUTE, 0, 3);
         boolean submitted = taskId != null && taskId > 0;
         log.info("执行任务提交{}: projectId={}, userId={}, taskId={}",

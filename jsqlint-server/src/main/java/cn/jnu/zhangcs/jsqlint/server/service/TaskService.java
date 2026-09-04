@@ -102,6 +102,16 @@ public interface TaskService {
     boolean tryStart(@NonNull Long taskId);
 
     /**
+     * 回收长期停留在 RUNNING 的任务：updateTime 早于时限的任务被置为 FAILED。
+     *
+     * <p>进程重启或执行线程异常退出会把任务永久留在 RUNNING（tryStart 只认
+     * PENDING/RETRYING），该接口用于将这类僵死任务标记失败并释放。</p>
+     *
+     * @return 回收的任务数量
+     */
+    int reclaimStuckRunningTasks();
+
+    /**
      * 标记任务成功。
      */
     void markSuccess(@NonNull Long taskId, Long versionId, String codeDir);

@@ -522,6 +522,8 @@ export default {
       analysisTaskTimeoutMinutes: 'Analysis Task Timeout',
       compileTaskTimeoutMinutes: 'Compile Task Timeout',
       maxConcurrentTasks: 'Max Concurrent Tasks',
+      runningTaskTimeoutMinutes: 'Running Task Reclaim Timeout',
+      runningTaskTimeoutMinutesTip: 'Running tasks with no updates beyond this duration are marked failed, reclaiming tasks left by abnormal exits',
       reportGroup: 'Report & Permissions',
       reportRetentionCount: 'Report Retention Count',
       highRiskAlertEnabled: 'High-Risk Issue Alert',

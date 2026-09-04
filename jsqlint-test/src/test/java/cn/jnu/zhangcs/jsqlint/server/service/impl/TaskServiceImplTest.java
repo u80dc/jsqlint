@@ -4,6 +4,8 @@ import cn.jnu.zhangcs.jsqlint.server.common.enums.TaskStatus;
 import cn.jnu.zhangcs.jsqlint.server.common.enums.TaskType;
 import cn.jnu.zhangcs.jsqlint.server.entity.ScheduledTask;
 import cn.jnu.zhangcs.jsqlint.server.mapper.ScheduledTaskMapper;
+import cn.jnu.zhangcs.jsqlint.server.model.vo.SystemSettingsVO;
+import cn.jnu.zhangcs.jsqlint.server.service.SystemConfigService;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
 import com.baomidou.mybatisplus.core.metadata.TableInfoHelper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -42,6 +44,9 @@ class TaskServiceImplTest {
 
     @Mock
     private ScheduledTaskMapper mapper;
+
+    @Mock
+    private SystemConfigService systemConfigService;
 
     @InjectMocks
     private TaskServiceImpl taskService;
@@ -243,6 +248,53 @@ class TaskServiceImplTest {
 
         when(mapper.update(any())).thenReturn(0);
         assertThat(taskService.tryStart(30L)).isFalse();
+    }
+
+    @Test
+    void reclaimStuckRunningTasks_marksEachStuckTaskFailed() {
+        mockRunningTaskTimeoutMinutes(60);
+        ScheduledTask stuck1 = new ScheduledTask();
+        stuck1.setId(50L);
+        stuck1.setProjectId(1L);
+        ScheduledTask stuck2 = new ScheduledTask();
+        stuck2.setId(51L);
+        stuck2.setProjectId(2L);
+        when(mapper.selectList(any())).thenReturn(List.of(stuck1, stuck2));
+
+        int reclaimed = taskService.reclaimStuckRunningTasks();
+
+        assertThat(reclaimed).isEqualTo(2);
+        verify(mapper, org.mockito.Mockito.times(2)).update(any(), any());
+    }
+
+    @Test
+    void reclaimStuckRunningTasks_noStuckTask_noUpdate() {
+        mockRunningTaskTimeoutMinutes(60);
+        when(mapper.selectList(any())).thenReturn(List.of());
+
+        assertThat(taskService.reclaimStuckRunningTasks()).isZero();
+        verify(mapper, never()).update(any(), any());
+    }
+
+    @Test
+    void reclaimStuckRunningTasks_configMissing_fallsBackToDefaultAndStillReclaims() {
+        // 配置读取异常时回退默认时限，回收链路不中断
+        when(systemConfigService.getSettings()).thenThrow(new RuntimeException("db down"));
+        when(mapper.selectList(any())).thenReturn(List.of());
+
+        assertThat(taskService.reclaimStuckRunningTasks()).isZero();
+        verify(mapper, never()).update(any(), any());
+    }
+
+    private void mockRunningTaskTimeoutMinutes(int minutes) {
+        SystemSettingsVO.ProjectAnalysisSettings projectAnalysis =
+                SystemSettingsVO.ProjectAnalysisSettings.builder()
+                        .runningTaskTimeoutMinutes(minutes)
+                        .build();
+        SystemSettingsVO settings = SystemSettingsVO.builder()
+                .projectAnalysis(projectAnalysis)
+                .build();
+        when(systemConfigService.getSettings()).thenReturn(settings);
     }
 
     @Test

@@ -87,6 +87,10 @@ public class SystemSettingsDTO {
         @Max(value = 500, message = "报告保留数量不能大于500")
         private Integer reportRetentionCount = 20;
 
+        @Min(value = 5, message = "执行中任务超时回收时间不能小于5分钟")
+        @Max(value = 1440, message = "执行中任务超时回收时间不能大于1440分钟")
+        private Integer runningTaskTimeoutMinutes = 60;
+
         private Boolean highRiskAlertEnabled = true;
 
         private Boolean allowNormalUserCreateProject = true;

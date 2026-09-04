@@ -165,6 +165,7 @@ class AnalysisServiceImplTest {
     @Test
     void execute_taskSubmitted_returnsTrue() {
         mockAdmin();
+        when(taskService.hasRunningTask(1L, TaskType.EXECUTE)).thenReturn(false);
         when(taskService.submit(1L, 10L, TaskType.EXECUTE, 0, 3)).thenReturn(35L);
         assertThat(analysisService.execute(1L, 10L)).isTrue();
     }
@@ -172,7 +173,19 @@ class AnalysisServiceImplTest {
     @Test
     void execute_negativeTaskId_returnsFalse() {
         mockAdmin();
+        when(taskService.hasRunningTask(1L, TaskType.EXECUTE)).thenReturn(false);
         when(taskService.submit(1L, 10L, TaskType.EXECUTE, 0, 3)).thenReturn(-1L);
         assertThat(analysisService.execute(1L, 10L)).isFalse();
+    }
+
+    @Test
+    void execute_activeExecuteTaskExists_throwsException() {
+        mockAdmin();
+        when(taskService.hasRunningTask(1L, TaskType.EXECUTE)).thenReturn(true);
+
+        assertThatThrownBy(() -> analysisService.execute(1L, 10L))
+                .isInstanceOf(BizException.class)
+                .hasMessage("项目任务执行中，请稍后再试");
+        verify(taskService, never()).submit(1L, 10L, TaskType.EXECUTE, 0, 3);
     }
 }

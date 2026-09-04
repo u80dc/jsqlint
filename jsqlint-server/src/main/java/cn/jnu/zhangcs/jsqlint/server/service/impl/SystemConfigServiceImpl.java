@@ -69,6 +69,7 @@ public class SystemConfigServiceImpl implements SystemConfigService {
         upsert(existingConfigs, ConfigItem.COMPILE_TASK_TIMEOUT_MINUTES, integerValue(projectAnalysis.getCompileTaskTimeoutMinutes(), ConfigItem.COMPILE_TASK_TIMEOUT_MINUTES), operatorId);
         upsert(existingConfigs, ConfigItem.MAX_CONCURRENT_TASKS, integerValue(projectAnalysis.getMaxConcurrentTasks(), ConfigItem.MAX_CONCURRENT_TASKS), operatorId);
         upsert(existingConfigs, ConfigItem.REPORT_RETENTION_COUNT, integerValue(projectAnalysis.getReportRetentionCount(), ConfigItem.REPORT_RETENTION_COUNT), operatorId);
+        upsert(existingConfigs, ConfigItem.RUNNING_TASK_TIMEOUT_MINUTES, integerValue(projectAnalysis.getRunningTaskTimeoutMinutes(), ConfigItem.RUNNING_TASK_TIMEOUT_MINUTES), operatorId);
         upsert(existingConfigs, ConfigItem.HIGH_RISK_ALERT_ENABLED, booleanValue(projectAnalysis.getHighRiskAlertEnabled(), ConfigItem.HIGH_RISK_ALERT_ENABLED), operatorId);
         upsert(existingConfigs, ConfigItem.ALLOW_NORMAL_USER_CREATE_PROJECT, booleanValue(projectAnalysis.getAllowNormalUserCreateProject(), ConfigItem.ALLOW_NORMAL_USER_CREATE_PROJECT), operatorId);
 
@@ -119,6 +120,7 @@ public class SystemConfigServiceImpl implements SystemConfigService {
                         .compileTaskTimeoutMinutes(getInteger(configs, ConfigItem.COMPILE_TASK_TIMEOUT_MINUTES))
                         .maxConcurrentTasks(getInteger(configs, ConfigItem.MAX_CONCURRENT_TASKS))
                         .reportRetentionCount(getInteger(configs, ConfigItem.REPORT_RETENTION_COUNT))
+                        .runningTaskTimeoutMinutes(getInteger(configs, ConfigItem.RUNNING_TASK_TIMEOUT_MINUTES))
                         .highRiskAlertEnabled(getBoolean(configs, ConfigItem.HIGH_RISK_ALERT_ENABLED))
                         .allowNormalUserCreateProject(getBoolean(configs, ConfigItem.ALLOW_NORMAL_USER_CREATE_PROJECT))
                         .build())
@@ -272,6 +274,7 @@ public class SystemConfigServiceImpl implements SystemConfigService {
         COMPILE_TASK_TIMEOUT_MINUTES("project_analysis", "compileTaskTimeoutMinutes", "INTEGER", "30", "编译任务超时时间，单位分钟"),
         MAX_CONCURRENT_TASKS("project_analysis", "maxConcurrentTasks", "INTEGER", "4", "最大并发任务数"),
         REPORT_RETENTION_COUNT("project_analysis", "reportRetentionCount", "INTEGER", "20", "报告保留数量"),
+        RUNNING_TASK_TIMEOUT_MINUTES("project_analysis", "runningTaskTimeoutMinutes", "INTEGER", "60", "执行中任务超时回收时间，单位分钟"),
         HIGH_RISK_ALERT_ENABLED("project_analysis", "highRiskAlertEnabled", "BOOLEAN", "true", "是否启用高危问题告警"),
         ALLOW_NORMAL_USER_CREATE_PROJECT("project_analysis", "allowNormalUserCreateProject", "BOOLEAN", "true", "是否允许普通用户创建项目"),
 

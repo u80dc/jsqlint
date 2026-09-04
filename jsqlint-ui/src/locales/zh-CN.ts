@@ -521,6 +521,8 @@ export default {
       analysisTaskTimeoutMinutes: '分析任务超时时间',
       compileTaskTimeoutMinutes: '编译任务超时时间',
       maxConcurrentTasks: '最大并发任务数',
+      runningTaskTimeoutMinutes: '执行中任务超时回收',
+      runningTaskTimeoutMinutesTip: '执行中任务超过该时长未更新则置为失败，用于回收异常遗留任务',
       reportGroup: '报告与权限',
       reportRetentionCount: '报告保留数量',
       highRiskAlertEnabled: '启用高危问题告警',

@@ -73,6 +73,8 @@ public class SystemSettingsVO {
 
         private Integer reportRetentionCount;
 
+        private Integer runningTaskTimeoutMinutes;
+
         private Boolean highRiskAlertEnabled;
 
         private Boolean allowNormalUserCreateProject;

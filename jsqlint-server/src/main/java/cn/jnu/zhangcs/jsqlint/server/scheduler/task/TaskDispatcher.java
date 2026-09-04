@@ -67,6 +67,22 @@ public class TaskDispatcher {
         }
     }
 
+    /**
+     * 周期回收僵死 RUNNING 任务（进程重启/执行线程异常退出后遗留）。
+     * 时限远大于正常任务时长，独立于 poll 低频执行，避免每次轮询都额外扫描。
+     */
+    @Scheduled(fixedDelay = 300_000, initialDelay = 300_000)
+    public void reclaimStuckTasks() {
+        try {
+            int reclaimed = taskService.reclaimStuckRunningTasks();
+            if (reclaimed > 0) {
+                log.warn("回收僵死RUNNING任务{}个", reclaimed);
+            }
+        } catch (Exception e) {
+            log.error("回收僵死RUNNING任务失败", e);
+        }
+    }
+
     private void execute(ScheduledTask task, TaskHandler handler) {
         try {
             TaskResult result = handler.execute(task);

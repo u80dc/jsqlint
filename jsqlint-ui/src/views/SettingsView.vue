@@ -210,6 +210,17 @@
               />
             </el-form-item>
 
+            <el-form-item :label="t('settings.project.runningTaskTimeoutMinutes')">
+              <el-input-number
+                v-model="projectSettings.runningTaskTimeoutMinutes"
+                :min="5"
+                :max="1440"
+                controls-position="right"
+              />
+              <span class="form-tip inline-tip">{{ t('settings.project.unitMinute') }}</span>
+              <span class="form-tip">{{ t('settings.project.runningTaskTimeoutMinutesTip') }}</span>
+            </el-form-item>
+
             <el-divider content-position="left">{{ t('settings.project.reportGroup') }}</el-divider>
 
             <el-form-item :label="t('settings.project.reportRetentionCount')">
@@ -276,7 +287,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { useI18n } from 'vue-i18n'
 import { useTheme } from '@/composables/useTheme'
 import { usePlatformName } from '@/composables/usePlatformName'
-import { saveSystemSettings } from '@/api/systemConfig'
+import { saveSystemSettings, getSystemSettings } from '@/api/systemConfig'
 
 const { locale, t } = useI18n()
 
@@ -337,6 +348,7 @@ const projectSettings = reactive({
   compileTaskTimeoutMinutes: 30,
   maxConcurrentTasks: 4,
   reportRetentionCount: 20,
+  runningTaskTimeoutMinutes: 60,
   highRiskAlertEnabled: true,
   allowNormalUserCreateProject: true
 })
@@ -376,25 +388,91 @@ const saveBasicSettings = async () => {
 }
 
 // ============================================
-// 自动保存：配置变更后防抖落库（TODO: 接入各配置保存 API）
+// 自动保存：配置变更后防抖落库
 // basicSettings 只含语言，由下方专用 watch 即时处理，不参与防抖
+// 初始化回填（loadAllSettings）会触发深度 watch，须在回填完成前跳过保存
 // ============================================
 let autoSaveTimer: ReturnType<typeof setTimeout> | null = null
+let settingsHydrated = false
 
 watch(
   [messageNotificationSettings, projectSettings, logSettings],
   () => {
+    if (!settingsHydrated) {
+      return
+    }
     if (autoSaveTimer) {
       clearTimeout(autoSaveTimer)
     }
     autoSaveTimer = setTimeout(() => {
-      // TODO: 调用保存各配置的 API
-      ElMessage.success(t('settings.autoSaved'))
+      saveAllSettings()
       autoSaveTimer = null
     }, 600)
   },
   { deep: true }
 )
+
+const saveAllSettings = async () => {
+  try {
+    await saveSystemSettings({
+      messageNotification: { ...messageNotificationSettings },
+      projectAnalysis: { ...projectSettings },
+      operationLog: { ...logSettings }
+    })
+    ElMessage.success(t('settings.autoSaved'))
+  } catch {
+    // 保存失败静默，等下次变更重试
+  }
+}
+
+const loadAllSettings = async () => {
+  try {
+    const settings = await getSystemSettings()
+    if (settings.projectAnalysis) {
+      const pa = settings.projectAnalysis
+      projectSettings.analysisTaskTimeoutMinutes = pa.analysisTaskTimeoutMinutes ?? 60
+      projectSettings.compileTaskTimeoutMinutes = pa.compileTaskTimeoutMinutes ?? 30
+      projectSettings.maxConcurrentTasks = pa.maxConcurrentTasks ?? 4
+      projectSettings.reportRetentionCount = pa.reportRetentionCount ?? 20
+      projectSettings.runningTaskTimeoutMinutes = pa.runningTaskTimeoutMinutes ?? 60
+      projectSettings.highRiskAlertEnabled = pa.highRiskAlertEnabled ?? true
+      projectSettings.allowNormalUserCreateProject = pa.allowNormalUserCreateProject ?? true
+    }
+    if (settings.messageNotification) {
+      const mn = settings.messageNotification
+      messageNotificationSettings.notifyNewProject = mn.notifyNewProject ?? true
+      messageNotificationSettings.notifyRemoveProject = mn.notifyRemoveProject ?? true
+      messageNotificationSettings.notifyAuditComplete = mn.notifyAuditComplete ?? true
+      messageNotificationSettings.notifyHighRiskSql = mn.notifyHighRiskSql ?? true
+      messageNotificationSettings.emailEnabled = mn.emailEnabled ?? true
+      messageNotificationSettings.host = mn.host ?? ''
+      messageNotificationSettings.port = mn.port ?? 465
+      messageNotificationSettings.useSsl = mn.useSsl ?? true
+      messageNotificationSettings.senderEmail = mn.senderEmail ?? ''
+      messageNotificationSettings.senderName = mn.senderName ?? defaultSenderName.value
+      messageNotificationSettings.username = mn.username ?? ''
+      messageNotificationSettings.password = mn.password ?? ''
+      messageNotificationSettings.notificationTemplate = mn.notificationTemplate ?? defaultNotificationTemplate.value
+      messageNotificationSettings.recipientRules = Array.isArray(mn.recipientRules) ? mn.recipientRules as string[] : ['PROJECT_CREATOR', 'PROJECT_ADMINS']
+    }
+    if (settings.operationLog) {
+      const ol = settings.operationLog
+      logSettings.operationLogRetentionDays = ol.operationLogRetentionDays ?? 180
+      logSettings.operationLogEnabled = ol.operationLogEnabled ?? true
+      logSettings.loginLogEnabled = ol.loginLogEnabled ?? true
+      logSettings.auditExportEnabled = ol.auditExportEnabled ?? true
+    }
+  } catch {
+    // 读取失败保持默认值，仍允许后续手动变更触发保存
+  } finally {
+    // 等 watch 回调（同步 flush）跳过后再启用自动保存
+    setTimeout(() => {
+      settingsHydrated = true
+    }, 0)
+  }
+}
+
+loadAllSettings()
 
 // 语言切换需要即时生效（含刷新提示），单独立即触发不走防抖
 watch(() => basicSettings.language, () => {
