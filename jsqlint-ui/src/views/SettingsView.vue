@@ -53,14 +53,6 @@
               <span class="form-tip">{{ t('settings.basic.platformNameTip') }}</span>
             </el-form-item>
           </el-form>
-
-          <!-- 版本信息 -->
-          <el-divider content-position="left">{{ t('settings.basic.aboutGroup') }}</el-divider>
-          <el-descriptions :column="1" border class="about-desc">
-            <el-descriptions-item :label="t('settings.basic.version')">{{ appVersion }}</el-descriptions-item>
-            <el-descriptions-item :label="t('settings.basic.backendUrl')">{{ backendUrl }}</el-descriptions-item>
-            <el-descriptions-item :label="t('settings.basic.license')">MIT</el-descriptions-item>
-          </el-descriptions>
         </el-tab-pane>
 
         <!-- 消息与通知 -->
@@ -278,6 +270,15 @@
 
       </el-tabs>
     </el-card>
+
+    <!-- 版本信息：面板外的页面底部 -->
+    <footer class="about-footer">
+      <span>{{ appVersion }}</span>
+      <span class="footer-sep">·</span>
+      <span>{{ t('settings.basic.backendUrl') }}: {{ backendUrl }}</span>
+      <span class="footer-sep">·</span>
+      <span>MIT</span>
+    </footer>
   </div>
 </template>
 
@@ -526,6 +527,15 @@ const testEmailConnection = () => {
 
 <style lang="scss" scoped>
 .settings {
+  // 拉满 main-content 高度，footer 才能贴住视口底部
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+
+  .el-card {
+    flex: 1;
+  }
+
   .settings-tabs {
     // 左侧竖向标签：固定宽度导航列 + 右侧内容
     :deep(.el-tabs__header) {
@@ -642,13 +652,18 @@ const testEmailConnection = () => {
     gap: 12px;
   }
 
-  // 版本信息表与表单视觉同宽，不独占整行
-  .about-desc {
-    max-width: 560px;
-    margin-top: 8px;
+  // 版本信息：贴住视口底部
+  .about-footer {
+    margin-top: auto;
+    padding: 12px 0;
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--jsp-text-secondary);
 
-    :deep(.el-descriptions__label) {
-      width: 120px;
+    .footer-sep {
+      opacity: 0.6;
     }
   }
 }
