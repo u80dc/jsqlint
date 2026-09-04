@@ -97,9 +97,12 @@ class CredentialServiceImplTest {
     }
 
     @Test
-    void listCredentials_delegatesToMapper() {
+    void listCredentials_delegatesToPagedQuery() {
         List<Credential> list = List.of(new Credential());
-        when(credentialMapper.selectList(any())).thenReturn(list);
+        com.baomidou.mybatisplus.extension.plugins.pagination.Page<Credential> page =
+                new com.baomidou.mybatisplus.extension.plugins.pagination.Page<>(1, Integer.MAX_VALUE);
+        page.setRecords(list);
+        when(credentialMapper.selectPage(any(), any())).thenReturn(page);
 
         assertThat(credentialService.listCredentials(1)).isSameAs(list);
     }

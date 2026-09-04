@@ -145,9 +145,12 @@ class MavenRepositoryServiceImplTest {
     }
 
     @Test
-    void list_delegatesToMapper() {
+    void list_delegatesToPagedQuery() {
         List<MavenRepository> list = List.of(new MavenRepository());
-        when(repositoryMapper.selectList(any())).thenReturn(list);
+        com.baomidou.mybatisplus.extension.plugins.pagination.Page<MavenRepository> page =
+                new com.baomidou.mybatisplus.extension.plugins.pagination.Page<>(1, Integer.MAX_VALUE);
+        page.setRecords(list);
+        when(repositoryMapper.selectPage(any(), any())).thenReturn(page);
 
         assertThat(repositoryService.list(1)).isSameAs(list);
     }

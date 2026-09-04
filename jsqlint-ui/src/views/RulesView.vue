@@ -1,6 +1,6 @@
 <template>
   <div class="rules">
-    <el-card>
+    <el-card class="rules-card">
       <div class="filter-toolbar">
         <el-form :inline="true" class="filter-form">
           <el-form-item :label="t('rules.name')">
@@ -32,7 +32,7 @@
         </div>
       </div>
 
-      <el-table :data="ruleList" v-loading="loading" stripe>
+      <el-table :data="ruleList" v-loading="loading" stripe class="rules-table" height="100%">
         <el-table-column prop="name" :label="t('rules.name')" min-width="150" show-overflow-tooltip />
         <el-table-column prop="code" :label="t('rules.code')" min-width="120" />
         <el-table-column prop="categoryDescription" :label="t('rules.category')" width="100" align="center" />
@@ -342,8 +342,39 @@ onMounted(() => {
 </script>
 
 <style lang="scss" scoped>
+// 拉满 main-content 高度：卡片占满、工具条/分页固定高、表格弹性填充剩余空间
 .rules {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+
+  .rules-card {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+
+    // 卡片 body 与内容列同向拉伸
+    :deep(.el-card__body) {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+  }
+
+  .filter-toolbar {
+    flex-shrink: 0;
+    margin-bottom: 12px;
+  }
+
+  .rules-table {
+    flex: 1;
+    min-height: 0;
+  }
+
   .pagination {
+    flex-shrink: 0;
     display: flex;
     justify-content: flex-end;
     padding: 16px 0 0;

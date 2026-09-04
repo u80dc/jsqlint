@@ -158,28 +158,38 @@ class MavenRepositoryControllerTest {
     void list_withType_returnsRepositoriesFilteredByType() throws Exception {
         MavenRepository privateRepo = buildRepository(2L, "private", "私有仓库");
         privateRepo.setType(1);
-        when(repositoryService.getByType(1, 1)).thenReturn(List.of(privateRepo));
+        when(repositoryService.getRepositoryPage(1, 1, 1, 10)).thenReturn(pageOf(List.of(privateRepo), 1));
 
         mockMvc.perform(get("/api/maven-repositories")
                         .param("type", "1")
                         .param("status", "1"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(1))
-                .andExpect(jsonPath("$[0].id").value(2))
-                .andExpect(jsonPath("$[0].repoId").value("private"))
-                .andExpect(jsonPath("$[0].type").value(1));
+                .andExpect(jsonPath("$.total").value(1))
+                .andExpect(jsonPath("$.list.length()").value(1))
+                .andExpect(jsonPath("$.list[0].id").value(2))
+                .andExpect(jsonPath("$.list[0].repoId").value("private"))
+                .andExpect(jsonPath("$.list[0].type").value(1));
     }
 
     @Test
     void list_withoutType_returnsAllRepositories() throws Exception {
-        when(repositoryService.list(null))
-                .thenReturn(List.of(
+        when(repositoryService.getRepositoryPage(null, null, 1, 10))
+                .thenReturn(pageOf(List.of(
                         buildRepository(1L, "central", "中央仓库"),
-                        buildRepository(2L, "private", "私有仓库")));
+                        buildRepository(2L, "private", "私有仓库")), 2));
 
         mockMvc.perform(get("/api/maven-repositories"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(2));
+                .andExpect(jsonPath("$.total").value(2))
+                .andExpect(jsonPath("$.list.length()").value(2));
+    }
+
+    private <T> com.baomidou.mybatisplus.extension.plugins.pagination.Page<T> pageOf(List<T> records, long total) {
+        com.baomidou.mybatisplus.extension.plugins.pagination.Page<T> page =
+                new com.baomidou.mybatisplus.extension.plugins.pagination.Page<>(1, 10);
+        page.setRecords(records);
+        page.setTotal(total);
+        return page;
     }
 
     /**

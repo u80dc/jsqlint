@@ -19,7 +19,7 @@
         </el-button>
       </div>
 
-      <el-table :data="groups" v-loading="loading" stripe>
+      <el-table :data="groups" v-loading="loading" stripe class="list-table" height="100%">
         <el-table-column prop="name" :label="t('groups.name')" width="150" />
         <el-table-column prop="description" :label="t('groups.description')" min-width="200" />
         <el-table-column prop="creatorName" :label="t('groups.creator')" width="100" />
@@ -192,15 +192,42 @@ onMounted(() => {
 </script>
 
 <style lang="scss" scoped>
+// 满高布局：根拉满，面板占满（独立模式为 el-card，嵌入模式为 div），
+// 表格弹性填充剩余空间（内部滚动）。
+// 嵌入模式下高度链由父容器（UsersView 的 tab 链）提供。
 .groups {
-  .card-header {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
 
-    &--embedded {
-      margin-bottom: 16px;
-    }
+.groups-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+
+  :deep(.el-card__body) {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
   }
+}
+
+.card-header {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+
+  &--embedded {
+    margin-bottom: 16px;
+  }
+}
+
+.list-table {
+  flex: 1;
+  min-height: 0;
 }
 </style>

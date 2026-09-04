@@ -59,6 +59,7 @@
           :data="projects"
           stripe
           row-class-name="clickable-row"
+          height="100%"
           @row-dblclick="handleView"
         >
           <el-table-column width="70" align="center" label="S">

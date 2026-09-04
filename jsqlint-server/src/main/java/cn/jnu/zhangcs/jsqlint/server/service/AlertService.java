@@ -5,6 +5,7 @@ import cn.jnu.zhangcs.jsqlint.server.entity.AlertRule;
 import cn.jnu.zhangcs.jsqlint.server.entity.ScheduledTask;
 import cn.jnu.zhangcs.jsqlint.server.model.dto.AlertRuleDTO;
 import cn.jnu.zhangcs.jsqlint.server.model.dto.AlertRuleUpdateDTO;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 
 import java.util.List;
 
@@ -25,6 +26,18 @@ public interface AlertService {
      * @return 告警规则列表
      */
     List<AlertRule> getRules(Long projectId, String ruleType, Boolean enabled);
+
+    /**
+     * 分页查询告警规则列表
+     *
+     * @param projectId 项目ID（可选，为空表示全局）
+     * @param ruleType 规则类型（可选）
+     * @param enabled  是否启用（可选）
+     * @param page     页码，从 1 开始
+     * @param pageSize 每页数量
+     * @return 分页结果（records + total）
+     */
+    Page<AlertRule> getRulePage(Long projectId, String ruleType, Boolean enabled, int page, int pageSize);
 
     /**
      * 创建告警规则
@@ -61,6 +74,14 @@ public interface AlertService {
     AlertRule toggleRule(Long id, boolean enabled);
 
     /**
+     * 按ID查询告警规则
+     *
+     * @param id 规则ID
+     * @return 告警规则，不存在返回 null
+     */
+    AlertRule getRuleById(Long id);
+
+    /**
      * 查询告警实例列表
      *
      * @param projectId 项目ID（可选）
@@ -69,6 +90,18 @@ public interface AlertService {
      * @return 告警实例列表
      */
     List<AlertInstance> getInstances(Long projectId, String severity, String status);
+
+    /**
+     * 分页查询告警实例列表
+     *
+     * @param projectId 项目ID（可选）
+     * @param severity  告警级别（可选）
+     * @param status    告警状态（可选）
+     * @param page      页码，从 1 开始
+     * @param pageSize  每页数量
+     * @return 分页结果（records + total）
+     */
+    Page<AlertInstance> getInstancePage(Long projectId, String severity, String status, int page, int pageSize);
 
     /**
      * 更新告警实例状态（如确认 ACKED、解决 RESOLVED 等）

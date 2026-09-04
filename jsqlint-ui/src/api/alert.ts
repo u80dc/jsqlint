@@ -49,16 +49,30 @@ export interface AlertRuleListParams {
   projectId?: number
   ruleType?: string
   enabled?: boolean
+  page?: number
+  pageSize?: number
 }
 
 export interface AlertInstanceListParams {
   projectId?: number
   severity?: string
   status?: string
+  page?: number
+  pageSize?: number
 }
 
-export const listAlertRules = (params?: AlertRuleListParams): Promise<AlertRuleVO[]> => {
-  return request.get<AlertRuleVO[]>('/api/alerts/rules', { params })
+export interface AlertRulePageVO {
+  list: AlertRuleVO[]
+  total: number
+}
+
+export interface AlertInstancePageVO {
+  list: AlertInstanceVO[]
+  total: number
+}
+
+export const listAlertRules = (params?: AlertRuleListParams): Promise<AlertRulePageVO> => {
+  return request.get<AlertRulePageVO>('/api/alerts/rules', { params })
 }
 
 export const createAlertRule = (data: AlertRuleDTO): Promise<AlertRuleVO> => {
@@ -77,8 +91,8 @@ export const toggleAlertRule = (id: number, enabled: boolean): Promise<AlertRule
   return request.put<AlertRuleVO>(`/api/alerts/rules/${id}/toggle`, { enabled })
 }
 
-export const listAlertInstances = (params?: AlertInstanceListParams): Promise<AlertInstanceVO[]> => {
-  return request.get<AlertInstanceVO[]>('/api/alerts', { params })
+export const listAlertInstances = (params?: AlertInstanceListParams): Promise<AlertInstancePageVO> => {
+  return request.get<AlertInstancePageVO>('/api/alerts', { params })
 }
 
 export const updateAlertStatus = (id: number, status: string): Promise<void> => {

@@ -139,7 +139,10 @@ export const updateProject = (id: number, data: ProjectCreateDTO): Promise<Proje
 }
 
 export const getCredentials = (): Promise<CredentialVO[]> => {
-  return request.get<CredentialVO[]>('/api/credentials')
+  // 项目页凭证下拉需要全量，取大单页；后端分页拦截器限制单页上限 200
+  return request.get<{ list: CredentialVO[]; total: number }>('/api/credentials', {
+    params: { page: 1, pageSize: 200 }
+  }).then(result => result.list)
 }
 
 export const getProjectCredentials = (): Promise<CredentialVO[]> => {

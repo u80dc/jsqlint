@@ -1,6 +1,6 @@
 <template>
   <div class="inspection">
-    <el-card>
+    <el-card class="list-card">
       <div class="filter-toolbar">
         <div class="toolbar-actions">
           <el-button type="primary" :icon="Plus" @click="openCreateDialog">{{ t('inspection.addConfig') }}</el-button>
@@ -13,7 +13,7 @@
         </div>
       </div>
 
-      <el-table :data="pagedConfigs" v-loading="loading" stripe>
+      <el-table :data="pagedConfigs" v-loading="loading" stripe class="list-table" height="100%">
         <el-table-column prop="projectName" :label="t('inspection.project')" min-width="160" show-overflow-tooltip>
           <template #default="{ row }">
             {{ row.projectName || projectName(row.projectId) }}
@@ -354,7 +354,39 @@ onMounted(loadData)
 </script>
 
 <style lang="scss" scoped>
+// 满高布局：根拉满内容区高度，卡片占满，表格弹性填充剩余空间（内部滚动）
+.list-card {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+
+  :deep(.el-card__body) {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+}
+
+.list-table {
+  flex: 1;
+  min-height: 0;
+}
+
+.filter-toolbar {
+  flex-shrink: 0;
+}
+
+.pagination {
+  flex-shrink: 0;
+}
+
 .inspection {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+
   // 本页工具栏只剩按钮与统计文字，去掉全局 filter-toolbar 的灰底与边框
   .filter-toolbar {
     padding: 0;

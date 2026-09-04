@@ -146,6 +146,12 @@ public class UserServiceImpl implements UserService {
 
     @Override
     public @NonNull List<User> getUserList(String account, String username, String phone, String email, Integer status) {
+        return getUserPage(account, username, phone, email, status, 1, Integer.MAX_VALUE).getRecords();
+    }
+
+    @Override
+    public @NonNull Page<User> getUserPage(
+            String account, String username, String phone, String email, Integer status, int page, int pageSize) {
         LambdaQueryWrapper<User> query = new LambdaQueryWrapper<>();
         // 已删除用户（status=-1）不在管理列表展示；除非显式按 -1 查询
         if (status == null || status != -1) {
@@ -167,7 +173,7 @@ public class UserServiceImpl implements UserService {
             query.eq(User::getStatus, status);
         }
         query.orderByDesc(User::getCreateTime);
-        return mapper.selectList(query);
+        return mapper.selectPage(new Page<>(page, pageSize), query);
     }
 
     @Override

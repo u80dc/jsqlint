@@ -9,6 +9,7 @@ import cn.jnu.zhangcs.jsqlint.server.model.dto.UserCreateDTO;
 import cn.jnu.zhangcs.jsqlint.server.model.vo.UserVO;
 import cn.jnu.zhangcs.jsqlint.server.service.UserGroupService;
 import cn.jnu.zhangcs.jsqlint.server.service.UserService;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -165,10 +166,13 @@ class AdminUserControllerTest {
     }
 
     @Test
-    void listUsers_withFilters_returnsGroupedVOList() throws Exception {
+    void listUsers_withFilters_returnsPagedGroupedVOList() throws Exception {
         User tom = user(2L, "tom");
         UserVO tomVO = UserVO.builder().id(2L).username("tom").realName("汤姆").status(1).build();
-        when(userService.getUserList("tom", null, null, null, 1)).thenReturn(List.of(tom));
+        Page<User> page = new Page<>(1, 10);
+        page.setRecords(List.of(tom));
+        page.setTotal(1);
+        when(userService.getUserPage("tom", null, null, null, 1, 1, 10)).thenReturn(page);
         when(converter.toUserVO(tom)).thenReturn(tomVO);
 
         UserGroup group = new UserGroup();
@@ -178,16 +182,34 @@ class AdminUserControllerTest {
 
         mockMvc.perform(get("/api/admin/users")
                         .param("username", "tom")
-                        .param("status", "1"))
+                        .param("status", "1")
+                        .param("page", "1")
+                        .param("pageSize", "10"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(1))
-                .andExpect(jsonPath("$[0].id").value(2))
-                .andExpect(jsonPath("$[0].username").value("tom"))
-                .andExpect(jsonPath("$[0].groups.length()").value(1))
-                .andExpect(jsonPath("$[0].groups[0].id").value(5))
-                .andExpect(jsonPath("$[0].groups[0].name").value("研发组"));
+                .andExpect(jsonPath("$.total").value(1))
+                .andExpect(jsonPath("$.list.length()").value(1))
+                .andExpect(jsonPath("$.list[0].id").value(2))
+                .andExpect(jsonPath("$.list[0].username").value("tom"))
+                .andExpect(jsonPath("$.list[0].groups.length()").value(1))
+                .andExpect(jsonPath("$.list[0].groups[0].id").value(5))
+                .andExpect(jsonPath("$.list[0].groups[0].name").value("研发组"));
 
-        verify(userService).getUserList("tom", null, null, null, 1);
+        verify(userService).getUserPage("tom", null, null, null, 1, 1, 10);
+    }
+
+    @Test
+    void listUsers_defaultPaging_appliesDefaults() throws Exception {
+        Page<User> page = new Page<>(1, 10);
+        page.setRecords(List.of());
+        page.setTotal(0);
+        when(userService.getUserPage(null, null, null, null, null, 1, 10)).thenReturn(page);
+
+        mockMvc.perform(get("/api/admin/users"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.total").value(0))
+                .andExpect(jsonPath("$.list.length()").value(0));
+
+        verify(userService).getUserPage(null, null, null, null, null, 1, 10);
     }
 
     @Test

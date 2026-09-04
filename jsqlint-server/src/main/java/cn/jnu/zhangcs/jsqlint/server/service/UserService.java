@@ -87,6 +87,21 @@ public interface UserService {
     List<User> getUserList(String account, String username, String phone, String email, Integer status);
 
     /**
+     * 分页获取用户列表
+     *
+     * @param account  账号（模糊匹配）
+     * @param username 名称（模糊匹配）
+     * @param phone    电话（模糊匹配）
+     * @param email    邮箱（模糊匹配）
+     * @param status   状态
+     * @param page     页码，从 1 开始
+     * @param pageSize 每页数量
+     * @return 分页结果（records + total）
+     */
+    com.baomidou.mybatisplus.extension.plugins.pagination.Page<User> getUserPage(
+            String account, String username, String phone, String email, Integer status, int page, int pageSize);
+
+    /**
      * 修改用户状态为启用
      *
      * @param id 用户ID

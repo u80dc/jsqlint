@@ -95,7 +95,7 @@ class AlertControllerTest {
     @Test
     void listRules_withProject_returnsVoWithDescriptions() throws Exception {
         AlertRule rule = buildRule(9L, "高危问题过多", "AUDIT_ISSUE_COUNT", 5L, "high", "warning", 1);
-        when(alertService.getRules(5L, "AUDIT_ISSUE_COUNT", true)).thenReturn(List.of(rule));
+        when(alertService.getRulePage(5L, "AUDIT_ISSUE_COUNT", true, 1, 10)).thenReturn(pageOf(List.of(rule), 1));
         when(projectService.getById(5L)).thenReturn(buildProject(5L, "订单系统"));
 
         mockMvc.perform(get("/api/alerts/rules")
@@ -103,32 +103,33 @@ class AlertControllerTest {
                         .param("ruleType", "AUDIT_ISSUE_COUNT")
                         .param("enabled", "true"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(1))
-                .andExpect(jsonPath("$[0].id").value(9))
-                .andExpect(jsonPath("$[0].name").value("高危问题过多"))
-                .andExpect(jsonPath("$[0].ruleTypeDescription").value("审核问题数"))
-                .andExpect(jsonPath("$[0].projectName").value("订单系统"))
-                .andExpect(jsonPath("$[0].severityDescription").value("高危"))
-                .andExpect(jsonPath("$[0].minSeverityDescription").value("警告"))
-                .andExpect(jsonPath("$[0].thresholdCount").value(3))
+                .andExpect(jsonPath("$.total").value(1))
+                .andExpect(jsonPath("$.list.length()").value(1))
+                .andExpect(jsonPath("$.list[0].id").value(9))
+                .andExpect(jsonPath("$.list[0].name").value("高危问题过多"))
+                .andExpect(jsonPath("$.list[0].ruleTypeDescription").value("审核问题数"))
+                .andExpect(jsonPath("$.list[0].projectName").value("订单系统"))
+                .andExpect(jsonPath("$.list[0].severityDescription").value("高危"))
+                .andExpect(jsonPath("$.list[0].minSeverityDescription").value("警告"))
+                .andExpect(jsonPath("$.list[0].thresholdCount").value(3))
                 // Integer(0/1) 转换为 Boolean
-                .andExpect(jsonPath("$[0].notifyProjectMembers").value(true))
-                .andExpect(jsonPath("$[0].notifyCreator").value(false))
-                .andExpect(jsonPath("$[0].enabled").value(1))
-                .andExpect(jsonPath("$[0].enabledFlag").value(true));
+                .andExpect(jsonPath("$.list[0].notifyProjectMembers").value(true))
+                .andExpect(jsonPath("$.list[0].notifyCreator").value(false))
+                .andExpect(jsonPath("$.list[0].enabled").value(1))
+                .andExpect(jsonPath("$.list[0].enabledFlag").value(true));
     }
 
     @Test
     void listRules_globalRule_showsAllProjects() throws Exception {
         AlertRule rule = buildRule(9L, "任务失败告警", "TASK_FAILED", null, "critical", "high", 1);
-        when(alertService.getRules(null, null, null)).thenReturn(List.of(rule));
+        when(alertService.getRulePage(null, null, null, 1, 10)).thenReturn(pageOf(List.of(rule), 1));
 
         mockMvc.perform(get("/api/alerts/rules"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].projectName").value("全部项目"))
-                .andExpect(jsonPath("$[0].ruleTypeDescription").value("任务失败"))
-                .andExpect(jsonPath("$[0].severityDescription").value("致命"))
-                .andExpect(jsonPath("$[0].minSeverityDescription").value("高危"));
+                .andExpect(jsonPath("$.list[0].projectName").value("全部项目"))
+                .andExpect(jsonPath("$.list[0].ruleTypeDescription").value("任务失败"))
+                .andExpect(jsonPath("$.list[0].severityDescription").value("致命"))
+                .andExpect(jsonPath("$.list[0].minSeverityDescription").value("高危"));
     }
 
     @Test
@@ -253,9 +254,9 @@ class AlertControllerTest {
     @Test
     void listInstances_returnsVoWithRuleAndProjectNames() throws Exception {
         AlertInstance instance = buildInstance(21L, 9L, 5L, "high", "OPEN");
-        when(alertService.getInstances(5L, "high", "OPEN")).thenReturn(List.of(instance));
-        when(alertService.getRules(null, null, null))
-                .thenReturn(List.of(buildRule(9L, "高危审核规则", "AUDIT_ISSUE_COUNT", 5L, "high", "warning", 1)));
+        when(alertService.getInstancePage(5L, "high", "OPEN", 1, 10)).thenReturn(pageOf(List.of(instance), 1));
+        when(alertService.getRuleById(9L))
+                .thenReturn(buildRule(9L, "高危审核规则", "AUDIT_ISSUE_COUNT", 5L, "high", "warning", 1));
         when(projectService.getById(5L)).thenReturn(buildProject(5L, "订单系统"));
 
         mockMvc.perform(get("/api/alerts")
@@ -263,30 +264,31 @@ class AlertControllerTest {
                         .param("severity", "high")
                         .param("status", "OPEN"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(1))
-                .andExpect(jsonPath("$[0].id").value(21))
-                .andExpect(jsonPath("$[0].ruleName").value("高危审核规则"))
-                .andExpect(jsonPath("$[0].projectName").value("订单系统"))
-                .andExpect(jsonPath("$[0].title").value("高危问题过多"))
-                .andExpect(jsonPath("$[0].severityDescription").value("高危"))
-                .andExpect(jsonPath("$[0].statusDescription").value("未处理"))
-                .andExpect(jsonPath("$[0].triggerCount").value(2));
+                .andExpect(jsonPath("$.total").value(1))
+                .andExpect(jsonPath("$.list.length()").value(1))
+                .andExpect(jsonPath("$.list[0].id").value(21))
+                .andExpect(jsonPath("$.list[0].ruleName").value("高危审核规则"))
+                .andExpect(jsonPath("$.list[0].projectName").value("订单系统"))
+                .andExpect(jsonPath("$.list[0].title").value("高危问题过多"))
+                .andExpect(jsonPath("$.list[0].severityDescription").value("高危"))
+                .andExpect(jsonPath("$.list[0].statusDescription").value("未处理"))
+                .andExpect(jsonPath("$.list[0].triggerCount").value(2));
     }
 
     @Test
     void listInstances_withoutRuleAndProject_leavesNamesNull() throws Exception {
         AlertInstance instance = buildInstance(21L, null, null, "info", "RESOLVED");
-        when(alertService.getInstances(null, "info", "RESOLVED")).thenReturn(List.of(instance));
+        when(alertService.getInstancePage(null, "info", "RESOLVED", 1, 10)).thenReturn(pageOf(List.of(instance), 1));
 
         mockMvc.perform(get("/api/alerts")
                         .param("severity", "info")
                         .param("status", "RESOLVED"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$[0].id").value(21))
-                .andExpect(jsonPath("$[0].ruleName").value(nullValue()))
-                .andExpect(jsonPath("$[0].projectName").value(nullValue()))
-                .andExpect(jsonPath("$[0].severityDescription").value("信息"))
-                .andExpect(jsonPath("$[0].statusDescription").value("已解决"));
+                .andExpect(jsonPath("$.list[0].id").value(21))
+                .andExpect(jsonPath("$.list[0].ruleName").value(nullValue()))
+                .andExpect(jsonPath("$.list[0].projectName").value(nullValue()))
+                .andExpect(jsonPath("$.list[0].severityDescription").value("信息"))
+                .andExpect(jsonPath("$.list[0].statusDescription").value("已解决"));
     }
 
     @Test
@@ -313,6 +315,17 @@ class AlertControllerTest {
                         .content("{\"status\":\"ACKED\"}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("告警实例不存在"));
+    }
+
+    /**
+     * 构造分页结果。
+     */
+    private <T> com.baomidou.mybatisplus.extension.plugins.pagination.Page<T> pageOf(List<T> records, long total) {
+        com.baomidou.mybatisplus.extension.plugins.pagination.Page<T> page =
+                new com.baomidou.mybatisplus.extension.plugins.pagination.Page<>(1, 10);
+        page.setRecords(records);
+        page.setTotal(total);
+        return page;
     }
 
     /**

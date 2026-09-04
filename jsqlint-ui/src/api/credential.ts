@@ -23,10 +23,13 @@ export interface CredentialVO {
   createTime: string
 }
 
-export const listCredentials = (status?: number): Promise<CredentialVO[]> => {
-  return request.get<CredentialVO[]>('/api/credentials', {
-    params: { status }
-  })
+export interface CredentialPageVO {
+  list: CredentialVO[]
+  total: number
+}
+
+export const listCredentials = (params?: { status?: number; page?: number; pageSize?: number }): Promise<CredentialPageVO> => {
+  return request.get<CredentialPageVO>('/api/credentials', { params })
 }
 
 export const getCredential = (id: number): Promise<CredentialVO> => {

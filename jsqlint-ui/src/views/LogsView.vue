@@ -1,6 +1,6 @@
 <template>
   <div class="logs-page">
-    <el-card>
+    <el-card class="list-card">
       <div class="filter-toolbar">
         <el-form :inline="true" class="filter-form">
           <el-form-item :label="t('logs.operationType')">
@@ -49,7 +49,7 @@
         </el-form>
       </div>
 
-      <el-table :data="logs" v-loading="loading" stripe>
+      <el-table :data="logs" v-loading="loading" stripe class="list-table" height="100%">
         <el-table-column prop="operationTime" :label="t('logs.operationTime')" width="180">
           <template #default="{ row }">
             {{ formatDate(row.operationTime) }}
@@ -141,7 +141,9 @@ const formatDate = (date?: string) => {
 
 const loadUsers = async () => {
   try {
-    users.value = await getUsers()
+    // 筛选下拉需要全量用户，取足够大的单页
+    const result = await getUsers({ page: 1, pageSize: 200 })
+    users.value = result.list
   } catch {
     users.value = []
   }
@@ -200,7 +202,35 @@ onMounted(() => {
 </script>
 
 <style lang="scss" scoped>
+// 满高布局：根拉满内容区高度，卡片占满，表格弹性填充剩余空间（内部滚动）
 .logs-page {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+
+  .list-card {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+
+    :deep(.el-card__body) {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .filter-toolbar {
+      flex-shrink: 0;
+    }
+  }
+
+  .list-table {
+    flex: 1;
+    min-height: 0;
+  }
+
   .user-option-name {
     color: $text-placeholder;
     font-size: 12px;
@@ -208,6 +238,7 @@ onMounted(() => {
   }
 
   .pagination {
+    flex-shrink: 0;
     display: flex;
     justify-content: flex-end;
     margin-top: 16px;

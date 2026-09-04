@@ -8,6 +8,7 @@ import cn.jnu.zhangcs.jsqlint.server.mapper.CredentialMapper;
 import cn.jnu.zhangcs.jsqlint.server.service.CredentialService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -71,12 +72,18 @@ public class CredentialServiceImpl implements CredentialService {
 
     @Override
     public List<Credential> listCredentials(Integer status) {
+        return getCredentialPage(status, 1, Integer.MAX_VALUE).getRecords();
+    }
+
+    @Override
+    public Page<Credential> getCredentialPage(Integer status, int page, int pageSize) {
         LambdaQueryWrapper<Credential> queryWrapper = new LambdaQueryWrapper<>(Credential.class);
+        queryWrapper.ne(Credential::getStatus, -1);
         if (status != null) {
             queryWrapper.eq(Credential::getStatus, status);
         }
         queryWrapper.orderByDesc(Credential::getCreateTime);
-        return credentialMapper.selectList(queryWrapper);
+        return credentialMapper.selectPage(new Page<>(page, pageSize), queryWrapper);
     }
 
     @Override

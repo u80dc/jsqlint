@@ -77,15 +77,21 @@ public class AdminUserController {
     }
 
     @GetMapping
-    @Operation(summary = "查询用户列表", description = "管理员查询用户列表，支持按用户名、真实姓名、手机号、邮箱、状态筛选")
-    public ResponseEntity<List<UserVO>> listUsers(
+    @Operation(summary = "查询用户列表", description = "管理员分页查询用户列表，支持按用户名、真实姓名、手机号、邮箱、状态筛选")
+    public ResponseEntity<Map<String, Object>> listUsers(
             @Parameter(name = "username", description = "用户名", example = "admin") @RequestParam(value = "username", required = false) String username,
             @Parameter(name = "realName", description = "真实姓名", example = "张三") @RequestParam(value = "realName", required = false) String realName,
             @Parameter(name = "phone", description = "手机号", example = "13800138000") @RequestParam(value = "phone", required = false) String phone,
             @Parameter(name = "email", description = "邮箱", example = "admin@example.com") @RequestParam(value = "email", required = false) String email,
-            @Parameter(name = "status", description = "状态（1:启用, 0:禁用）", example = "1") @RequestParam(value = "status", required = false) Integer status) {
-        List<User> users = userService.getUserList(username, realName, phone, email, status);
-        return ResponseEntity.ok(toVOList(users));
+            @Parameter(name = "status", description = "状态（1:启用, 0:禁用）", example = "1") @RequestParam(value = "status", required = false) Integer status,
+            @Parameter(name = "page", description = "页码", example = "1") @RequestParam(value = "page", defaultValue = "1") int page,
+            @Parameter(name = "pageSize", description = "每页数量", example = "10") @RequestParam(value = "pageSize", defaultValue = "10") int pageSize) {
+        com.baomidou.mybatisplus.extension.plugins.pagination.Page<User> result =
+                userService.getUserPage(username, realName, phone, email, status, page, pageSize);
+        return ResponseEntity.ok(Map.of(
+                "list", toVOList(result.getRecords()),
+                "total", result.getTotal()
+        ));
     }
 
     @GetMapping("/{id}")

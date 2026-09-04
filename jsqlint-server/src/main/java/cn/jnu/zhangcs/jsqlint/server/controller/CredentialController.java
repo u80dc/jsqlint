@@ -90,12 +90,18 @@ public class CredentialController {
         return ResponseEntity.ok(CredentialConverter.toVO(credential, getUserName(credential.getCreateUserId())));
     }
 
-    @Operation(summary = "查询凭证列表", description = "查询所有凭证列表，可根据状态筛选")
+    @Operation(summary = "查询凭证列表", description = "分页查询凭证列表，可根据状态筛选")
     @GetMapping
-    public ResponseEntity<List<CredentialVO>> listCredentials(
-            @Parameter(name = "status", description = "凭证状态（1:启用, 0:禁用）", example = "1") @RequestParam(value = "status", required = false) Integer status) {
-        List<Credential> list = credentialService.listCredentials(status);
-        return ResponseEntity.ok(toVOList(list));
+    public ResponseEntity<Map<String, Object>> listCredentials(
+            @Parameter(name = "status", description = "凭证状态（1:启用, 0:禁用）", example = "1") @RequestParam(value = "status", required = false) Integer status,
+            @Parameter(name = "page", description = "页码", example = "1") @RequestParam(value = "page", defaultValue = "1") int page,
+            @Parameter(name = "pageSize", description = "每页数量", example = "10") @RequestParam(value = "pageSize", defaultValue = "10") int pageSize) {
+        com.baomidou.mybatisplus.extension.plugins.pagination.Page<Credential> result =
+                credentialService.getCredentialPage(status, page, pageSize);
+        return ResponseEntity.ok(Map.of(
+                "list", toVOList(result.getRecords()),
+                "total", result.getTotal()
+        ));
     }
 
     @Operation(summary = "切换凭证状态", description = "启用或禁用指定的凭证")

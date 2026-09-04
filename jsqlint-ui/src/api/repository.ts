@@ -33,15 +33,20 @@ export interface MavenRepositoryDTO {
   status?: number
 }
 
-export const getMavenRepositories = (type?: number, status?: number): Promise<MavenRepositoryVO[]> => {
-  const params: Record<string, number> = {}
-  if (type !== undefined && type !== null) {
-    params.type = type
-  }
-  if (status !== undefined && status !== null) {
-    params.status = status
-  }
-  return request.get<MavenRepositoryVO[]>('/api/maven-repositories', { params })
+export interface MavenRepositoryPageVO {
+  list: MavenRepositoryVO[]
+  total: number
+}
+
+export interface MavenRepositoryListParams {
+  type?: number
+  status?: number
+  page?: number
+  pageSize?: number
+}
+
+export const getMavenRepositories = (params?: MavenRepositoryListParams): Promise<MavenRepositoryPageVO> => {
+  return request.get<MavenRepositoryPageVO>('/api/maven-repositories', { params })
 }
 
 export const getMavenRepositoryById = (id: number): Promise<MavenRepositoryVO> => {

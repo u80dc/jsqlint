@@ -92,8 +92,11 @@ class AlertServiceImplTest {
     }
 
     @Test
-    void getRules_delegatesToMapper() {
-        when(alertRuleMapper.selectList(any())).thenReturn(List.of(auditCountRule()));
+    void getRules_delegatesToPagedQuery() {
+        com.baomidou.mybatisplus.extension.plugins.pagination.Page<AlertRule> page =
+                new com.baomidou.mybatisplus.extension.plugins.pagination.Page<>(1, Integer.MAX_VALUE);
+        page.setRecords(List.of(auditCountRule()));
+        when(alertRuleMapper.selectPage(any(), any())).thenReturn(page);
 
         assertThat(alertService.getRules(1L, "AUDIT_ISSUE_COUNT", true)).hasSize(1);
     }
@@ -179,8 +182,11 @@ class AlertServiceImplTest {
     }
 
     @Test
-    void getInstances_delegatesToMapper() {
-        when(alertInstanceMapper.selectList(any())).thenReturn(List.of(new AlertInstance()));
+    void getInstances_delegatesToPagedQuery() {
+        com.baomidou.mybatisplus.extension.plugins.pagination.Page<AlertInstance> page =
+                new com.baomidou.mybatisplus.extension.plugins.pagination.Page<>(1, Integer.MAX_VALUE);
+        page.setRecords(List.of(new AlertInstance()));
+        when(alertInstanceMapper.selectPage(any(), any())).thenReturn(page);
 
         assertThat(alertService.getInstances(1L, "warning", "OPEN")).hasSize(1);
     }

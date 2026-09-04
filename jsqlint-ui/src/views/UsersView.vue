@@ -1,6 +1,6 @@
 <template>
   <div class="users">
-    <el-card>
+    <el-card class="list-card">
       <el-tabs v-model="activeTab" class="user-tabs">
         <el-tab-pane :label="t('users.userTab')" name="user">
           <div class="filter-toolbar">
@@ -43,7 +43,7 @@
             </div>
           </div>
 
-          <el-table :data="userList" v-loading="loading" stripe>
+          <el-table :data="userList" v-loading="loading" stripe class="list-table" height="100%">
             <el-table-column prop="username" :label="t('users.username')" min-width="120" />
             <el-table-column prop="realName" :label="t('users.realName')" min-width="100" />
             <el-table-column prop="phone" :label="t('users.phone')" min-width="130" />
@@ -114,6 +114,19 @@
               <el-empty :description="t('users.empty')" />
             </template>
           </el-table>
+
+          <div v-if="total > 0" class="pagination">
+            <el-pagination
+              v-model:current-page="currentPage"
+              v-model:page-size="pageSize"
+              :page-sizes="[10, 20, 50]"
+              :total="total"
+              layout="total, sizes, prev, pager, next"
+              background
+              @current-change="handlePageChange"
+              @size-change="handleSearch"
+            />
+          </div>
 
           <!-- 新增/编辑弹窗 -->
           <el-dialog v-model="dialogVisible" :title="dialogTitle" width="480px" align-center @close="handleDialogClose">
@@ -197,6 +210,9 @@ const loading = ref(false)
 const submitLoading = ref(false)
 const resetPwdLoading = ref(false)
 const userList = ref<UserVO[]>([])
+const currentPage = ref(1)
+const pageSize = ref(10)
+const total = ref(0)
 const dialogVisible = ref(false)
 const resetPwdDialogVisible = ref(false)
 const isEdit = ref(false)
@@ -254,19 +270,33 @@ const selectedGroupIds = (row: UserVO) => {
 const loadUsers = async () => {
   loading.value = true
   try {
-    const params: UserListParams = {}
+    const params: UserListParams = {
+      page: currentPage.value,
+      pageSize: pageSize.value
+    }
     if (filters.username) params.username = filters.username
     if (filters.realName) params.realName = filters.realName
     if (filters.phone) params.phone = filters.phone
     if (filters.email) params.email = filters.email
     if (filters.status !== null) params.status = filters.status
 
-    userList.value = await getUsers(params)
+    const result = await getUsers(params)
+    userList.value = result.list
+    total.value = result.total
   } catch {
     ElMessage.error(t('users.messages.loadUsersError'))
   } finally {
     loading.value = false
   }
+}
+
+const handleSearch = () => {
+  currentPage.value = 1
+  loadUsers()
+}
+
+const handlePageChange = () => {
+  loadUsers()
 }
 
 const loadAllGroups = async () => {
@@ -289,16 +319,13 @@ const handleGroupChange = async (row: UserVO, selectedIds: number[]) => {
   }
 }
 
-const handleSearch = () => {
-  loadUsers()
-}
-
 const handleReset = () => {
   filters.username = ''
   filters.realName = ''
   filters.phone = ''
   filters.email = ''
   filters.status = null
+  currentPage.value = 1
   loadUsers()
 }
 
@@ -459,12 +486,62 @@ const handleResetPwdSubmit = async () => {
 </script>
 
 <style lang="scss" scoped>
+// 满高布局：根拉满内容区，卡片→tabs→tab面板逐层传递，表格弹性填充（内部滚动）
 .users {
-  .user-tabs {
-    :deep(.el-tabs__content) {
-      padding-top: 20px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+
+  .list-card {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+
+    :deep(.el-card__body) {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
     }
   }
 
+  .user-tabs {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+
+    :deep(.el-tabs__content) {
+      padding-top: 20px;
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+
+    :deep(.el-tab-pane) {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+
+      .filter-toolbar {
+        flex-shrink: 0;
+      }
+
+      .list-table {
+        flex: 1;
+        min-height: 0;
+      }
+
+      .pagination {
+        flex-shrink: 0;
+        display: flex;
+        justify-content: flex-end;
+        padding: 16px 0 0;
+      }
+    }
+  }
 }
 </style>

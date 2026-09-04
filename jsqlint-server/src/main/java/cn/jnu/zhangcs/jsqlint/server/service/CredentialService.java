@@ -52,6 +52,16 @@ public interface CredentialService {
     List<Credential> listCredentials(Integer status);
 
     /**
+     * 分页查询凭证列表
+     *
+     * @param status   状态过滤（可选）
+     * @param page     页码，从 1 开始
+     * @param pageSize 每页数量
+     * @return 分页结果（records + total）
+     */
+    com.baomidou.mybatisplus.extension.plugins.pagination.Page<Credential> getCredentialPage(Integer status, int page, int pageSize);
+
+    /**
      * 启用或禁用凭证
      *
      * @param id     凭证ID

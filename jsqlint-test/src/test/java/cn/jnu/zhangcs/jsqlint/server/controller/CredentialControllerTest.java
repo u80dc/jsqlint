@@ -85,6 +85,14 @@ class CredentialControllerTest {
         return token;
     }
 
+    private <T> com.baomidou.mybatisplus.extension.plugins.pagination.Page<T> pageOf(List<T> records, long total) {
+        com.baomidou.mybatisplus.extension.plugins.pagination.Page<T> page =
+                new com.baomidou.mybatisplus.extension.plugins.pagination.Page<>(1, 10);
+        page.setRecords(records);
+        page.setTotal(total);
+        return page;
+    }
+
     private User user(Long id, String name) {
         User user = new User();
         user.setId(id);
@@ -251,25 +259,27 @@ class CredentialControllerTest {
         second.setName("无主凭证");
         second.setVisibility(0);
         second.setStatus(1);
-        when(credentialService.listCredentials(1)).thenReturn(List.of(first, second));
+        when(credentialService.getCredentialPage(1, 1, 10)).thenReturn(pageOf(List.of(first, second), 2));
         when(userService.getByIds(any())).thenReturn(List.of(user(7L, "admin")));
 
         mockMvc.perform(get("/api/credentials").param("status", "1"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(2))
-                .andExpect(jsonPath("$[0].id").value(1))
-                .andExpect(jsonPath("$[0].createUserName").value("admin"))
-                .andExpect(jsonPath("$[1].id").value(2))
-                .andExpect(jsonPath("$[1].name").value("无主凭证"));
+                .andExpect(jsonPath("$.total").value(2))
+                .andExpect(jsonPath("$.list.length()").value(2))
+                .andExpect(jsonPath("$.list[0].id").value(1))
+                .andExpect(jsonPath("$.list[0].createUserName").value("admin"))
+                .andExpect(jsonPath("$.list[1].id").value(2))
+                .andExpect(jsonPath("$.list[1].name").value("无主凭证"));
     }
 
     @Test
     void listCredentials_empty_returnsEmptyList() throws Exception {
-        when(credentialService.listCredentials(null)).thenReturn(List.of());
+        when(credentialService.getCredentialPage(null, 1, 10)).thenReturn(pageOf(List.of(), 0));
 
         mockMvc.perform(get("/api/credentials"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(0));
+                .andExpect(jsonPath("$.total").value(0))
+                .andExpect(jsonPath("$.list.length()").value(0));
     }
 
     @Test

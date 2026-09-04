@@ -17,6 +17,7 @@ import cn.jnu.zhangcs.jsqlint.server.service.ProjectService;
 import cn.jnu.zhangcs.jsqlint.server.service.SqlStatementService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -47,6 +48,11 @@ public class AlertServiceImpl implements AlertService {
 
     @Override
     public List<AlertRule> getRules(Long projectId, String ruleType, Boolean enabled) {
+        return getRulePage(projectId, ruleType, enabled, 1, Integer.MAX_VALUE).getRecords();
+    }
+
+    @Override
+    public Page<AlertRule> getRulePage(Long projectId, String ruleType, Boolean enabled, int page, int pageSize) {
         LambdaQueryWrapper<AlertRule> query = Wrappers.lambdaQuery();
         if (projectId != null) {
             query.and(wrapper -> wrapper.isNull(AlertRule::getProjectId).or().eq(AlertRule::getProjectId, projectId));
@@ -58,7 +64,7 @@ public class AlertServiceImpl implements AlertService {
             query.eq(AlertRule::getEnabled, enabled ? 1 : 0);
         }
         query.orderByDesc(AlertRule::getCreateTime);
-        return alertRuleMapper.selectList(query);
+        return alertRuleMapper.selectPage(new Page<>(page, pageSize), query);
     }
 
     @Override
@@ -127,6 +133,11 @@ public class AlertServiceImpl implements AlertService {
 
     @Override
     public List<AlertInstance> getInstances(Long projectId, String severity, String status) {
+        return getInstancePage(projectId, severity, status, 1, Integer.MAX_VALUE).getRecords();
+    }
+
+    @Override
+    public Page<AlertInstance> getInstancePage(Long projectId, String severity, String status, int page, int pageSize) {
         LambdaQueryWrapper<AlertInstance> query = Wrappers.lambdaQuery();
         if (projectId != null) {
             query.eq(AlertInstance::getProjectId, projectId);
@@ -138,7 +149,7 @@ public class AlertServiceImpl implements AlertService {
             query.eq(AlertInstance::getStatus, status);
         }
         query.orderByDesc(AlertInstance::getLastTriggeredAt).orderByDesc(AlertInstance::getCreateTime);
-        return alertInstanceMapper.selectList(query);
+        return alertInstanceMapper.selectPage(new Page<>(page, pageSize), query);
     }
 
     @Override
@@ -304,6 +315,11 @@ public class AlertServiceImpl implements AlertService {
             }
         }
         return userIds;
+    }
+
+    @Override
+    public AlertRule getRuleById(Long id) {
+        return id == null ? null : alertRuleMapper.selectById(id);
     }
 
     private AlertRule requireRule(Long id) {

@@ -1,6 +1,6 @@
 <template>
   <div class="repositories">
-    <el-card>
+    <el-card class="list-card">
       <div class="filter-toolbar">
         <el-form :inline="true" class="filter-form">
           <el-form-item :label="t('repositories.type')">
@@ -28,7 +28,7 @@
         </div>
       </div>
 
-      <el-table :data="repositories" v-loading="loading" stripe>
+      <el-table :data="repositories" v-loading="loading" stripe class="list-table" height="100%">
         <el-table-column prop="type" :label="t('repositories.type')" width="120">
           <template #default="{ row }">
             <el-tag :type="row.type === 0 ? 'success' : 'warning'" size="small">
@@ -81,6 +81,19 @@
           <el-empty :description="t('repositories.empty')" />
         </template>
       </el-table>
+
+      <div v-if="total > 0" class="pagination">
+        <el-pagination
+          v-model:current-page="currentPage"
+          v-model:page-size="pageSize"
+          :page-sizes="[10, 20, 50]"
+          :total="total"
+          layout="total, sizes, prev, pager, next"
+          background
+          @current-change="handlePageChange"
+          @size-change="handleSearch"
+        />
+      </div>
     </el-card>
 
     <!-- 新增/编辑仓库弹窗 -->
@@ -149,6 +162,9 @@ const { t } = useI18n()
 const loading = ref(false)
 const submitLoading = ref(false)
 const repositories = ref<MavenRepositoryVO[]>([])
+const currentPage = ref(1)
+const pageSize = ref(10)
+const total = ref(0)
 
 const filters = reactive({
   type: null as number | null,
@@ -193,7 +209,14 @@ const formatDate = formatDateTime
 const loadData = async () => {
   loading.value = true
   try {
-    repositories.value = await getMavenRepositories(filters.type ?? undefined, filters.status ?? undefined)
+    const result = await getMavenRepositories({
+      type: filters.type ?? undefined,
+      status: filters.status ?? undefined,
+      page: currentPage.value,
+      pageSize: pageSize.value
+    })
+    repositories.value = result.list
+    total.value = result.total
   } catch {
     ElMessage.error(t('repositories.loadError'))
   } finally {
@@ -202,12 +225,18 @@ const loadData = async () => {
 }
 
 const handleSearch = () => {
+  currentPage.value = 1
+  loadData()
+}
+
+const handlePageChange = () => {
   loadData()
 }
 
 const handleReset = () => {
   filters.type = null
   filters.status = null
+  currentPage.value = 1
   loadData()
 }
 
@@ -307,3 +336,42 @@ onMounted(() => {
   loadData()
 })
 </script>
+
+<style lang="scss" scoped>
+// 满高布局：根拉满内容区高度，卡片占满，表格弹性填充剩余空间（内部滚动）
+.repositories {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.list-card {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+
+  :deep(.el-card__body) {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .filter-toolbar {
+    flex-shrink: 0;
+  }
+}
+
+.list-table {
+  flex: 1;
+  min-height: 0;
+}
+
+.pagination {
+  flex-shrink: 0;
+  display: flex;
+  justify-content: flex-end;
+  padding: 16px 0 0;
+}
+</style>

@@ -106,12 +106,21 @@ public class MavenRepositoryServiceImpl implements MavenRepositoryService {
 
     @Override
     public List<MavenRepository> list(@Nullable Integer status) {
+        return getRepositoryPage(null, status, 1, Integer.MAX_VALUE).getRecords();
+    }
+
+    @Override
+    public com.baomidou.mybatisplus.extension.plugins.pagination.Page<MavenRepository> getRepositoryPage(
+            @Nullable Integer type, @Nullable Integer status, int page, int pageSize) {
         LambdaQueryWrapper<MavenRepository> query = Wrappers.lambdaQuery();
         if (status != null) {
             query.eq(MavenRepository::getStatus, status);
         }
+        if (type != null) {
+            query.eq(MavenRepository::getType, type);
+        }
         query.orderByDesc(MavenRepository::getCreateTime);
-        return repositoryMapper.selectList(query);
+        return repositoryMapper.selectPage(new com.baomidou.mybatisplus.extension.plugins.pagination.Page<>(page, pageSize), query);
     }
 
     @Override

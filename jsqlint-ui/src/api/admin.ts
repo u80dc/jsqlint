@@ -25,6 +25,13 @@ export interface UserListParams {
   phone?: string
   email?: string
   status?: number
+  page?: number
+  pageSize?: number
+}
+
+export interface UserPageVO {
+  list: UserVO[]
+  total: number
 }
 
 export interface UserCreateDTO {
@@ -47,8 +54,8 @@ export interface UserUpdateDTO {
   password?: string
 }
 
-export const getUsers = (params?: UserListParams): Promise<UserVO[]> => {
-  return request.get<UserVO[]>('/api/admin/users', { params })
+export const getUsers = (params?: UserListParams): Promise<UserPageVO> => {
+  return request.get<UserPageVO>('/api/admin/users', { params })
 }
 
 export const getUser = (id: number): Promise<UserVO> => {

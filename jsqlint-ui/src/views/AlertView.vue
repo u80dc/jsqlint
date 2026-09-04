@@ -1,6 +1,6 @@
 <template>
   <div class="alert">
-    <el-card>
+    <el-card class="list-card">
       <el-tabs v-model="activeTab" class="alert-tabs">
         <el-tab-pane :label="t('alert.centerTab')" name="instances">
           <div class="filter-toolbar">
@@ -27,7 +27,7 @@
                 </el-select>
               </el-form-item>
               <el-form-item>
-                <el-button type="primary" @click="loadInstances">{{ t('alert.query') }}</el-button>
+                <el-button type="primary" @click="searchInstances">{{ t('alert.query') }}</el-button>
                 <el-button @click="resetInstanceFilters">{{ t('common.reset') }}</el-button>
               </el-form-item>
             </el-form>
@@ -38,7 +38,7 @@
             </div>
           </div>
 
-          <el-table :data="instances" v-loading="instanceLoading" stripe>
+          <el-table :data="instances" v-loading="instanceLoading" stripe class="list-table" height="100%">
             <el-table-column prop="title" :label="t('alert.alertTitle')" min-width="220" show-overflow-tooltip />
             <el-table-column prop="projectName" :label="t('alert.project')" width="140" show-overflow-tooltip />
             <el-table-column prop="severityDescription" :label="t('alert.level')" width="90" align="center">
@@ -72,6 +72,19 @@
               <el-empty :description="t('alert.noInstances')" />
             </template>
           </el-table>
+
+          <div v-if="instanceTotal > 0" class="pagination">
+            <el-pagination
+              v-model:current-page="instanceCurrentPage"
+              v-model:page-size="instancePageSize"
+              :page-sizes="[10, 20, 50]"
+              :total="instanceTotal"
+              layout="total, sizes, prev, pager, next"
+              background
+              @current-change="handleInstancePageChange"
+              @size-change="searchInstances"
+            />
+          </div>
         </el-tab-pane>
 
         <el-tab-pane :label="t('alert.ruleTab')" name="rules">
@@ -90,7 +103,7 @@
                 </el-select>
               </el-form-item>
               <el-form-item>
-                <el-button type="primary" @click="loadRules">{{ t('alert.query') }}</el-button>
+                <el-button type="primary" @click="searchRules">{{ t('alert.query') }}</el-button>
                 <el-button @click="resetRuleFilters">{{ t('common.reset') }}</el-button>
               </el-form-item>
             </el-form>
@@ -102,7 +115,7 @@
             </div>
           </div>
 
-          <el-table :data="rules" v-loading="ruleLoading" stripe>
+          <el-table :data="rules" v-loading="ruleLoading" stripe class="list-table" height="100%">
             <el-table-column prop="name" :label="t('alert.ruleName')" min-width="160" show-overflow-tooltip />
             <el-table-column prop="ruleTypeDescription" :label="t('alert.type')" width="130" />
             <el-table-column prop="projectName" :label="t('alert.project')" width="140" show-overflow-tooltip />
@@ -134,6 +147,19 @@
               <el-empty :description="t('alert.noRules')" />
             </template>
           </el-table>
+
+          <div v-if="ruleTotal > 0" class="pagination">
+            <el-pagination
+              v-model:current-page="ruleCurrentPage"
+              v-model:page-size="rulePageSize"
+              :page-sizes="[10, 20, 50]"
+              :total="ruleTotal"
+              layout="total, sizes, prev, pager, next"
+              background
+              @current-change="handleRulePageChange"
+              @size-change="searchRules"
+            />
+          </div>
         </el-tab-pane>
       </el-tabs>
     </el-card>
@@ -226,6 +252,12 @@ const instances = ref<AlertInstanceVO[]>([])
 const rules = ref<AlertRuleVO[]>([])
 const instanceLoading = ref(false)
 const ruleLoading = ref(false)
+const instanceCurrentPage = ref(1)
+const instancePageSize = ref(10)
+const instanceTotal = ref(0)
+const ruleCurrentPage = ref(1)
+const rulePageSize = ref(10)
+const ruleTotal = ref(0)
 const submitLoading = ref(false)
 const ruleDialogVisible = ref(false)
 const instanceDialogVisible = ref(false)
@@ -293,11 +325,15 @@ const loadProjects = async () => {
 const loadInstances = async () => {
   instanceLoading.value = true
   try {
-    instances.value = await listAlertInstances({
+    const result = await listAlertInstances({
       projectId: instanceFilters.projectId,
       severity: instanceFilters.severity || undefined,
-      status: instanceFilters.status || undefined
+      status: instanceFilters.status || undefined,
+      page: instanceCurrentPage.value,
+      pageSize: instancePageSize.value
     })
+    instances.value = result.list
+    instanceTotal.value = result.total
   } finally {
     instanceLoading.value = false
   }
@@ -306,26 +342,48 @@ const loadInstances = async () => {
 const loadRules = async () => {
   ruleLoading.value = true
   try {
-    rules.value = await listAlertRules({
+    const result = await listAlertRules({
       projectId: ruleFilters.projectId,
-      ruleType: ruleFilters.ruleType || undefined
+      ruleType: ruleFilters.ruleType || undefined,
+      page: ruleCurrentPage.value,
+      pageSize: rulePageSize.value
     })
+    rules.value = result.list
+    ruleTotal.value = result.total
   } finally {
     ruleLoading.value = false
   }
+}
+
+const searchInstances = () => {
+  instanceCurrentPage.value = 1
+  loadInstances()
+}
+
+const handleInstancePageChange = () => {
+  loadInstances()
+}
+
+const searchRules = () => {
+  ruleCurrentPage.value = 1
+  loadRules()
+}
+
+const handleRulePageChange = () => {
+  loadRules()
 }
 
 const resetInstanceFilters = () => {
   instanceFilters.projectId = undefined
   instanceFilters.severity = ''
   instanceFilters.status = ''
-  loadInstances()
+  searchInstances()
 }
 
 const resetRuleFilters = () => {
   ruleFilters.projectId = undefined
   ruleFilters.ruleType = ''
-  loadRules()
+  searchRules()
 }
 
 const resetRuleForm = () => {
@@ -423,12 +481,62 @@ onMounted(async () => {
 </script>
 
 <style lang="scss" scoped>
+// 满高布局：根拉满内容区，卡片→tabs→tab面板逐层传递，表格弹性填充（内部滚动）
 .alert {
-  .alert-tabs {
-    :deep(.el-tabs__content) {
-      padding-top: 20px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+
+  .list-card {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+
+    :deep(.el-card__body) {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
     }
   }
 
+  .alert-tabs {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+
+    :deep(.el-tabs__content) {
+      padding-top: 20px;
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+
+    :deep(.el-tab-pane) {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+
+      .filter-toolbar {
+        flex-shrink: 0;
+      }
+
+      .list-table {
+        flex: 1;
+        min-height: 0;
+      }
+
+      .pagination {
+        flex-shrink: 0;
+        display: flex;
+        justify-content: flex-end;
+        padding: 16px 0 0;
+      }
+    }
+  }
 }
 </style>
