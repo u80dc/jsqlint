@@ -1,10 +1,12 @@
 package cn.jnu.zhangcs.jsqlint.server.controller;
 
+import cn.jnu.zhangcs.jsqlint.server.common.exception.BizException;
 import cn.jnu.zhangcs.jsqlint.server.entity.InspectionConfig;
 import cn.jnu.zhangcs.jsqlint.server.model.dto.InspectionConfigDTO;
 import cn.jnu.zhangcs.jsqlint.server.model.vo.InspectionConfigVO;
 import cn.jnu.zhangcs.jsqlint.server.security.LoginUser;
 import cn.jnu.zhangcs.jsqlint.server.service.InspectionConfigService;
+import cn.jnu.zhangcs.jsqlint.server.service.ProjectService;
 import io.swagger.v3.oas.annotations.Parameter;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -14,12 +16,18 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
+/**
+ * 巡检配置控制器
+ *
+ * <p>写操作（保存、启停、删除）要求当前用户为对应项目的管理员。</p>
+ */
 @RestController
 @RequiredArgsConstructor
 @RequestMapping("/api/inspection-configs")
 public class InspectionConfigController {
 
     private final InspectionConfigService inspectionConfigService;
+    private final ProjectService projectService;
 
     @GetMapping
     public ResponseEntity<List<InspectionConfigVO>> list(
@@ -43,6 +51,7 @@ public class InspectionConfigController {
             @PathVariable Long projectId,
             @Valid @RequestBody InspectionConfigDTO dto,
             @Parameter(hidden = true) @AuthenticationPrincipal LoginUser loginUser) {
+        requireProjectAdmin(projectId, loginUser);
         InspectionConfig config = inspectionConfigService.saveOrUpdate(
                 projectId,
                 dto.getCronExpr(),
@@ -56,6 +65,7 @@ public class InspectionConfigController {
             @PathVariable Long projectId,
             @RequestParam(value = "enabled")  boolean enabled,
             @Parameter(hidden = true) @AuthenticationPrincipal LoginUser loginUser) {
+        requireProjectAdmin(projectId, loginUser);
         inspectionConfigService.setEnabled(projectId, enabled, loginUser.getUserId());
         return ResponseEntity.noContent().build();
     }
@@ -64,8 +74,15 @@ public class InspectionConfigController {
     public ResponseEntity<Void> delete(
             @PathVariable Long projectId,
             @Parameter(hidden = true) @AuthenticationPrincipal LoginUser loginUser) {
+        requireProjectAdmin(projectId, loginUser);
         inspectionConfigService.deleteByProjectId(projectId, loginUser.getUserId());
         return ResponseEntity.noContent().build();
+    }
+
+    private void requireProjectAdmin(Long projectId, LoginUser loginUser) {
+        if (!projectService.isAdmin(projectId, loginUser.getUserId())) {
+            throw new BizException("该操作需要项目管理员权限");
+        }
     }
 
     private InspectionConfigVO toVO(InspectionConfig config) {

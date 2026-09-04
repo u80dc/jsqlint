@@ -33,16 +33,16 @@ export const getSqlWhitelistList = (
   projectId: number,
   params: SqlWhitelistListParams
 ): Promise<SqlWhitelistListResult> => {
-  return request.get<SqlWhitelistListResult>(`/api/project/${projectId}/whitelist`, { params })
+  return request.get<SqlWhitelistListResult>(`/api/projects/${projectId}/whitelist`, { params })
 }
 
 export const createSqlWhitelist = (
   projectId: number,
   data: SqlWhitelistCreateDTO
 ): Promise<SqlWhitelistVO> => {
-  return request.post<SqlWhitelistVO>(`/api/project/${projectId}/whitelist`, data)
+  return request.post<SqlWhitelistVO>(`/api/projects/${projectId}/whitelist`, data)
 }
 
 export const deleteSqlWhitelist = (projectId: number, id: number): Promise<void> => {
-  return request.delete<void>(`/api/project/${projectId}/whitelist/${id}`)
+  return request.delete<void>(`/api/projects/${projectId}/whitelist/${id}`)
 }

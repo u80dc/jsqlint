@@ -55,6 +55,9 @@ class ProjectAuditRuleControllerTest {
     @Mock
     private ProjectAuditRuleService projectAuditRuleService;
 
+    @Mock
+    private cn.jnu.zhangcs.jsqlint.server.service.ProjectService projectService;
+
     @InjectMocks
     private ProjectAuditRuleController projectAuditRuleController;
 
@@ -96,7 +99,7 @@ class ProjectAuditRuleControllerTest {
         when(projectAuditRuleService.countRules(5L, null, null, null)).thenReturn(3L);
         when(userService.getById(7L)).thenReturn(buildUser(7L, "admin"));
 
-        mockMvc.perform(get("/api/project/5/rules"))
+        mockMvc.perform(get("/api/projects/5/rules"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.total").value(3))
                 .andExpect(jsonPath("$.list.length()").value(1))
@@ -114,7 +117,7 @@ class ProjectAuditRuleControllerTest {
         when(projectAuditRuleService.listRules(5L, 2, 5, "注入", "PERFORMANCE", true)).thenReturn(List.of());
         when(projectAuditRuleService.countRules(5L, "注入", "PERFORMANCE", true)).thenReturn(0L);
 
-        mockMvc.perform(get("/api/project/5/rules")
+        mockMvc.perform(get("/api/projects/5/rules")
                         .param("page", "2")
                         .param("pageSize", "5")
                         .param("name", "注入")
@@ -131,7 +134,7 @@ class ProjectAuditRuleControllerTest {
                 .thenReturn(buildProjectRule(9L, 5L, "禁止 SELECT *", "NO_SELECT_STAR", 7L));
         when(userService.getById(7L)).thenReturn(buildUser(7L, "admin"));
 
-        mockMvc.perform(get("/api/project/5/rules/9"))
+        mockMvc.perform(get("/api/projects/5/rules/9"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(9))
                 .andExpect(jsonPath("$.projectId").value(5))
@@ -144,17 +147,18 @@ class ProjectAuditRuleControllerTest {
     void getRule_missingRule_returns404() throws Exception {
         when(projectAuditRuleService.getRule(5L, 99L)).thenReturn(null);
 
-        mockMvc.perform(get("/api/project/5/rules/99"))
+        mockMvc.perform(get("/api/projects/5/rules/99"))
                 .andExpect(status().isNotFound());
     }
 
     @Test
     void createRule_validBody_returnsVo() throws Exception {
         AuditRule created = buildProjectRule(9L, 5L, "禁止 SELECT *", "NO_SELECT_STAR", 7L);
+        when(projectService.isAdmin(5L, 7L)).thenReturn(true);
         when(projectAuditRuleService.createRule(eq(5L), any(ProjectAuditRuleDTO.class), eq(7L))).thenReturn(created);
         when(userService.getById(7L)).thenReturn(buildUser(7L, "admin"));
 
-        mockMvc.perform(post("/api/project/5/rules")
+        mockMvc.perform(post("/api/projects/5/rules")
                         .principal(login(7L))
                         .contentType(MediaType.APPLICATION_JSON)
                         .characterEncoding("UTF-8")
@@ -179,7 +183,7 @@ class ProjectAuditRuleControllerTest {
 
     @Test
     void createRule_invalidSeverity_returns400() throws Exception {
-        mockMvc.perform(post("/api/project/5/rules")
+        mockMvc.perform(post("/api/projects/5/rules")
                         .principal(login(7L))
                         .contentType(MediaType.APPLICATION_JSON)
                         .characterEncoding("UTF-8")
@@ -191,10 +195,11 @@ class ProjectAuditRuleControllerTest {
 
     @Test
     void createRule_bizExceptionMappedTo400() throws Exception {
+        when(projectService.isAdmin(5L, 7L)).thenReturn(true);
         when(projectAuditRuleService.createRule(eq(5L), any(ProjectAuditRuleDTO.class), eq(7L)))
                 .thenThrow(new BizException("规则代码已存在"));
 
-        mockMvc.perform(post("/api/project/5/rules")
+        mockMvc.perform(post("/api/projects/5/rules")
                         .principal(login(7L))
                         .contentType(MediaType.APPLICATION_JSON)
                         .characterEncoding("UTF-8")
@@ -209,11 +214,12 @@ class ProjectAuditRuleControllerTest {
     void updateRule_validBody_returnsVo() throws Exception {
         AuditRule updated = buildProjectRule(9L, 5L, "禁止 SELECT *（更新）", "NO_SELECT_STAR", 7L);
         updated.setSuggestion("明确列名");
+        when(projectService.isAdmin(5L, 7L)).thenReturn(true);
         when(projectAuditRuleService.updateRule(eq(5L), eq(9L), any(ProjectAuditRuleDTO.class), eq(7L)))
                 .thenReturn(updated);
         when(userService.getById(7L)).thenReturn(buildUser(7L, "admin"));
 
-        mockMvc.perform(put("/api/project/5/rules/9")
+        mockMvc.perform(put("/api/projects/5/rules/9")
                         .principal(login(7L))
                         .contentType(MediaType.APPLICATION_JSON)
                         .characterEncoding("UTF-8")
@@ -230,7 +236,7 @@ class ProjectAuditRuleControllerTest {
 
     @Test
     void updateRule_invalidCodePattern_returns400() throws Exception {
-        mockMvc.perform(put("/api/project/5/rules/9")
+        mockMvc.perform(put("/api/projects/5/rules/9")
                         .principal(login(7L))
                         .contentType(MediaType.APPLICATION_JSON)
                         .characterEncoding("UTF-8")
@@ -242,7 +248,11 @@ class ProjectAuditRuleControllerTest {
 
     @Test
     void deleteRule_existing_returns200() throws Exception {
-        mockMvc.perform(delete("/api/project/5/rules/9"))
+        login(7L);
+        when(projectService.isAdmin(5L, 7L)).thenReturn(true);
+
+        mockMvc.perform(delete("/api/projects/5/rules/9")
+                        .principal(login(7L)))
                 .andExpect(status().isOk());
 
         verify(projectAuditRuleService).deleteRule(5L, 9L);
@@ -251,10 +261,11 @@ class ProjectAuditRuleControllerTest {
     @Test
     void toggleRule_enabledTrue_returnsVo() throws Exception {
         AuditRule updated = buildProjectRule(9L, 5L, "禁止 SELECT *", "NO_SELECT_STAR", 7L);
+        when(projectService.isAdmin(5L, 7L)).thenReturn(true);
         when(projectAuditRuleService.toggleRule(5L, 9L, true, 7L)).thenReturn(updated);
         when(userService.getById(7L)).thenReturn(buildUser(7L, "admin"));
 
-        mockMvc.perform(put("/api/project/5/rules/9/toggle")
+        mockMvc.perform(put("/api/projects/5/rules/9/toggle")
                         .principal(login(7L))
                         .contentType(MediaType.APPLICATION_JSON)
                         .characterEncoding("UTF-8")
@@ -270,9 +281,10 @@ class ProjectAuditRuleControllerTest {
     void toggleRule_missingFlag_defaultsToFalse() throws Exception {
         AuditRule updated = buildProjectRule(9L, 5L, "禁止 SELECT *", "NO_SELECT_STAR", null);
         updated.setEnabled(0);
+        when(projectService.isAdmin(5L, 7L)).thenReturn(true);
         when(projectAuditRuleService.toggleRule(5L, 9L, false, 7L)).thenReturn(updated);
 
-        mockMvc.perform(put("/api/project/5/rules/9/toggle")
+        mockMvc.perform(put("/api/projects/5/rules/9/toggle")
                         .principal(login(7L))
                         .contentType(MediaType.APPLICATION_JSON)
                         .characterEncoding("UTF-8")

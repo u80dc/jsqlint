@@ -26,7 +26,7 @@ export interface UserGroupVO {
 }
 
 export const getProjectMembers = (projectId: number): Promise<ProjectMemberVO[]> => {
-  return request.get<ProjectMemberVO[]>(`/api/project/${projectId}/members`)
+  return request.get<ProjectMemberVO[]>(`/api/projects/${projectId}/members`)
 }
 
 export const searchUsers = (keyword: string): Promise<UserSearchVO[]> => {
@@ -34,25 +34,25 @@ export const searchUsers = (keyword: string): Promise<UserSearchVO[]> => {
 }
 
 export const addProjectMembers = (projectId: number, userIds: number[], isAdmin: boolean): Promise<void> => {
-  return request.post<void>(`/api/project/${projectId}/members/batch`, userIds, { params: { isAdmin } })
+  return request.post<void>(`/api/projects/${projectId}/members/batch`, userIds, { params: { isAdmin } })
 }
 
 export const removeProjectMember = (projectId: number, userId: number): Promise<void> => {
-  return request.delete<void>(`/api/project/${projectId}/members/${userId}`)
+  return request.delete<void>(`/api/projects/${projectId}/members/${userId}`)
 }
 
 export const checkIsProjectAdmin = (projectId: number, userId: number): Promise<boolean> => {
-  return request.get<boolean>(`/api/project/${projectId}/members/check`, { params: { userId } })
+  return request.get<boolean>(`/api/projects/${projectId}/members/check`, { params: { userId } })
 }
 
 export const searchUserGroups = (keyword: string): Promise<UserGroupVO[]> => {
-  return request.get<UserGroupVO[]>('/api/users/groups/search', { params: { keyword } })
+  return request.get<UserGroupVO[]>('/api/user-groups/search', { params: { keyword } })
 }
 
 export const getUserGroupMembers = (groupId: number): Promise<UserSearchVO[]> => {
-  return request.get<UserSearchVO[]>('/api/users/groups/members', { params: { groupId } })
+  return request.get<UserSearchVO[]>(`/api/user-groups/${groupId}/members`)
 }
 
 export const addProjectGroupMembers = (projectId: number, groupId: number, isAdmin: boolean): Promise<void> => {
-  return request.post<void>(`/api/project/${projectId}/members/group`, null, { params: { groupId, isAdmin } })
+  return request.post<void>(`/api/projects/${projectId}/members/group`, null, { params: { groupId, isAdmin } })
 }

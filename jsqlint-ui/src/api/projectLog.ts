@@ -26,7 +26,7 @@ export interface ProjectLogPageParams {
 }
 
 export const getProjectLogs = (params: ProjectLogPageParams = {}): Promise<PageResult<ProjectLog>> => {
-  return request.get<PageResult<ProjectLog>>('/api/project/logs', { params })
+  return request.get<PageResult<ProjectLog>>('/api/projects/logs', { params })
 }
 
 export const getProjectLogsByProjectId = (
@@ -34,18 +34,5 @@ export const getProjectLogsByProjectId = (
   page: number = 1,
   size: number = 20
 ): Promise<PageResult<ProjectLog>> => {
-  return request.get<PageResult<ProjectLog>>(`/api/project/logs/${projectId}`, {
-    params: { page, size }
-  })
-}
-
-export const getProjectLogsByRelatedId = (
-  projectId: number,
-  relatedId: number,
-  page: number = 1,
-  size: number = 20
-): Promise<PageResult<ProjectLog>> => {
-  return request.get<PageResult<ProjectLog>>(`/api/project/logs/${projectId}/related/${relatedId}`, {
-    params: { page, size }
-  })
+  return getProjectLogs({ projectId, page, size })
 }

@@ -1,5 +1,6 @@
 package cn.jnu.zhangcs.jsqlint.server.controller;
 
+import cn.jnu.zhangcs.jsqlint.server.common.exception.BizException;
 import cn.jnu.zhangcs.jsqlint.server.entity.ProjectMember;
 import cn.jnu.zhangcs.jsqlint.server.model.vo.ProjectMemberVO;
 import cn.jnu.zhangcs.jsqlint.server.security.LoginUser;
@@ -17,61 +18,73 @@ import java.util.List;
 /**
  * 项目成员控制器
  *
+ * <p>写操作（添加、移除、角色变更）要求当前用户为项目管理员。</p>
+ *
  * @author zhangcs
  */
 @Tag(name = "项目成员管理", description = "项目成员的添加、删除、角色管理等操作")
 @RestController
-@RequestMapping("/api/project/{projectId}/members")
+@RequestMapping("/api/projects/{projectId}/members")
 @RequiredArgsConstructor
 public class ProjectMemberController {
 
     private final ProjectService projectService;
 
-    @Operation(summary = "添加项目成员", description = "向项目中添加一个成员，可指定是否为管理员")
+    @Operation(summary = "添加项目成员", description = "向项目中添加一个成员，可指定是否为管理员（需项目管理员权限）")
     @PostMapping
     public ResponseEntity<Void> addMember(
             @Parameter(name = "projectId", description = "项目ID", example = "1") @PathVariable("projectId") Long projectId,
             @Parameter(name = "userId", description = "用户ID", example = "1") @RequestParam Long userId,
-            @Parameter(name = "isAdmin", description = "是否为管理员", example = "false") @RequestParam(defaultValue = "false") boolean isAdmin) {
+            @Parameter(name = "isAdmin", description = "是否为管理员", example = "false") @RequestParam(defaultValue = "false") boolean isAdmin,
+            @Parameter(hidden = true) @AuthenticationPrincipal LoginUser loginUser) {
+        requireProjectAdmin(projectId, loginUser);
         projectService.addMember(projectId, userId, isAdmin);
         return ResponseEntity.ok().build();
     }
 
-    @Operation(summary = "批量添加项目成员", description = "批量向项目中添加多个成员")
+    @Operation(summary = "批量添加项目成员", description = "批量向项目中添加多个成员（需项目管理员权限）")
     @PostMapping("/batch")
     public ResponseEntity<Void> addMembers(
             @Parameter(name = "projectId", description = "项目ID", example = "1") @PathVariable("projectId") Long projectId,
             @RequestBody List<Long> userIds,
-            @Parameter(name = "isAdmin", description = "是否为管理员", example = "false") @RequestParam(defaultValue = "false") boolean isAdmin) {
+            @Parameter(name = "isAdmin", description = "是否为管理员", example = "false") @RequestParam(defaultValue = "false") boolean isAdmin,
+            @Parameter(hidden = true) @AuthenticationPrincipal LoginUser loginUser) {
+        requireProjectAdmin(projectId, loginUser);
         projectService.addMembers(projectId, userIds, isAdmin);
         return ResponseEntity.ok().build();
     }
 
-    @Operation(summary = "按用户组添加成员", description = "将指定用户组的所有成员添加到项目中")
+    @Operation(summary = "按用户组添加成员", description = "将指定用户组的所有成员添加到项目中（需项目管理员权限）")
     @PostMapping("/group")
     public ResponseEntity<Void> addGroupMembers(
             @Parameter(name = "projectId", description = "项目ID", example = "1") @PathVariable("projectId") Long projectId,
             @Parameter(name = "groupId", description = "用户组ID", example = "1") @RequestParam(value = "groupId") Long groupId,
-            @Parameter(name = "isAdmin", description = "是否为管理员", example = "false") @RequestParam(value = "isAdmin", defaultValue = "false") boolean isAdmin) {
+            @Parameter(name = "isAdmin", description = "是否为管理员", example = "false") @RequestParam(value = "isAdmin", defaultValue = "false") boolean isAdmin,
+            @Parameter(hidden = true) @AuthenticationPrincipal LoginUser loginUser) {
+        requireProjectAdmin(projectId, loginUser);
         projectService.addMembersByGroup(projectId, groupId, isAdmin);
         return ResponseEntity.ok().build();
     }
 
-    @Operation(summary = "移除项目成员", description = "将指定的成员从项目中移除")
+    @Operation(summary = "移除项目成员", description = "将指定的成员从项目中移除（需项目管理员权限）")
     @DeleteMapping("/{userId}")
     public ResponseEntity<Void> removeMember(
             @Parameter(name = "projectId", description = "项目ID", example = "1") @PathVariable("projectId") Long projectId,
-            @Parameter(name = "userId", description = "用户ID", example = "1") @PathVariable("userId") Long userId) {
+            @Parameter(name = "userId", description = "用户ID", example = "1") @PathVariable("userId") Long userId,
+            @Parameter(hidden = true) @AuthenticationPrincipal LoginUser loginUser) {
+        requireProjectAdmin(projectId, loginUser);
         projectService.removeMember(projectId, userId);
         return ResponseEntity.ok().build();
     }
 
-    @Operation(summary = "更新成员角色", description = "更新项目成员的角色权限（普通成员/管理员）")
+    @Operation(summary = "更新成员角色", description = "更新项目成员的角色权限（普通成员/管理员，需项目管理员权限）")
     @PutMapping("/{userId}/role")
     public ResponseEntity<Void> updateRole(
             @Parameter(name = "projectId", description = "项目ID", example = "1") @PathVariable("projectId") Long projectId,
             @Parameter(name = "userId", description = "用户ID", example = "1") @PathVariable("userId") Long userId,
-            @Parameter(name = "isAdmin", description = "是否为管理员", example = "true") @RequestParam boolean isAdmin) {
+            @Parameter(name = "isAdmin", description = "是否为管理员", example = "true") @RequestParam boolean isAdmin,
+            @Parameter(hidden = true) @AuthenticationPrincipal LoginUser loginUser) {
+        requireProjectAdmin(projectId, loginUser);
         projectService.updateMemberRole(projectId, userId, isAdmin);
         return ResponseEntity.ok().build();
     }
@@ -102,6 +115,12 @@ public class ProjectMemberController {
             @Parameter(hidden = true) @AuthenticationPrincipal LoginUser loginUser) {
         boolean isAdmin = projectService.isAdmin(projectId, loginUser.getUserId());
         return ResponseEntity.ok(isAdmin);
+    }
+
+    private void requireProjectAdmin(Long projectId, LoginUser loginUser) {
+        if (!projectService.isAdmin(projectId, loginUser.getUserId())) {
+            throw new BizException("该操作需要项目管理员权限");
+        }
     }
 
 }

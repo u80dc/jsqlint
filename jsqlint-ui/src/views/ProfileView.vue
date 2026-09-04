@@ -216,7 +216,16 @@ const submitEdit = async () => {
 </script>
 
 <style lang="scss" scoped>
+// 满高布局：根拉满内容区高度，卡片占满（与列表页一致的填充效果）
 .profile {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+
+  .el-card {
+    flex: 1;
+  }
+
   .profile-actions {
     margin-top: 20px;
     display: flex;

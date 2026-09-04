@@ -5,6 +5,7 @@ import cn.jnu.zhangcs.jsqlint.server.common.exception.GlobalExceptionHandler;
 import cn.jnu.zhangcs.jsqlint.server.entity.InspectionConfig;
 import cn.jnu.zhangcs.jsqlint.server.security.LoginUser;
 import cn.jnu.zhangcs.jsqlint.server.service.InspectionConfigService;
+import cn.jnu.zhangcs.jsqlint.server.service.ProjectService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -47,6 +48,9 @@ class InspectionConfigControllerTest {
     @Mock
     private InspectionConfigService inspectionConfigService;
 
+    @Mock
+    private ProjectService projectService;
+
     @InjectMocks
     private InspectionConfigController inspectionConfigController;
 
@@ -79,6 +83,12 @@ class InspectionConfigControllerTest {
                 new UsernamePasswordAuthenticationToken(new LoginUser("admin", userId), "password");
         SecurityContextHolder.getContext().setAuthentication(token);
         return token;
+    }
+
+    /** 写操作要求项目管理员，默认按管理员放行。 */
+    private void loginAsProjectAdmin(Long userId, Long projectId) {
+        login(userId);
+        when(projectService.isAdmin(projectId, userId)).thenReturn(true);
     }
 
     @Test
@@ -135,6 +145,7 @@ class InspectionConfigControllerTest {
     @Test
     void saveOrUpdate_validBody_returnsSavedVoWithOperatorFromPrincipal() throws Exception {
         InspectionConfig saved = buildConfig(1L, 5L, "订单系统", "0 0 * * * ?", 1);
+        when(projectService.isAdmin(5L, 7L)).thenReturn(true);
         when(inspectionConfigService.saveOrUpdate(5L, "0 0 * * * ?", true, 7L)).thenReturn(saved);
 
         mockMvc.perform(put("/api/inspection-configs/5")
@@ -162,6 +173,7 @@ class InspectionConfigControllerTest {
 
     @Test
     void saveOrUpdate_bizExceptionMappedTo400() throws Exception {
+        when(projectService.isAdmin(5L, 7L)).thenReturn(true);
         when(inspectionConfigService.saveOrUpdate(eq(5L), eq("bad"), isNull(), eq(7L)))
                 .thenThrow(new BizException("Cron 表达式不合法"));
 
@@ -176,6 +188,7 @@ class InspectionConfigControllerTest {
 
     @Test
     void setEnabled_true_returns204() throws Exception {
+        loginAsProjectAdmin(7L, 5L);
         mockMvc.perform(patch("/api/inspection-configs/5/enabled")
                         .param("enabled", "true")
                         .principal(login(7L)))
@@ -186,6 +199,7 @@ class InspectionConfigControllerTest {
 
     @Test
     void setEnabled_false_returns204() throws Exception {
+        loginAsProjectAdmin(7L, 5L);
         mockMvc.perform(patch("/api/inspection-configs/5/enabled")
                         .param("enabled", "false")
                         .principal(login(7L)))
@@ -196,6 +210,7 @@ class InspectionConfigControllerTest {
 
     @Test
     void delete_existing_returns204() throws Exception {
+        loginAsProjectAdmin(7L, 5L);
         mockMvc.perform(delete("/api/inspection-configs/5")
                         .principal(login(7L)))
                 .andExpect(status().isNoContent());

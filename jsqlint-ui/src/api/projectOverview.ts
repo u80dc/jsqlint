@@ -78,25 +78,25 @@ export interface ProjectOverviewSqlQualityTrendVO {
 }
 
 export const getProjectOverviewSql = (projectId: number): Promise<ProjectOverviewSqlVO> => {
-  return request.get<ProjectOverviewSqlVO>(`/api/project/overview/${projectId}/sql`)
+  return request.get<ProjectOverviewSqlVO>(`/api/projects/overview/${projectId}/sql`)
 }
 
 export const getProjectOverviewIssueCategories = (projectId: number): Promise<ProjectOverviewIssueCategoryVO> => {
-  return request.get<ProjectOverviewIssueCategoryVO>(`/api/project/overview/${projectId}/issue-categories`)
+  return request.get<ProjectOverviewIssueCategoryVO>(`/api/projects/overview/${projectId}/issue-categories`)
 }
 
 export const getProjectOverviewIssueRectificationRate = (projectId: number): Promise<ProjectOverviewIssueRectificationVO> => {
-  return request.get<ProjectOverviewIssueRectificationVO>(`/api/project/overview/${projectId}/issue-rectification-rate`)
+  return request.get<ProjectOverviewIssueRectificationVO>(`/api/projects/overview/${projectId}/issue-rectification-rate`)
 }
 
 export const getProjectOverviewIssueSqlRate = (projectId: number): Promise<ProjectOverviewIssueSqlRateVO> => {
-  return request.get<ProjectOverviewIssueSqlRateVO>(`/api/project/overview/${projectId}/issue-sql-rate`)
+  return request.get<ProjectOverviewIssueSqlRateVO>(`/api/projects/overview/${projectId}/issue-sql-rate`)
 }
 
 export const getProjectOverviewScore = (projectId: number): Promise<ProjectOverviewScoreVO> => {
-  return request.get<ProjectOverviewScoreVO>(`/api/project/overview/${projectId}/score`)
+  return request.get<ProjectOverviewScoreVO>(`/api/projects/overview/${projectId}/score`)
 }
 
 export const getProjectOverviewSqlQualityTrend = (projectId: number): Promise<ProjectOverviewSqlQualityTrendVO> => {
-  return request.get<ProjectOverviewSqlQualityTrendVO>(`/api/project/overview/${projectId}/sql-quality-trend`)
+  return request.get<ProjectOverviewSqlQualityTrendVO>(`/api/projects/overview/${projectId}/sql-quality-trend`)
 }

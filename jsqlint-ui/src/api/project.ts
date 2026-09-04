@@ -127,15 +127,15 @@ export const getProjects = (workspaceId?: number): Promise<ProjectVO[]> => {
 }
 
 export const getProject = (id: number): Promise<ProjectVO> => {
-  return request.get<ProjectVO>(`/api/project/${id}`)
+  return request.get<ProjectVO>(`/api/projects/${id}`)
 }
 
 export const createProject = (data: ProjectCreateDTO): Promise<ProjectVO> => {
-  return request.post<ProjectVO>('/api/project', data)
+  return request.post<ProjectVO>('/api/projects', data)
 }
 
 export const updateProject = (id: number, data: ProjectCreateDTO): Promise<ProjectVO> => {
-  return request.put<ProjectVO>(`/api/project/${id}`, data)
+  return request.put<ProjectVO>(`/api/projects/${id}`, data)
 }
 
 export const getCredentials = (): Promise<CredentialVO[]> => {
@@ -146,45 +146,45 @@ export const getCredentials = (): Promise<CredentialVO[]> => {
 }
 
 export const getProjectCredentials = (): Promise<CredentialVO[]> => {
-  return request.get<CredentialVO[]>('/api/project/credentials')
+  return request.get<CredentialVO[]>('/api/projects/credentials')
 }
 
 export const updateProjectCredential = (projectId: number, credentialId: number | null): Promise<ProjectVO> => {
-  return request.put<ProjectVO>(`/api/project/${projectId}/credential`, null, { params: { credentialId } })
+  return request.put<ProjectVO>(`/api/projects/${projectId}/credential`, null, { params: { credentialId } })
 }
 
 export const getProjectVersions = (projectId: number): Promise<ProjectVersionVO[]> => {
-  return request.get<ProjectVersionVO[]>(`/api/project/${projectId}/versions`)
+  return request.get<ProjectVersionVO[]>(`/api/projects/${projectId}/versions`)
 }
 
 export const getProjectStatus = (projectId: number): Promise<ProjectStatusVO> => {
-  return request.get<ProjectStatusVO>(`/api/project/${projectId}/status`)
+  return request.get<ProjectStatusVO>(`/api/projects/${projectId}/status`)
 }
 
 export const syncProject = (projectId: number): Promise<ProjectVersionVO> => {
-  return request.post<ProjectVersionVO>(`/api/project/${projectId}/sync`)
+  return request.post<ProjectVersionVO>(`/api/projects/${projectId}/sync`)
 }
 
 export const compileProject = (projectId: number): Promise<void> => {
-  return request.post<void>(`/api/project/${projectId}/compile`)
+  return request.post<void>(`/api/projects/${projectId}/compile`)
 }
 
 export const analyzeProject = (projectId: number): Promise<ProjectAnalysisVO> => {
-  return request.post<ProjectAnalysisVO>(`/api/project/${projectId}/analyze`)
+  return request.post<ProjectAnalysisVO>(`/api/projects/${projectId}/analyze`)
 }
 
 export const auditProject = (projectId: number): Promise<void> => {
-  return request.post<void>(`/api/project/${projectId}/audit`)
+  return request.post<void>(`/api/projects/${projectId}/audit`)
 }
 
 export const generateReportProject = (projectId: number): Promise<number> => {
-  return request.post<number>(`/api/project/${projectId}/reports`)
+  return request.post<number>(`/api/projects/${projectId}/reports`)
 }
 
 export const executeProject = (projectId: number): Promise<boolean> => {
-  return request.post<boolean>(`/api/project/${projectId}/execute`)
+  return request.post<boolean>(`/api/projects/${projectId}/execute`)
 }
 
 export const deleteProject = (projectId: number): Promise<void> => {
-  return request.delete<void>(`/api/project/${projectId}`)
+  return request.delete<void>(`/api/projects/${projectId}`)
 }

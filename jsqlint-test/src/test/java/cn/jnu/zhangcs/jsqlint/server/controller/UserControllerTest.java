@@ -2,8 +2,6 @@ package cn.jnu.zhangcs.jsqlint.server.controller;
 
 import cn.jnu.zhangcs.jsqlint.server.common.exception.GlobalExceptionHandler;
 import cn.jnu.zhangcs.jsqlint.server.entity.User;
-import cn.jnu.zhangcs.jsqlint.server.entity.UserGroup;
-import cn.jnu.zhangcs.jsqlint.server.service.UserGroupService;
 import cn.jnu.zhangcs.jsqlint.server.service.UserService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -34,9 +32,6 @@ class UserControllerTest {
 
     @Mock
     private UserService userService;
-
-    @Mock
-    private UserGroupService userGroupService;
 
     @InjectMocks
     private UserController userController;
@@ -74,53 +69,6 @@ class UserControllerTest {
     @Test
     void searchUsers_withoutKeyword_returnsEmptyList() throws Exception {
         mockMvc.perform(get("/api/users/search"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(0));
-    }
-
-    @Test
-    void searchGroups_withKeyword_returnsMatchedGroups() throws Exception {
-        UserGroup group = new UserGroup();
-        group.setId(2L);
-        group.setName("开发组");
-        group.setDescription("研发人员用户组");
-        group.setMemberCount(3);
-        when(userGroupService.getByKeyword("开发")).thenReturn(List.of(group));
-
-        mockMvc.perform(get("/api/users/groups/search").param("keyword", "开发"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(1))
-                .andExpect(jsonPath("$[0].id").value(2))
-                .andExpect(jsonPath("$[0].name").value("开发组"))
-                .andExpect(jsonPath("$[0].memberCount").value(3));
-    }
-
-    @Test
-    void searchGroups_withoutKeyword_returnsEmptyList() throws Exception {
-        mockMvc.perform(get("/api/users/groups/search"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(0));
-    }
-
-    @Test
-    void getGroupMembers_withGroupId_returnsMembers() throws Exception {
-        User member = new User();
-        member.setId(3L);
-        member.setAccount("lisi");
-        member.setUsername("李四");
-        when(userGroupService.getMembers(2L)).thenReturn(List.of(member));
-
-        mockMvc.perform(get("/api/users/groups/members").param("groupId", "2"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.length()").value(1))
-                .andExpect(jsonPath("$[0].id").value(3))
-                .andExpect(jsonPath("$[0].account").value("lisi"))
-                .andExpect(jsonPath("$[0].username").value("李四"));
-    }
-
-    @Test
-    void getGroupMembers_withoutGroupId_returnsEmptyList() throws Exception {
-        mockMvc.perform(get("/api/users/groups/members"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(0));
     }

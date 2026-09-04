@@ -36,12 +36,15 @@ import java.util.stream.Collectors;
 /**
  * 项目控制器
  *
+ * <p>承载项目管理（CRUD、版本与状态查询、报告查询下载、凭证关联）；
+ * 流水线任务触发见 {@link ProjectPipelineController}。</p>
+ *
  * @author zhangcs
  */
-@Tag(name = "项目管理", description = "项目的创建、更新、删除、查询及代码同步、编译、分析等操作")
+@Tag(name = "项目管理", description = "项目的创建、更新、删除、查询、版本状态与报告查询")
 @RequiredArgsConstructor
 @RestController
-@RequestMapping("/api/project")
+@RequestMapping("/api/projects")
 @Validated
 public class ProjectController {
 
@@ -252,59 +255,6 @@ public class ProjectController {
             return null;
         }
         return user.getUsername();
-    }
-
-    @Operation(summary = "同步代码", description = "从 Git 仓库同步项目代码")
-    @PostMapping("/{id}/sync")
-    public ResponseEntity<Void> sync(
-            @Parameter(name = "id", description = "项目ID", example = "1") @PathVariable(value = "id") Long id,
-            @Parameter(hidden = true) @AuthenticationPrincipal LoginUser loginUser) {
-        analysisService.sync(id, loginUser.getUserId());
-        return ResponseEntity.ok().build();
-    }
-
-    @Operation(summary = "编译项目", description = "使用 Maven 编译项目代码")
-    @PostMapping("/{id}/compile")
-    public ResponseEntity<Void> compile(
-            @Parameter(name = "id", description = "项目ID", example = "1") @PathVariable(value = "id") Long id,
-            @Parameter(hidden = true) @AuthenticationPrincipal LoginUser loginUser) {
-        analysisService.compile(id, loginUser.getUserId());
-        return ResponseEntity.ok().build();
-    }
-
-    @Operation(summary = "分析项目", description = "对项目代码进行 SQL 注入漏洞分析")
-    @PostMapping("/{id}/analyze")
-    public ResponseEntity<Void> analyze(
-            @Parameter(name = "id", description = "项目ID", example = "1") @PathVariable(value = "id") Long id,
-            @Parameter(hidden = true) @AuthenticationPrincipal LoginUser loginUser) {
-        analysisService.analyze(id, loginUser.getUserId());
-        return ResponseEntity.ok().build();
-    }
-
-    @Operation(summary = "审核项目", description = "对分析结果应用 Drools 审核规则")
-    @PostMapping("/{id}/audit")
-    public ResponseEntity<Void> audit(
-            @Parameter(name = "id", description = "项目ID", example = "1") @PathVariable(value = "id") Long id,
-            @Parameter(hidden = true) @AuthenticationPrincipal LoginUser loginUser) {
-        analysisService.audit(id, loginUser.getUserId());
-        return ResponseEntity.ok().build();
-    }
-
-    @Operation(summary = "生成报告", description = "生成项目的审核报告")
-    @PostMapping("/{id}/reports")
-    public ResponseEntity<Long> report(
-            @Parameter(name = "id", description = "项目ID", example = "1") @PathVariable(value = "id") Long id,
-            @Parameter(hidden = true) @AuthenticationPrincipal LoginUser loginUser) {
-        Long taskId = analysisService.report(id, loginUser.getUserId());
-        return ResponseEntity.ok(taskId);
-    }
-
-    @Operation(summary = "执行项目", description = "提交项目完整执行任务，依次完成同步代码、编译检查、SQL扫描、规则审核和生成报告")
-    @PostMapping("/{id}/execute")
-    public ResponseEntity<Boolean> execute(
-            @Parameter(name = "id", description = "项目ID", example = "1") @PathVariable(value = "id") Long id,
-            @Parameter(hidden = true) @AuthenticationPrincipal LoginUser loginUser) {
-        return ResponseEntity.ok(analysisService.execute(id, loginUser.getUserId()));
     }
 
 }

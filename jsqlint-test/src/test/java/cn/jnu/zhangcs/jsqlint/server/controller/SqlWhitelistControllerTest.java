@@ -60,6 +60,9 @@ class SqlWhitelistControllerTest {
     @Mock
     private UserService userService;
 
+    @Mock
+    private cn.jnu.zhangcs.jsqlint.server.service.ProjectService projectService;
+
     @InjectMocks
     private SqlWhitelistController sqlWhitelistController;
 
@@ -102,7 +105,7 @@ class SqlWhitelistControllerTest {
         when(auditRuleMapper.selectById(3L)).thenReturn(buildRule(3L, "禁止无 WHERE 删除"));
         when(userService.getById(7L)).thenReturn(buildUser(7L, "admin"));
 
-        mockMvc.perform(get("/api/project/5/whitelist"))
+        mockMvc.perform(get("/api/projects/5/whitelist"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.total").value(1))
                 .andExpect(jsonPath("$.list.length()").value(1))
@@ -120,7 +123,7 @@ class SqlWhitelistControllerTest {
         when(sqlWhitelistService.list(5L, 2, 5, 9L)).thenReturn(List.of());
         when(sqlWhitelistService.count(5L, 9L)).thenReturn(0L);
 
-        mockMvc.perform(get("/api/project/5/whitelist")
+        mockMvc.perform(get("/api/projects/5/whitelist")
                         .param("page", "2")
                         .param("pageSize", "5")
                         .param("ruleId", "9"))
@@ -135,7 +138,7 @@ class SqlWhitelistControllerTest {
         when(sqlWhitelistService.list(5L, 1, 10, null)).thenReturn(List.of(item));
         when(sqlWhitelistService.count(5L, null)).thenReturn(1L);
 
-        mockMvc.perform(get("/api/project/5/whitelist"))
+        mockMvc.perform(get("/api/projects/5/whitelist"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.list[0].id").value(12))
                 .andExpect(jsonPath("$.list[0].ruleName").value(nullValue()))
@@ -145,11 +148,12 @@ class SqlWhitelistControllerTest {
     @Test
     void create_validBody_returnsVoWithNames() throws Exception {
         SqlWhitelist created = buildWhitelist(12L, 5L, 3L, 7L);
+        when(projectService.isAdmin(5L, 7L)).thenReturn(true);
         when(sqlWhitelistService.create(eq(5L), any(SqlWhitelistDTO.class), eq(7L))).thenReturn(created);
         when(auditRuleMapper.selectById(3L)).thenReturn(buildRule(3L, "禁止无 WHERE 删除"));
         when(userService.getById(7L)).thenReturn(buildUser(7L, "admin"));
 
-        mockMvc.perform(post("/api/project/5/whitelist")
+        mockMvc.perform(post("/api/projects/5/whitelist")
                         .principal(login(7L))
                         .contentType(MediaType.APPLICATION_JSON)
                         .characterEncoding("UTF-8")
@@ -170,7 +174,7 @@ class SqlWhitelistControllerTest {
 
     @Test
     void create_blankSql_returns400() throws Exception {
-        mockMvc.perform(post("/api/project/5/whitelist")
+        mockMvc.perform(post("/api/projects/5/whitelist")
                         .principal(login(7L))
                         .contentType(MediaType.APPLICATION_JSON)
                         .characterEncoding("UTF-8")
@@ -182,7 +186,7 @@ class SqlWhitelistControllerTest {
 
     @Test
     void create_missingRuleId_returns400() throws Exception {
-        mockMvc.perform(post("/api/project/5/whitelist")
+        mockMvc.perform(post("/api/projects/5/whitelist")
                         .principal(login(7L))
                         .contentType(MediaType.APPLICATION_JSON)
                         .characterEncoding("UTF-8")
@@ -194,7 +198,7 @@ class SqlWhitelistControllerTest {
 
     @Test
     void create_overlongReason_returns400() throws Exception {
-        mockMvc.perform(post("/api/project/5/whitelist")
+        mockMvc.perform(post("/api/projects/5/whitelist")
                         .principal(login(7L))
                         .contentType(MediaType.APPLICATION_JSON)
                         .characterEncoding("UTF-8")
@@ -206,10 +210,11 @@ class SqlWhitelistControllerTest {
 
     @Test
     void create_bizExceptionMappedTo400() throws Exception {
+        when(projectService.isAdmin(5L, 7L)).thenReturn(true);
         when(sqlWhitelistService.create(eq(5L), any(SqlWhitelistDTO.class), eq(7L)))
                 .thenThrow(new BizException("该 SQL 已在白名单中"));
 
-        mockMvc.perform(post("/api/project/5/whitelist")
+        mockMvc.perform(post("/api/projects/5/whitelist")
                         .principal(login(7L))
                         .contentType(MediaType.APPLICATION_JSON)
                         .characterEncoding("UTF-8")
@@ -220,7 +225,11 @@ class SqlWhitelistControllerTest {
 
     @Test
     void delete_existing_returns200() throws Exception {
-        mockMvc.perform(delete("/api/project/5/whitelist/12"))
+        login(7L);
+        when(projectService.isAdmin(5L, 7L)).thenReturn(true);
+
+        mockMvc.perform(delete("/api/projects/5/whitelist/12")
+                        .principal(login(7L)))
                 .andExpect(status().isOk());
 
         verify(sqlWhitelistService).delete(5L, 12L);

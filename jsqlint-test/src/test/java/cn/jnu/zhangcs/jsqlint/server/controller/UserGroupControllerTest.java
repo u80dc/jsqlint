@@ -318,4 +318,28 @@ class UserGroupControllerTest {
                 .andExpect(jsonPath("$[0].name").value("研发组"))
                 .andExpect(jsonPath("$[0].creatorId").value(7));
     }
+
+    @Test
+    void searchGroups_withKeyword_returnsMatchedGroups() throws Exception {
+        UserGroup group = new UserGroup();
+        group.setId(2L);
+        group.setName("开发组");
+        group.setDescription("研发人员用户组");
+        group.setMemberCount(3);
+        when(userGroupService.getByKeyword("开发")).thenReturn(List.of(group));
+
+        mockMvc.perform(get("/api/user-groups/search").param("keyword", "开发"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].id").value(2))
+                .andExpect(jsonPath("$[0].name").value("开发组"))
+                .andExpect(jsonPath("$[0].memberCount").value(3));
+    }
+
+    @Test
+    void searchGroups_withoutKeyword_returnsEmptyList() throws Exception {
+        mockMvc.perform(get("/api/user-groups/search"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(0));
+    }
 }

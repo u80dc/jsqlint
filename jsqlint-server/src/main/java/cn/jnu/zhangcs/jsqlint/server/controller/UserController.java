@@ -1,8 +1,6 @@
 package cn.jnu.zhangcs.jsqlint.server.controller;
 
 import cn.jnu.zhangcs.jsqlint.server.entity.User;
-import cn.jnu.zhangcs.jsqlint.server.entity.UserGroup;
-import cn.jnu.zhangcs.jsqlint.server.service.UserGroupService;
 import cn.jnu.zhangcs.jsqlint.server.service.UserService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -17,19 +15,20 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * 用户控制器
+ * 用户查询控制器
+ *
+ * <p>仅承载面向普通业务（如项目成员添加）的用户搜索；
+ * 用户管理见 {@link AdminUserController}，用户组相关见 {@link UserGroupController}。</p>
  *
  * @author zhangcs
  */
-@Tag(name = "用户查询", description = "用户和用户组搜索相关接口")
+@Tag(name = "用户查询", description = "用户搜索接口")
 @RestController
 @RequestMapping("/api/users")
 @RequiredArgsConstructor
 public class UserController {
 
     private final UserService userService;
-
-    private final UserGroupService userGroupService;
 
     @GetMapping("/search")
     @Operation(summary = "搜索用户", description = "根据关键字模糊搜索用户（用户名或真实姓名）")
@@ -39,26 +38,6 @@ public class UserController {
             return ResponseEntity.ok(List.of());
         }
         return ResponseEntity.ok(userService.getByKeyword(keyword));
-    }
-
-    @GetMapping("/groups/search")
-    @Operation(summary = "搜索用户组", description = "根据关键字模糊搜索用户组")
-    @Parameter(name = "keyword", description = "搜索关键字", example = "开发组")
-    public ResponseEntity<List<UserGroup>> searchGroups(@RequestParam(value = "keyword", required = false) String keyword) {
-        if (keyword == null) {
-            return ResponseEntity.ok(List.of());
-        }
-        return ResponseEntity.ok(userGroupService.getByKeyword(keyword));
-    }
-
-    @GetMapping("/groups/members")
-    @Operation(summary = "获取用户组成员", description = "获取指定用户组的所有成员")
-    @Parameter(name = "groupId", description = "用户组ID", example = "1", required = true)
-    public ResponseEntity<List<User>> getGroupMembers(@RequestParam(value = "groupId", required = false) Long groupId) {
-        if (groupId == null) {
-            return ResponseEntity.ok(List.of());
-        }
-        return ResponseEntity.ok(userGroupService.getMembers(groupId));
     }
 
 }

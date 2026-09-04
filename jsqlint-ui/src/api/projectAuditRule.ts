@@ -29,25 +29,25 @@ export const getProjectAuditRules = (
   projectId: number,
   params: ProjectAuditRuleListParams
 ): Promise<ProjectAuditRuleListResponse> => {
-  return request.get<ProjectAuditRuleListResponse>(`/api/project/${projectId}/rules`, { params })
+  return request.get<ProjectAuditRuleListResponse>(`/api/projects/${projectId}/rules`, { params })
 }
 
 export const getProjectAuditRule = (projectId: number, id: number): Promise<AuditRuleVO> => {
-  return request.get<AuditRuleVO>(`/api/project/${projectId}/rules/${id}`)
+  return request.get<AuditRuleVO>(`/api/projects/${projectId}/rules/${id}`)
 }
 
 export const createProjectAuditRule = (projectId: number, data: ProjectAuditRuleDTO): Promise<AuditRuleVO> => {
-  return request.post<AuditRuleVO>(`/api/project/${projectId}/rules`, data)
+  return request.post<AuditRuleVO>(`/api/projects/${projectId}/rules`, data)
 }
 
 export const updateProjectAuditRule = (projectId: number, id: number, data: ProjectAuditRuleDTO): Promise<AuditRuleVO> => {
-  return request.put<AuditRuleVO>(`/api/project/${projectId}/rules/${id}`, data)
+  return request.put<AuditRuleVO>(`/api/projects/${projectId}/rules/${id}`, data)
 }
 
 export const deleteProjectAuditRule = (projectId: number, id: number): Promise<void> => {
-  return request.delete<void>(`/api/project/${projectId}/rules/${id}`)
+  return request.delete<void>(`/api/projects/${projectId}/rules/${id}`)
 }
 
 export const toggleProjectAuditRule = (projectId: number, id: number, enabled: boolean): Promise<AuditRuleVO> => {
-  return request.put<AuditRuleVO>(`/api/project/${projectId}/rules/${id}/toggle`, { enabled })
+  return request.put<AuditRuleVO>(`/api/projects/${projectId}/rules/${id}/toggle`, { enabled })
 }

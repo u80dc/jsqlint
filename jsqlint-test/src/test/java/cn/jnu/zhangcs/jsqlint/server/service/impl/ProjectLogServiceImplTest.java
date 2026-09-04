@@ -175,7 +175,7 @@ class ProjectLogServiceImplTest {
     }
 
     @Test
-    void getByProjectId_fillsProjectName() {
+    void getPage_withProjectId_fillsProjectName() {
         ProjectLog record = new ProjectLog();
         record.setProjectId(1L);
         Page<ProjectLog> page = new Page<>(1, 10);
@@ -185,22 +185,8 @@ class ProjectLogServiceImplTest {
         project.setName("订单系统");
         when(projectMapper.selectById(1L)).thenReturn(project);
 
-        Page<ProjectLog> result = projectLogService.getByProjectId(1, 10, 1L);
+        Page<ProjectLog> result = projectLogService.getPage(1, 10, 1L, null, null, null, null);
 
         assertThat(result.getRecords().get(0).getProjectName()).isEqualTo("订单系统");
-    }
-
-    @Test
-    void getByRelatedId_fillsProjectName() {
-        ProjectLog record = new ProjectLog();
-        record.setProjectId(1L);
-        Page<ProjectLog> page = new Page<>(1, 10);
-        page.setRecords(List.of(record));
-        when(projectLogMapper.selectPage(any(), any())).thenReturn(page);
-        when(projectMapper.selectById(1L)).thenReturn(new Project());
-
-        Page<ProjectLog> result = projectLogService.getByRelatedId(1, 10, 1L, 20L);
-
-        assertThat(result.getRecords()).hasSize(1);
     }
 }

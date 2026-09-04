@@ -29,13 +29,13 @@ export interface ProjectReportVO {
 }
 
 export const getProjectReport = (projectId: number, versionId?: number): Promise<ProjectReportVO | null> => {
-  return request.get<ProjectReportVO | null>(`/api/project/${projectId}/reports`, {
+  return request.get<ProjectReportVO | null>(`/api/projects/${projectId}/reports`, {
     params: versionId ? { versionId } : undefined
   })
 }
 
 export const downloadProjectReportPdf = (projectId: number, versionId?: number): Promise<Blob> => {
-  return request.get<Blob>(`/api/project/${projectId}/reports/download`, {
+  return request.get<Blob>(`/api/projects/${projectId}/reports/download`, {
     params: versionId ? { versionId } : undefined,
     responseType: 'blob'
   })

@@ -1,5 +1,6 @@
 package cn.jnu.zhangcs.jsqlint.server.controller;
 
+import cn.jnu.zhangcs.jsqlint.server.common.exception.BizException;
 import cn.jnu.zhangcs.jsqlint.server.entity.AuditRule;
 import cn.jnu.zhangcs.jsqlint.server.entity.SqlWhitelist;
 import cn.jnu.zhangcs.jsqlint.server.entity.User;
@@ -7,6 +8,7 @@ import cn.jnu.zhangcs.jsqlint.server.mapper.AuditRuleMapper;
 import cn.jnu.zhangcs.jsqlint.server.model.dto.SqlWhitelistDTO;
 import cn.jnu.zhangcs.jsqlint.server.model.vo.SqlWhitelistVO;
 import cn.jnu.zhangcs.jsqlint.server.security.LoginUser;
+import cn.jnu.zhangcs.jsqlint.server.service.ProjectService;
 import cn.jnu.zhangcs.jsqlint.server.service.SqlWhitelistService;
 import cn.jnu.zhangcs.jsqlint.server.service.UserService;
 import io.swagger.v3.oas.annotations.Operation;
@@ -25,17 +27,20 @@ import java.util.Map;
 /**
  * SQL 白名单控制器
  *
+ * <p>写操作（新增、删除）要求当前用户为项目管理员。</p>
+ *
  * @author zhangcs
  */
 @Tag(name = "SQL白名单管理", description = "项目 SQL 白名单的新增、查询和删除")
 @RestController
-@RequestMapping("/api/project/{projectId}/whitelist")
+@RequestMapping("/api/projects/{projectId}/whitelist")
 @RequiredArgsConstructor
 public class SqlWhitelistController {
 
     private final SqlWhitelistService sqlWhitelistService;
     private final AuditRuleMapper auditRuleMapper;
     private final UserService userService;
+    private final ProjectService projectService;
 
     @Operation(summary = "查询白名单列表", description = "分页查询指定项目的 SQL 白名单")
     @GetMapping
@@ -52,23 +57,32 @@ public class SqlWhitelistController {
         ));
     }
 
-    @Operation(summary = "新增白名单", description = "为指定项目新增一条 SQL 白名单记录")
+    @Operation(summary = "新增白名单", description = "为指定项目新增一条 SQL 白名单记录（需项目管理员权限）")
     @PostMapping
     public ResponseEntity<SqlWhitelistVO> create(
             @Parameter(name = "projectId", description = "项目ID", example = "1") @PathVariable("projectId") Long projectId,
             @Valid @RequestBody SqlWhitelistDTO dto,
             @Parameter(hidden = true) @AuthenticationPrincipal LoginUser loginUser) {
+        requireProjectAdmin(projectId, loginUser);
         SqlWhitelist created = sqlWhitelistService.create(projectId, dto, loginUser.getUserId());
         return ResponseEntity.ok(toVO(created));
     }
 
-    @Operation(summary = "删除白名单", description = "删除指定项目下某条 SQL 白名单记录")
+    @Operation(summary = "删除白名单", description = "删除指定项目下某条 SQL 白名单记录（需项目管理员权限）")
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> delete(
             @Parameter(name = "projectId", description = "项目ID", example = "1") @PathVariable("projectId") Long projectId,
-            @Parameter(name = "id", description = "白名单ID", example = "1") @PathVariable("id") Long id) {
+            @Parameter(name = "id", description = "白名单ID", example = "1") @PathVariable("id") Long id,
+            @Parameter(hidden = true) @AuthenticationPrincipal LoginUser loginUser) {
+        requireProjectAdmin(projectId, loginUser);
         sqlWhitelistService.delete(projectId, id);
         return ResponseEntity.ok().build();
+    }
+
+    private void requireProjectAdmin(Long projectId, LoginUser loginUser) {
+        if (!projectService.isAdmin(projectId, loginUser.getUserId())) {
+            throw new BizException("该操作需要项目管理员权限");
+        }
     }
 
     private SqlWhitelistVO toVO(SqlWhitelist entity) {

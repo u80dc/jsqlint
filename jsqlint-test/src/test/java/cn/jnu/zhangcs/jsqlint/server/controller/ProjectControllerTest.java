@@ -151,7 +151,7 @@ class ProjectControllerTest {
         when(converter.toVO(created, "admin")).thenReturn(ProjectVO.builder()
                 .id(1L).name("demo").gitUrl("https://github.com/example/repo.git").build());
 
-        mockMvc.perform(post("/api/project")
+        mockMvc.perform(post("/api/projects")
                         .principal(login(7L))
                         .contentType(MediaType.APPLICATION_JSON)
                         .characterEncoding("UTF-8")
@@ -168,7 +168,7 @@ class ProjectControllerTest {
     @Test
     void create_blankGitUrl_returns400() throws Exception {
         // gitUrl 上的 @NotBlank 先于控制器内的手动判空触发，返回 400 校验错误体
-        mockMvc.perform(post("/api/project")
+        mockMvc.perform(post("/api/projects")
                         .principal(login(7L))
                         .contentType(MediaType.APPLICATION_JSON)
                         .characterEncoding("UTF-8")
@@ -188,7 +188,7 @@ class ProjectControllerTest {
         when(converter.toVO(existing, "zhang")).thenReturn(ProjectVO.builder()
                 .id(1L).name("demo").ref("dev").build());
 
-        mockMvc.perform(put("/api/project/1")
+        mockMvc.perform(put("/api/projects/1")
                         .contentType(MediaType.APPLICATION_JSON)
                         .characterEncoding("UTF-8")
                         .content("{\"name\":\"demo\",\"ref\":\"dev\",\"description\":\"示例项目\"}"))
@@ -206,7 +206,7 @@ class ProjectControllerTest {
         when(userService.getById(9L)).thenReturn(creator);
         when(converter.toVO(existing, "zhang")).thenReturn(ProjectVO.builder().id(1L).credentialId(3L).build());
 
-        mockMvc.perform(put("/api/project/1/credential").param("credentialId", "3"))
+        mockMvc.perform(put("/api/projects/1/credential").param("credentialId", "3"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(1))
                 .andExpect(jsonPath("$.credentialId").value(3));
@@ -226,7 +226,7 @@ class ProjectControllerTest {
         when(userService.getById(9L)).thenReturn(creator);
         when(converter.toVO(existing, "zhang")).thenReturn(ProjectVO.builder().id(1L).build());
 
-        mockMvc.perform(put("/api/project/1/credential").param("credentialId", "-1"))
+        mockMvc.perform(put("/api/projects/1/credential").param("credentialId", "-1"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(1));
 
@@ -240,14 +240,14 @@ class ProjectControllerTest {
     void updateCredential_projectNotFound_returns400() throws Exception {
         when(projectService.getById(99L)).thenReturn(null);
 
-        mockMvc.perform(put("/api/project/99/credential").param("credentialId", "3"))
+        mockMvc.perform(put("/api/projects/99/credential").param("credentialId", "3"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("项目不存在"));
     }
 
     @Test
     void deleteProject_existing_returnsOk() throws Exception {
-        mockMvc.perform(delete("/api/project/1"))
+        mockMvc.perform(delete("/api/projects/1"))
                 .andExpect(status().isOk())
                 .andExpect(content().string(""));
 
@@ -262,7 +262,7 @@ class ProjectControllerTest {
         when(converter.toVO(existing, "zhang")).thenReturn(ProjectVO.builder()
                 .id(1L).name("demo").createUserName("zhang").build());
 
-        mockMvc.perform(get("/api/project/1"))
+        mockMvc.perform(get("/api/projects/1"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(1))
                 .andExpect(jsonPath("$.createUserName").value("zhang"));
@@ -272,7 +272,7 @@ class ProjectControllerTest {
     void getProject_notFound_returns200WithEmptyBody() throws Exception {
         when(projectService.getById(99L)).thenReturn(null);
 
-        mockMvc.perform(get("/api/project/99"))
+        mockMvc.perform(get("/api/projects/99"))
                 .andExpect(status().isOk())
                 .andExpect(content().string(""));
     }
@@ -286,7 +286,7 @@ class ProjectControllerTest {
         when(converter.toProjectVOList(List.of(existing), List.of(creator)))
                 .thenReturn(List.of(ProjectVO.builder().id(1L).name("demo").build()));
 
-        mockMvc.perform(get("/api/project")
+        mockMvc.perform(get("/api/projects")
                         .param("keyword", "demo")
                         .param("enabled", "true"))
                 .andExpect(status().isOk())
@@ -299,7 +299,7 @@ class ProjectControllerTest {
     void listProjects_noMatch_returnsEmptyArray() throws Exception {
         when(projectService.getByKeyword(null, null)).thenReturn(List.of());
 
-        mockMvc.perform(get("/api/project"))
+        mockMvc.perform(get("/api/projects"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(0));
     }
@@ -318,7 +318,7 @@ class ProjectControllerTest {
         when(converter.toVO(version, "demo", "zhang")).thenReturn(ProjectVersionVO.builder()
                 .id(2L).projectId(1L).projectName("demo").operatorId(9L).operatorName("zhang").build());
 
-        mockMvc.perform(get("/api/project/1/versions"))
+        mockMvc.perform(get("/api/projects/1/versions"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(1))
                 .andExpect(jsonPath("$[0].id").value(2))
@@ -332,7 +332,7 @@ class ProjectControllerTest {
         when(projectVersionStepService.getProjectStatus(1L)).thenReturn(ProjectStatusVO.builder()
                 .projectId(1L).versionId(2L).overallStatus(1).overallStatusName("执行中").steps(List.of()).build());
 
-        mockMvc.perform(get("/api/project/1/status"))
+        mockMvc.perform(get("/api/projects/1/status"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.projectId").value(1))
                 .andExpect(jsonPath("$.versionId").value(2))
@@ -343,7 +343,7 @@ class ProjectControllerTest {
     void getProjectStatus_projectNotFound_returns400() throws Exception {
         when(projectService.getById(99L)).thenReturn(null);
 
-        mockMvc.perform(get("/api/project/99/status"))
+        mockMvc.perform(get("/api/projects/99/status"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("项目不存在"));
     }
@@ -354,7 +354,7 @@ class ProjectControllerTest {
         when(projectReportService.getLatestByProjectId(1L)).thenReturn(ProjectReportVO.builder()
                 .id(10L).projectId(1L).score(90).rating("A").build());
 
-        mockMvc.perform(get("/api/project/1/reports"))
+        mockMvc.perform(get("/api/projects/1/reports"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(10))
                 .andExpect(jsonPath("$.score").value(90))
@@ -369,7 +369,7 @@ class ProjectControllerTest {
         when(projectReportService.getByProjectIdAndVersionId(1L, 2L)).thenReturn(ProjectReportVO.builder()
                 .id(11L).projectId(1L).versionId(2L).score(80).rating("B").build());
 
-        mockMvc.perform(get("/api/project/1/reports").param("versionId", "2"))
+        mockMvc.perform(get("/api/projects/1/reports").param("versionId", "2"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.id").value(11))
                 .andExpect(jsonPath("$.versionId").value(2));
@@ -383,7 +383,7 @@ class ProjectControllerTest {
         when(projectService.getById(1L)).thenReturn(project(1L, "demo", 9L));
         when(projectReportService.downloadLatestPdf(1L)).thenReturn(pdf);
 
-        mockMvc.perform(get("/api/project/1/reports/download"))
+        mockMvc.perform(get("/api/projects/1/reports/download"))
                 .andExpect(status().isOk())
                 .andExpect(content().contentType(MediaType.APPLICATION_PDF))
                 .andExpect(content().bytes(pdf))
@@ -399,7 +399,7 @@ class ProjectControllerTest {
         when(projectService.getById(1L)).thenReturn(project(1L, "demo", 9L));
         when(projectReportService.downloadPdf(1L, 2L)).thenReturn(pdf);
 
-        mockMvc.perform(get("/api/project/1/reports/download").param("versionId", "2"))
+        mockMvc.perform(get("/api/projects/1/reports/download").param("versionId", "2"))
                 .andExpect(status().isOk())
                 .andExpect(content().contentType(MediaType.APPLICATION_PDF))
                 .andExpect(content().bytes(pdf));
@@ -411,7 +411,7 @@ class ProjectControllerTest {
     void downloadReport_projectNotFound_returns400() throws Exception {
         when(projectService.getById(99L)).thenReturn(null);
 
-        mockMvc.perform(get("/api/project/99/reports/download"))
+        mockMvc.perform(get("/api/projects/99/reports/download"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("项目不存在"));
     }
@@ -430,75 +430,12 @@ class ProjectControllerTest {
         when(credentialService.listOptional(7L)).thenReturn(List.of(credential));
         when(userService.getByIds(any())).thenReturn(List.of(user(7L, "admin")));
 
-        mockMvc.perform(get("/api/project/credentials").principal(login(7L)))
+        mockMvc.perform(get("/api/projects/credentials").principal(login(7L)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(1))
                 .andExpect(jsonPath("$[0].name").value("团队凭证"))
                 // CredentialConverter 为静态真实转换：visibility=1 → 公开，创建人取用户名
                 .andExpect(jsonPath("$[0].visibilityDescription").value("公开"))
                 .andExpect(jsonPath("$[0].createUserName").value("admin"));
-    }
-
-    @Test
-    void sync_authenticated_returnsOk() throws Exception {
-        mockMvc.perform(post("/api/project/1/sync").principal(login(7L)))
-                .andExpect(status().isOk())
-                .andExpect(content().string(""));
-
-        verify(analysisService).sync(1L, 7L);
-    }
-
-    @Test
-    void compile_authenticated_returnsOk() throws Exception {
-        mockMvc.perform(post("/api/project/1/compile").principal(login(7L)))
-                .andExpect(status().isOk())
-                .andExpect(content().string(""));
-
-        verify(analysisService).compile(1L, 7L);
-    }
-
-    @Test
-    void analyze_authenticated_returnsOk() throws Exception {
-        mockMvc.perform(post("/api/project/1/analyze").principal(login(7L)))
-                .andExpect(status().isOk())
-                .andExpect(content().string(""));
-
-        verify(analysisService).analyze(1L, 7L);
-    }
-
-    @Test
-    void audit_authenticated_returnsOk() throws Exception {
-        mockMvc.perform(post("/api/project/1/audit").principal(login(7L)))
-                .andExpect(status().isOk())
-                .andExpect(content().string(""));
-
-        verify(analysisService).audit(1L, 7L);
-    }
-
-    @Test
-    void report_authenticated_returnsTaskId() throws Exception {
-        when(analysisService.report(1L, 7L)).thenReturn(555L);
-
-        mockMvc.perform(post("/api/project/1/reports").principal(login(7L)))
-                .andExpect(status().isOk())
-                .andExpect(content().string("555"));
-    }
-
-    @Test
-    void execute_authenticated_returnsTrue() throws Exception {
-        when(analysisService.execute(1L, 7L)).thenReturn(true);
-
-        mockMvc.perform(post("/api/project/1/execute").principal(login(7L)))
-                .andExpect(status().isOk())
-                .andExpect(content().string("true"));
-    }
-
-    @Test
-    void sync_bizExceptionMappedTo400() throws Exception {
-        doThrow(new BizException("项目正在同步中")).when(analysisService).sync(1L, 7L);
-
-        mockMvc.perform(post("/api/project/1/sync").principal(login(7L)))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.message").value("项目正在同步中"));
     }
 }

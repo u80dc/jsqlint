@@ -72,7 +72,7 @@ class ProjectOverviewControllerTest {
                         .sqlType("SELECT").count(30).build()))
                 .build());
 
-        mockMvc.perform(get("/api/project/overview/1/sql"))
+        mockMvc.perform(get("/api/projects/overview/1/sql"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.projectId").value(1))
                 .andExpect(jsonPath("$.totalSqlCount").value(42))
@@ -92,7 +92,7 @@ class ProjectOverviewControllerTest {
                 .enabledProjectRuleCount(3)
                 .build());
 
-        mockMvc.perform(get("/api/project/overview/1/rules"))
+        mockMvc.perform(get("/api/projects/overview/1/rules"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.totalRuleCount").value(20))
                 .andExpect(jsonPath("$.globalRuleCount").value(15))
@@ -115,7 +115,7 @@ class ProjectOverviewControllerTest {
                         .build()))
                 .build());
 
-        mockMvc.perform(get("/api/project/overview/1/rule-hits").param("limit", "5"))
+        mockMvc.perform(get("/api/projects/overview/1/rule-hits").param("limit", "5"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.totalHitCount").value(100))
                 .andExpect(jsonPath("$.highFrequencyRules[0].ruleId").value(7))
@@ -136,7 +136,7 @@ class ProjectOverviewControllerTest {
                 .issueSqlRate(new BigDecimal("0.24"))
                 .build());
 
-        mockMvc.perform(get("/api/project/overview/1/issue-sql"))
+        mockMvc.perform(get("/api/projects/overview/1/issue-sql"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.totalSqlCount").value(42))
                 .andExpect(jsonPath("$.issueSqlCount").value(10))
@@ -160,7 +160,7 @@ class ProjectOverviewControllerTest {
                         .build()))
                 .build());
 
-        mockMvc.perform(get("/api/project/overview/1/sql-quality-trend"))
+        mockMvc.perform(get("/api/projects/overview/1/sql-quality-trend"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.items.length()").value(1))
                 .andExpect(jsonPath("$.items[0].versionId").value(9))
@@ -182,7 +182,7 @@ class ProjectOverviewControllerTest {
                 .otherSqlCount(1)
                 .build());
 
-        mockMvc.perform(get("/api/project/overview/1/issue-categories"))
+        mockMvc.perform(get("/api/projects/overview/1/issue-categories"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.securitySqlCount").value(4))
                 .andExpect(jsonPath("$.performanceSqlCount").value(3))
@@ -205,7 +205,7 @@ class ProjectOverviewControllerTest {
                 .trend("down")
                 .build());
 
-        mockMvc.perform(get("/api/project/overview/1/issue-rectification-rate"))
+        mockMvc.perform(get("/api/projects/overview/1/issue-rectification-rate"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.latestVersionId").value(9))
                 .andExpect(jsonPath("$.previousVersionId").value(8))
@@ -231,7 +231,7 @@ class ProjectOverviewControllerTest {
                 .trend("down")
                 .build());
 
-        mockMvc.perform(get("/api/project/overview/1/issue-sql-rate"))
+        mockMvc.perform(get("/api/projects/overview/1/issue-sql-rate"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.latestTotalSqlCount").value(42))
                 .andExpect(jsonPath("$.latestIssueSqlCount").value(8))
@@ -254,7 +254,7 @@ class ProjectOverviewControllerTest {
                 .rating("B")
                 .build());
 
-        mockMvc.perform(get("/api/project/overview/1/score"))
+        mockMvc.perform(get("/api/projects/overview/1/score"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.score").value(85))
                 .andExpect(jsonPath("$.rating").value("B"));
@@ -264,7 +264,7 @@ class ProjectOverviewControllerTest {
     void getSqlOverview_bizExceptionMappedTo400() throws Exception {
         when(projectOverviewService.getSqlOverview(99L)).thenThrow(new BizException("项目不存在"));
 
-        mockMvc.perform(get("/api/project/overview/99/sql"))
+        mockMvc.perform(get("/api/projects/overview/99/sql"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("项目不存在"));
     }

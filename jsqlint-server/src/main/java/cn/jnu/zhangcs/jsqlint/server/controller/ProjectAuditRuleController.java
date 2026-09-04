@@ -1,12 +1,14 @@
 package cn.jnu.zhangcs.jsqlint.server.controller;
 
 import cn.jnu.zhangcs.jsqlint.server.common.converter.AuditRuleConverter;
+import cn.jnu.zhangcs.jsqlint.server.common.exception.BizException;
 import cn.jnu.zhangcs.jsqlint.server.entity.AuditRule;
 import cn.jnu.zhangcs.jsqlint.server.entity.User;
 import cn.jnu.zhangcs.jsqlint.server.model.dto.ProjectAuditRuleDTO;
 import cn.jnu.zhangcs.jsqlint.server.model.vo.AuditRuleVO;
 import cn.jnu.zhangcs.jsqlint.server.security.LoginUser;
 import cn.jnu.zhangcs.jsqlint.server.service.ProjectAuditRuleService;
+import cn.jnu.zhangcs.jsqlint.server.service.ProjectService;
 import cn.jnu.zhangcs.jsqlint.server.service.UserService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -23,15 +25,18 @@ import java.util.Map;
 
 /**
  * 项目审核规则控制器
+ *
+ * <p>写操作（新增、修改、删除、启停）要求当前用户为项目管理员。</p>
  */
 @Tag(name = "项目审核规则管理", description = "项目特有 SQL 审核规则的新增、查询、修改和删除")
 @RestController
-@RequestMapping("/api/project/{projectId}/rules")
+@RequestMapping("/api/projects/{projectId}/rules")
 @RequiredArgsConstructor
 public class ProjectAuditRuleController {
 
     private final UserService userService;
     private final ProjectAuditRuleService projectAuditRuleService;
+    private final ProjectService projectService;
 
     @Operation(summary = "查询项目规则列表", description = "分页查询指定项目的特有审核规则")
     @GetMapping
@@ -62,45 +67,56 @@ public class ProjectAuditRuleController {
         return ResponseEntity.ok(toVO(rule));
     }
 
-    @Operation(summary = "新增项目规则", description = "为指定项目新增一条项目特有 SQL 审核规则")
+    @Operation(summary = "新增项目规则", description = "为指定项目新增一条项目特有 SQL 审核规则（需项目管理员权限）")
     @PostMapping
     public ResponseEntity<AuditRuleVO> createRule(
             @Parameter(name = "projectId", description = "项目ID", example = "1") @PathVariable("projectId") Long projectId,
             @Valid @RequestBody ProjectAuditRuleDTO dto,
             @Parameter(hidden = true) @AuthenticationPrincipal LoginUser loginUser) {
+        requireProjectAdmin(projectId, loginUser);
         AuditRule created = projectAuditRuleService.createRule(projectId, dto, loginUser.getUserId());
         return ResponseEntity.ok(toVO(created));
     }
 
-    @Operation(summary = "修改项目规则", description = "修改指定项目下某条项目特有审核规则，未传字段保持不变")
+    @Operation(summary = "修改项目规则", description = "修改指定项目下某条项目特有审核规则，未传字段保持不变（需项目管理员权限）")
     @PutMapping("/{id}")
     public ResponseEntity<AuditRuleVO> updateRule(
             @Parameter(name = "projectId", description = "项目ID", example = "1") @PathVariable("projectId") Long projectId,
             @Parameter(name = "id", description = "规则ID", example = "1") @PathVariable("id") Long id,
             @Valid @RequestBody ProjectAuditRuleDTO dto,
             @Parameter(hidden = true) @AuthenticationPrincipal LoginUser loginUser) {
+        requireProjectAdmin(projectId, loginUser);
         AuditRule updated = projectAuditRuleService.updateRule(projectId, id, dto, loginUser.getUserId());
         return ResponseEntity.ok(toVO(updated));
     }
 
-    @Operation(summary = "删除项目规则", description = "删除指定项目下某条项目特有审核规则")
+    @Operation(summary = "删除项目规则", description = "删除指定项目下某条项目特有审核规则（需项目管理员权限）")
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> deleteRule(
             @Parameter(name = "projectId", description = "项目ID", example = "1") @PathVariable("projectId") Long projectId,
-            @Parameter(name = "id", description = "规则ID", example = "1") @PathVariable("id") Long id) {
+            @Parameter(name = "id", description = "规则ID", example = "1") @PathVariable("id") Long id,
+            @Parameter(hidden = true) @AuthenticationPrincipal LoginUser loginUser) {
+        requireProjectAdmin(projectId, loginUser);
         projectAuditRuleService.deleteRule(projectId, id);
         return ResponseEntity.ok().build();
     }
 
-    @Operation(summary = "切换项目规则状态", description = "启用或禁用指定项目下某条项目特有审核规则")
+    @Operation(summary = "切换项目规则状态", description = "启用或禁用指定项目下某条项目特有审核规则（需项目管理员权限）")
     @PutMapping("/{id}/toggle")
     public ResponseEntity<AuditRuleVO> toggleRule(
             @Parameter(name = "projectId", description = "项目ID", example = "1") @PathVariable("projectId") Long projectId,
             @Parameter(name = "id", description = "规则ID", example = "1") @PathVariable("id") Long id,
             @RequestBody Map<String, Boolean> body,
             @Parameter(hidden = true) @AuthenticationPrincipal LoginUser loginUser) {
+        requireProjectAdmin(projectId, loginUser);
         AuditRule updated = projectAuditRuleService.toggleRule(projectId, id, Boolean.TRUE.equals(body.get("enabled")), loginUser.getUserId());
         return ResponseEntity.ok(toVO(updated));
+    }
+
+    private void requireProjectAdmin(Long projectId, LoginUser loginUser) {
+        if (!projectService.isAdmin(projectId, loginUser.getUserId())) {
+            throw new BizException("该操作需要项目管理员权限");
+        }
     }
 
     private AuditRuleVO toVO(AuditRule rule) {

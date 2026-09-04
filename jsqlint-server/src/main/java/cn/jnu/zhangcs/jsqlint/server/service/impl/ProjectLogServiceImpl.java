@@ -167,45 +167,4 @@ public class ProjectLogServiceImpl implements ProjectLogService {
         return result;
     }
 
-    @Override
-    public @NonNull Page<ProjectLog> getByProjectId(int page, int size, @NonNull Long projectId) {
-        LambdaQueryWrapper<ProjectLog> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(ProjectLog::getProjectId, projectId);
-        wrapper.orderByDesc(ProjectLog::getOperationTime);
-
-        Page<ProjectLog> result = projectLogMapper.selectPage(new Page<>(page, size), wrapper);
-
-        // 填充项目名称
-        List<ProjectLog> records = result.getRecords();
-        for (ProjectLog log : records) {
-            Project project = projectMapper.selectById(log.getProjectId());
-            if (project != null) {
-                log.setProjectName(project.getName());
-            }
-        }
-
-        return result;
-    }
-
-    @Override
-    public @NonNull Page<ProjectLog> getByRelatedId(int page, int size, @NonNull Long projectId, @NonNull Long relatedId) {
-        LambdaQueryWrapper<ProjectLog> wrapper = new LambdaQueryWrapper<>();
-        wrapper.eq(ProjectLog::getProjectId, projectId);
-        wrapper.eq(ProjectLog::getRelatedId, relatedId);
-        wrapper.orderByDesc(ProjectLog::getOperationTime);
-
-        Page<ProjectLog> result = projectLogMapper.selectPage(new Page<>(page, size), wrapper);
-
-        // 填充项目名称
-        List<ProjectLog> records = result.getRecords();
-        for (ProjectLog log : records) {
-            Project project = projectMapper.selectById(log.getProjectId());
-            if (project != null) {
-                log.setProjectName(project.getName());
-            }
-        }
-
-        return result;
-    }
-
 }

@@ -12,7 +12,7 @@ import org.springframework.web.bind.annotation.*;
 @Tag(name = "项目概览", description = "项目最新版本的 SQL、规则和审核结果统计")
 @RestController
 @RequiredArgsConstructor
-@RequestMapping("/api/project/overview")
+@RequestMapping("/api/projects/overview")
 public class ProjectOverviewController {
 
     private final ProjectOverviewService projectOverviewService;

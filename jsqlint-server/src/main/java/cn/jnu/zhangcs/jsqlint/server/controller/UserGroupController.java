@@ -101,6 +101,15 @@ public class UserGroupController {
         return ResponseEntity.ok(toVOList(groups));
     }
 
+    @Operation(summary = "搜索用户组", description = "根据关键字模糊搜索用户组")
+    @GetMapping("/search")
+    public ResponseEntity<List<UserGroup>> search(@RequestParam(value = "keyword", required = false) String keyword) {
+        if (keyword == null) {
+            return ResponseEntity.ok(List.of());
+        }
+        return ResponseEntity.ok(userGroupService.getByKeyword(keyword));
+    }
+
     // ==================== 用户组成员管理接口 ====================
 
     @Operation(summary = "添加用户组成员", description = "向用户组中添加一个用户")

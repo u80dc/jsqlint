@@ -43,6 +43,8 @@ public class SecurityConfig implements WebMvcConfigurer {
                 .requestMatchers("/v3/api-docs/**", "/swagger-ui/**", "/swagger-ui.html").permitAll()
                 .requestMatchers("/api/admin/**").hasAuthority(Role.ADMIN.getValue())
                 .requestMatchers("/api/system/**").hasAuthority(Role.ADMIN.getValue())
+                // 全局审核规则影响所有项目的审核标准，仅管理员可维护
+                .requestMatchers("/api/audit-rules/**").hasAuthority(Role.ADMIN.getValue())
                 .anyRequest().authenticated()
             )
                 .exceptionHandling(ex -> ex

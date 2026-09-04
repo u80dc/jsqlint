@@ -81,9 +81,17 @@ class ProjectMemberControllerTest {
         return token;
     }
 
+    /** 写操作要求项目管理员，默认放行。 */
+    private void loginAsProjectAdmin(Long userId, Long projectId) {
+        login(userId);
+        when(projectService.isAdmin(projectId, userId)).thenReturn(true);
+    }
+
     @Test
     void addMember_validParams_returnsOk() throws Exception {
-        mockMvc.perform(post("/api/project/5/members")
+        loginAsProjectAdmin(7L, 5L);
+        mockMvc.perform(post("/api/projects/5/members")
+                        .principal(login(7L))
                         .param("userId", "9")
                         .param("isAdmin", "true"))
                 .andExpect(status().isOk())
@@ -94,16 +102,21 @@ class ProjectMemberControllerTest {
 
     @Test
     void addMember_bizExceptionMappedTo400() throws Exception {
+        loginAsProjectAdmin(7L, 5L);
         doThrow(new BizException("用户已是项目成员")).when(projectService).addMember(5L, 9L, false);
 
-        mockMvc.perform(post("/api/project/5/members").param("userId", "9"))
+        mockMvc.perform(post("/api/projects/5/members")
+                        .principal(login(7L))
+                        .param("userId", "9"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("用户已是项目成员"));
     }
 
     @Test
     void addMembers_validBody_returnsOk() throws Exception {
-        mockMvc.perform(post("/api/project/5/members/batch")
+        loginAsProjectAdmin(7L, 5L);
+        mockMvc.perform(post("/api/projects/5/members/batch")
+                        .principal(login(7L))
                         .contentType(MediaType.APPLICATION_JSON)
                         .characterEncoding("UTF-8")
                         .content("[9,10,11]"))
@@ -115,7 +128,9 @@ class ProjectMemberControllerTest {
 
     @Test
     void addGroupMembers_validParams_returnsOk() throws Exception {
-        mockMvc.perform(post("/api/project/5/members/group")
+        loginAsProjectAdmin(7L, 5L);
+        mockMvc.perform(post("/api/projects/5/members/group")
+                        .principal(login(7L))
                         .param("groupId", "3")
                         .param("isAdmin", "true"))
                 .andExpect(status().isOk())
@@ -126,7 +141,9 @@ class ProjectMemberControllerTest {
 
     @Test
     void removeMember_validPath_returnsOk() throws Exception {
-        mockMvc.perform(delete("/api/project/5/members/9"))
+        loginAsProjectAdmin(7L, 5L);
+        mockMvc.perform(delete("/api/projects/5/members/9")
+                        .principal(login(7L)))
                 .andExpect(status().isOk())
                 .andExpect(content().string(""));
 
@@ -135,7 +152,10 @@ class ProjectMemberControllerTest {
 
     @Test
     void updateRole_validParams_returnsOk() throws Exception {
-        mockMvc.perform(put("/api/project/5/members/9/role").param("isAdmin", "true"))
+        loginAsProjectAdmin(7L, 5L);
+        mockMvc.perform(put("/api/projects/5/members/9/role")
+                        .principal(login(7L))
+                        .param("isAdmin", "true"))
                 .andExpect(status().isOk())
                 .andExpect(content().string(""));
 
@@ -163,7 +183,7 @@ class ProjectMemberControllerTest {
 
         when(projectService.getMembers(5L)).thenReturn(List.of(admin, normal));
 
-        mockMvc.perform(get("/api/project/5/members"))
+        mockMvc.perform(get("/api/projects/5/members"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.length()").value(2))
                 .andExpect(jsonPath("$[0].id").value(1))
@@ -178,7 +198,7 @@ class ProjectMemberControllerTest {
     void checkIsAdmin_authenticated_returnsTrue() throws Exception {
         when(projectService.isAdmin(5L, 7L)).thenReturn(true);
 
-        mockMvc.perform(get("/api/project/5/members/check").principal(login(7L)))
+        mockMvc.perform(get("/api/projects/5/members/check").principal(login(7L)))
                 .andExpect(status().isOk())
                 .andExpect(content().string("true"));
 

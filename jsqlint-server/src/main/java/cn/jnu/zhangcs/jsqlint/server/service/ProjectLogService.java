@@ -84,23 +84,4 @@ public interface ProjectLogService {
                              @Nullable Long operationUserId,
                              @Nullable String startTime,
                              @Nullable String endTime);
-
-    /**
-     * 根据项目ID查询日志
-     *
-     * @param projectId 项目ID
-     * @return 分页结果
-     */
-    @NonNull
-    Page<ProjectLog> getByProjectId(int page, int size, @NonNull Long projectId);
-
-    /**
-     * 根据关联资源ID查询日志
-     *
-     * @param projectId 项目ID
-     * @param relatedId 关联资源ID
-     * @return 分页结果
-     */
-    @NonNull
-    Page<ProjectLog> getByRelatedId(int page, int size, @NonNull Long projectId, @NonNull Long relatedId);
 }
