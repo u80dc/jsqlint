@@ -57,7 +57,7 @@
 </template>
 
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { User, Lock } from '@element-plus/icons-vue'
@@ -65,6 +65,8 @@ import type { FormInstance } from 'element-plus'
 import { useUserStore } from '@/stores/user'
 import { login } from '@/api/auth'
 import { resetSessionExpired } from '@/api/request'
+
+const REMEMBER_KEY = 'jsqlint_remember_username'
 
 const router = useRouter()
 const route = useRoute()
@@ -85,6 +87,14 @@ const loginRules = {
   password: [{ required: true, message: t('login.password'), trigger: 'blur' }]
 }
 
+onMounted(() => {
+  const remembered = localStorage.getItem(REMEMBER_KEY)
+  if (remembered) {
+    loginForm.username = remembered
+    rememberMe.value = true
+  }
+})
+
 const handleLogin = async () => {
   if (!loginFormRef.value) return
 
@@ -103,7 +113,9 @@ const handleLogin = async () => {
           roleDescription: response.roleDescription
         })
         if (rememberMe.value) {
-          localStorage.setItem('remember_me', 'true')
+          localStorage.setItem(REMEMBER_KEY, loginForm.username)
+        } else {
+          localStorage.removeItem(REMEMBER_KEY)
         }
         // 会话失效被踢出时带 redirect 参数，登录后回到原页面
         const redirect = route.query.redirect
