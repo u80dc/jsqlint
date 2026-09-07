@@ -274,14 +274,19 @@ public class TaskServiceImpl implements TaskService {
     @Override
     @Transactional
     public void markSuccess(@NonNull Long taskId, Long versionId, String codeDir) {
+        // 仅 RUNNING 状态可流转到 SUCCESS，防止僵死回收（已置 FAILED）的任务被迟到完成覆盖复活
         LambdaUpdateWrapper<ScheduledTask> wrapper = new LambdaUpdateWrapper<ScheduledTask>()
                 .set(ScheduledTask::getStatus, TaskStatus.SUCCESS.getCode())
                 .set(ScheduledTask::getVersionId, versionId)
                 .set(codeDir != null, ScheduledTask::getCodeDir, codeDir)
                 .set(ScheduledTask::getErrorMessage, null)
                 .set(ScheduledTask::getUpdateTime, LocalDateTime.now())
-                .eq(ScheduledTask::getId, taskId);
-        mapper.update(wrapper);
+                .eq(ScheduledTask::getId, taskId)
+                .eq(ScheduledTask::getStatus, TaskStatus.RUNNING.getCode());
+        int updated = mapper.update(wrapper);
+        if (updated == 0) {
+            log.warn("标记成功未生效（任务已不在RUNNING状态）: taskId={}", taskId);
+        }
     }
 
     @Override
@@ -292,25 +297,35 @@ public class TaskServiceImpl implements TaskService {
         int maxRetries = task.getMaxRetries() != null ? task.getMaxRetries() : 0;
         if (retryable && retryCount < maxRetries) {
             long nextExecTime = System.currentTimeMillis() + retryDelayMillis(retryCount + 1);
-            mapper.update(null, new LambdaUpdateWrapper<ScheduledTask>()
+            int updated = mapper.update(null, new LambdaUpdateWrapper<ScheduledTask>()
                     .set(ScheduledTask::getStatus, TaskStatus.RETRYING.getCode())
                     .set(task.getVersionId() != null, ScheduledTask::getVersionId, task.getVersionId())
                     .setSql("retry_count = retry_count + 1")
                     .set(ScheduledTask::getNextExecTime, nextExecTime)
                     .set(ScheduledTask::getErrorMessage, message)
                     .set(ScheduledTask::getUpdateTime, LocalDateTime.now())
-                    .eq(ScheduledTask::getId, task.getId()));
+                    .eq(ScheduledTask::getId, task.getId())
+                    .eq(ScheduledTask::getStatus, TaskStatus.RUNNING.getCode()));
+            if (updated == 0) {
+                log.warn("标记重试未生效（任务已不在RUNNING状态）: taskId={}", task.getId());
+                return;
+            }
             log.warn("任务执行失败，等待重试: taskId={}, retry={}/{}, message={}",
                     task.getId(), retryCount + 1, maxRetries, message);
             return;
         }
 
-        mapper.update(null, new LambdaUpdateWrapper<ScheduledTask>()
+        int updated = mapper.update(null, new LambdaUpdateWrapper<ScheduledTask>()
                 .set(ScheduledTask::getStatus, TaskStatus.FAILED.getCode())
                 .set(task.getVersionId() != null, ScheduledTask::getVersionId, task.getVersionId())
                 .set(ScheduledTask::getErrorMessage, message)
                 .set(ScheduledTask::getUpdateTime, LocalDateTime.now())
-                .eq(ScheduledTask::getId, task.getId()));
+                .eq(ScheduledTask::getId, task.getId())
+                .eq(ScheduledTask::getStatus, TaskStatus.RUNNING.getCode()));
+        if (updated == 0) {
+            log.warn("标记失败未生效（任务已不在RUNNING状态）: taskId={}", task.getId());
+            return;
+        }
         log.warn("任务执行失败并终止: taskId={}, message={}", task.getId(), message);
     }
 

@@ -10,9 +10,9 @@
 
             <el-form-item :label="t('settings.basic.themeMode')">
               <el-radio-group v-model="themePreference" @change="handleThemeChange">
-                <el-radio-button label="light">{{ t('settings.basic.themeLight') }}</el-radio-button>
-                <el-radio-button label="dark">{{ t('settings.basic.themeDark') }}</el-radio-button>
-                <el-radio-button label="system">{{ t('settings.basic.themeSystem') }}</el-radio-button>
+                <el-radio-button value="light">{{ t('settings.basic.themeLight') }}</el-radio-button>
+                <el-radio-button value="dark">{{ t('settings.basic.themeDark') }}</el-radio-button>
+                <el-radio-button value="system">{{ t('settings.basic.themeSystem') }}</el-radio-button>
               </el-radio-group>
             </el-form-item>
 

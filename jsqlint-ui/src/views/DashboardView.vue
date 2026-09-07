@@ -88,9 +88,9 @@
               <span class="card-title">{{ t('dashboard.analysisTrend') }}</span>
               <div class="card-actions">
                 <el-radio-group v-model="trendPeriod" size="small">
-                  <el-radio-button label="week">{{ t('dashboard.period.week') }}</el-radio-button>
-                  <el-radio-button label="month">{{ t('dashboard.period.month') }}</el-radio-button>
-                  <el-radio-button label="year">{{ t('dashboard.period.year') }}</el-radio-button>
+                  <el-radio-button value="week">{{ t('dashboard.period.week') }}</el-radio-button>
+                  <el-radio-button value="month">{{ t('dashboard.period.month') }}</el-radio-button>
+                  <el-radio-button value="year">{{ t('dashboard.period.year') }}</el-radio-button>
                 </el-radio-group>
               </div>
             </div>
@@ -419,7 +419,7 @@ const handleView = (row: OverviewRecentProjectVO) => {
 }
 
 const renderTrendChart = (data?: OverviewTrendVO) => {
-  if (!trendChart) return
+  if (!trendChart || trendChart.isDisposed()) return
   const option = {
     tooltip: {
       trigger: 'axis',
@@ -507,7 +507,7 @@ const renderTrendChart = (data?: OverviewTrendVO) => {
 }
 
 const renderPieChart = () => {
-  if (!pieChart) return
+  if (!pieChart || pieChart.isDisposed()) return
   const distribution = [
     { value: summaryStats.value.safeSqlCount, name: t('dashboard.safeSql'), itemStyle: { color: chartColors.success } },
     { value: summaryStats.value.warningSqlCount, name: t('dashboard.warningSql'), itemStyle: { color: chartColors.warning } },
@@ -577,7 +577,7 @@ const initCharts = () => {
  * 规则命中 TOP N：横向柱状图，按规则严重级别着色
  */
 const renderRuleHitChart = (data?: OverviewRuleHitVO) => {
-  if (!ruleHitChart) return
+  if (!ruleHitChart || ruleHitChart.isDisposed()) return
   // echarts 横向柱状图自下而上绘制，倒序传入使命中最多的在最上方
   const rules = [...(data?.topRules || [])].reverse()
   const option = {
@@ -628,7 +628,7 @@ const renderRuleHitChart = (data?: OverviewRuleHitVO) => {
  * 问题严重级别分布：环形图，中心显示总问题数
  */
 const renderSeverityChart = (data?: OverviewSeverityDistributionVO) => {
-  if (!severityChart) return
+  if (!severityChart || severityChart.isDisposed()) return
   const entries = [
     { value: data?.criticalCount || 0, name: t('dashboard.severity.critical'), key: 'critical' },
     { value: data?.highCount || 0, name: t('dashboard.severity.high'), key: 'high' },
@@ -676,7 +676,7 @@ const renderSeverityChart = (data?: OverviewSeverityDistributionVO) => {
  * 项目健康度排行：横向条形图，分数映射红→绿色带，最差项目在上
  */
 const renderScoreChart = (data?: OverviewProjectScoreVO) => {
-  if (!scoreChart) return
+  if (!scoreChart || scoreChart.isDisposed()) return
   // 评分升序返回（最差在前），倒序绘制使最差在顶部
   const projects = [...(data?.projects || [])].reverse()
   const scoreColor = (score: number) => {
@@ -810,11 +810,11 @@ const loadDashboard = async () => {
 }
 
 const handleResize = () => {
-  trendChart?.resize()
-  pieChart?.resize()
-  ruleHitChart?.resize()
-  severityChart?.resize()
-  scoreChart?.resize()
+  trendChart?.isDisposed() || trendChart?.resize()
+  pieChart?.isDisposed() || pieChart?.resize()
+  ruleHitChart?.isDisposed() || ruleHitChart?.resize()
+  severityChart?.isDisposed() || severityChart?.resize()
+  scoreChart?.isDisposed() || scoreChart?.resize()
 }
 
 watch(trendPeriod, async () => {
@@ -839,11 +839,14 @@ onMounted(async () => {
 
 onUnmounted(() => {
   window.removeEventListener('resize', handleResize)
-  trendChart?.dispose()
-  pieChart?.dispose()
-  ruleHitChart?.dispose()
-  severityChart?.dispose()
-  scoreChart?.dispose()
+  // dispose 后置空引用，飞行中的异步回调经 isDisposed 守卫短路
+  const charts = [trendChart, pieChart, ruleHitChart, severityChart, scoreChart]
+  charts.forEach(chart => chart?.dispose())
+  trendChart = null
+  pieChart = null
+  ruleHitChart = null
+  severityChart = null
+  scoreChart = null
 })
 </script>
 

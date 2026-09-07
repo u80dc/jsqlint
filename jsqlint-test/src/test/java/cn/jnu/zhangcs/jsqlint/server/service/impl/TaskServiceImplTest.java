@@ -305,6 +305,16 @@ class TaskServiceImplTest {
     }
 
     @Test
+    void markSuccess_notRunning_zeroRowsNoException() {
+        // 僵死回收已置 FAILED 后，迟到的完成回调不应复活任务：0 行更新仅记录，不抛异常
+        when(mapper.update(any())).thenReturn(0);
+
+        taskService.markSuccess(30L, 2L, "/tmp/code");
+
+        verify(mapper).update(any());
+    }
+
+    @Test
     void markFailedOrRetry_retryableWithinLimit_setsToRetry() {
         ScheduledTask task = new ScheduledTask();
         task.setId(30L);
