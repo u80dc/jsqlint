@@ -32,6 +32,7 @@ public final class ValueModelResolver {
     private final SootMethod method;
     private final List<Stmt> statements;
     private final Map<String, ValueModel.ParameterValue> parameterLocals;
+    private final ReachingDefinitions reaching;
 
     /**
      * 创建绑定指定方法的解析器。
@@ -42,6 +43,7 @@ public final class ValueModelResolver {
         this.method = method;
         this.statements = method.getBody().getStmts();
         this.parameterLocals = collectParameterLocals();
+        this.reaching = ReachingDefinitions.analyze(method);
     }
 
     /**
@@ -175,6 +177,16 @@ public final class ValueModelResolver {
                     return withBranchAlternatives(name, candidates, beforeIndex, visitingLocals);
                 }
 
+                // 到达定义分析给出多条可达定义（switch/多路径汇聚等非菱形形态）时，
+                // 同样以候选集呈现；菱形特判已在上方优先处理
+                if (definitions.size() > 1 && definitions.size() <= MAX_BRANCH_DEFINITIONS
+                        && !hasBackwardEdge(0, statements.size())) {
+                    List<CandidateDefinition> candidates = definitions.stream()
+                            .map(definition -> resolveDefinition(definition, name, visitingLocals))
+                            .toList();
+                    return withBranchAlternatives(name, candidates, beforeIndex, visitingLocals);
+                }
+
                 CandidateDefinition nearest = resolveDefinition(definitions.getFirst(), name, visitingLocals);
                 return withWritesAfterDefinition(
                         name,
@@ -191,8 +203,27 @@ public final class ValueModelResolver {
         }
     }
 
+    /**
+     * 收集使用点的候选定义：优先取到达定义分析结果（按 CFG 可达性，过滤掉
+     * 已被后续赋值覆盖的旧定义）；分析结果为空时回退线性回溯（防御性兜底）。
+     */
     private List<DefinitionSite> collectAssignmentSites(String localName, int beforeIndex) {
         int upperBound = Math.min(Math.max(beforeIndex, 0), statements.size());
+        if (upperBound > 0) {
+            Set<Stmt> reachingDefs = reaching.defsReaching(localName, statements.get(beforeIndex));
+            if (!reachingDefs.isEmpty()) {
+                // 保持降序排列（使用点向定义点回溯序），与线性回溯一致
+                List<DefinitionSite> definitions = new ArrayList<>();
+                for (int index = upperBound - 1; index >= 0; index--) {
+                    Stmt statement = statements.get(index);
+                    if (reachingDefs.contains(statement)) {
+                        definitions.add(new DefinitionSite(index, (JAssignStmt) statement));
+                    }
+                }
+                return definitions;
+            }
+        }
+
         List<DefinitionSite> definitions = new ArrayList<>();
         for (int index = upperBound - 1; index >= 0; index--) {
             Stmt statement = statements.get(index);

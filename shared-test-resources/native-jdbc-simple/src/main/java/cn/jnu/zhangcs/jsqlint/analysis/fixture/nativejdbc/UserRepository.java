@@ -270,6 +270,25 @@ public class UserRepository {
         return "DELETE FROM users WHERE tenant = '" + tenant + "' AND id = ?";
     }
 
+    /**
+     * 演示 switch 多分支：到达定义分析将各 case 的赋值汇聚为候选集，
+     * 绑定值应收集全部 case 值（if/else 特判不覆盖 switch 形态）。
+     */
+    public int deleteBySwitchStatus(long id, int level) throws SQLException {
+        String status;
+        switch (level) {
+            case 1 -> status = "LOW";
+            case 2 -> status = "MEDIUM";
+            default -> status = "HIGH";
+        }
+        String sql = "DELETE FROM users WHERE status = ? AND id < ?";
+        try (PreparedStatement statement = connection.prepareStatement(sql)) {
+            statement.setString(1, status);
+            statement.setLong(2, id);
+            return statement.executeUpdate();
+        }
+    }
+
     public int deleteByStatus(Collection<String> statuses, boolean requireInactive) throws SQLException {
         StringBuilder sql = new StringBuilder("DELETE FROM users");
         List<Object> parameters = new ArrayList<>();

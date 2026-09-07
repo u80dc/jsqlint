@@ -31,7 +31,7 @@ class NativeJdbcSimpleSqlExtractionTest {
 
         // deleteByDynamicStatus 的 SQL 来自辅助方法返回值，无法解析时应记入诊断而非静默丢弃
         assertAll(
-                () -> assertEquals(15, statements.size(), () -> "Expected SQL statements from native-jdbc-simple, got " + statements.size()),
+                () -> assertEquals(16, statements.size(), () -> "Expected SQL statements from native-jdbc-simple, got " + statements.size()),
                 () -> assertTrue(result.diagnostics().stream()
                                 .anyMatch(diagnostic -> diagnostic.contains("deleteByDynamicStatus")),
                         () -> "Expected skip diagnostic for deleteByDynamicStatus, got: "

@@ -285,6 +285,25 @@ class ParameterInferenceTest {
     }
 
     @Test
+    void switchAssignedConstant_collectsAllCaseValues() {
+        // switch 多分支（if/else 特判不覆盖的形态）由到达定义分析汇聚候选：
+        // LOW/MEDIUM/HIGH 全部进入 MultiValue，顺序重赋值语义不受影响
+        List<InferredParameterValue> values = boundValuesFor(
+                "DELETE FROM users WHERE status = ? AND id < ?");
+
+        assertThat(values)
+                .anySatisfy(value -> {
+                    assertThat(value.origin()).isEqualTo(InferredValueOrigin.BIND_CONSTANT);
+                    assertThat(value.parameterIndex()).isEqualTo(1);
+                    assertThat(value.sourceValue()).isInstanceOf(ValueModel.MultiValue.class);
+                    assertThat(value.displayValue())
+                            .contains("LOW")
+                            .contains("MEDIUM")
+                            .contains("HIGH");
+                });
+    }
+
+    @Test
     void sequentialReassignment_keepsNearestDefinition() {
         // 没有 if/else 菱形时不得把顺序重赋值误报成多个候选。
         List<InferredParameterValue> values = boundValuesFor(
