@@ -8,7 +8,14 @@
             <el-icon :size="28"><Document /></el-icon>
           </div>
           <div class="stat-card__content">
-            <div class="stat-card__value">{{ summaryStats.totalProjects }}</div>
+            <div class="stat-card__value">
+              <el-skeleton v-if="summaryLoading" animated class="stat-skeleton" :throttle="0">
+                <template #template>
+                  <el-skeleton-item variant="text" style="width: 64px; height: 28px" />
+                </template>
+              </el-skeleton>
+              <template v-else>{{ summaryStats.totalProjects }}</template>
+            </div>
             <div class="stat-card__label">{{ t('dashboard.totalProjects') }}</div>
           </div>
         </div>
@@ -20,7 +27,14 @@
             <el-icon :size="28"><SuccessFilled /></el-icon>
           </div>
           <div class="stat-card__content">
-            <div class="stat-card__value">{{ summaryStats.safeSqlCount }}</div>
+            <div class="stat-card__value">
+              <el-skeleton v-if="summaryLoading" animated class="stat-skeleton" :throttle="0">
+                <template #template>
+                  <el-skeleton-item variant="text" style="width: 64px; height: 28px" />
+                </template>
+              </el-skeleton>
+              <template v-else>{{ summaryStats.safeSqlCount }}</template>
+            </div>
             <div class="stat-card__label">{{ t('dashboard.safeSql') }}</div>
           </div>
         </div>
@@ -32,7 +46,14 @@
             <el-icon :size="28"><WarningFilled /></el-icon>
           </div>
           <div class="stat-card__content">
-            <div class="stat-card__value">{{ summaryStats.warningSqlCount }}</div>
+            <div class="stat-card__value">
+              <el-skeleton v-if="summaryLoading" animated class="stat-skeleton" :throttle="0">
+                <template #template>
+                  <el-skeleton-item variant="text" style="width: 64px; height: 28px" />
+                </template>
+              </el-skeleton>
+              <template v-else>{{ summaryStats.warningSqlCount }}</template>
+            </div>
             <div class="stat-card__label">{{ t('dashboard.warningSql') }}</div>
           </div>
         </div>
@@ -44,7 +65,14 @@
             <el-icon :size="28"><CircleCloseFilled /></el-icon>
           </div>
           <div class="stat-card__content">
-            <div class="stat-card__value">{{ summaryStats.dangerSqlCount }}</div>
+            <div class="stat-card__value">
+              <el-skeleton v-if="summaryLoading" animated class="stat-skeleton" :throttle="0">
+                <template #template>
+                  <el-skeleton-item variant="text" style="width: 64px; height: 28px" />
+                </template>
+              </el-skeleton>
+              <template v-else>{{ summaryStats.dangerSqlCount }}</template>
+            </div>
             <div class="stat-card__label">{{ t('dashboard.dangerSql') }}</div>
           </div>
         </div>
@@ -54,7 +82,7 @@
     <!-- 图表区域 -->
     <el-row :gutter="20" class="charts-row">
       <el-col :xs="24" :lg="16">
-        <el-card class="chart-card">
+        <el-card class="chart-card" v-loading="trendLoading">
           <template #header>
             <div class="card-header">
               <span class="card-title">{{ t('dashboard.analysisTrend') }}</span>
@@ -72,7 +100,7 @@
       </el-col>
 
       <el-col :xs="24" :lg="8">
-        <el-card class="chart-card">
+        <el-card class="chart-card" v-loading="summaryLoading">
           <template #header>
             <div class="card-header">
               <span class="card-title">{{ t('dashboard.projectDistribution') }}</span>
@@ -86,7 +114,7 @@
     <!-- 图表区域二：规则命中 / 严重级别分布 / 项目健康度 -->
     <el-row :gutter="20" class="charts-row">
       <el-col :xs="24" :lg="10">
-        <el-card class="chart-card">
+        <el-card class="chart-card" v-loading="ruleHitLoading">
           <template #header>
             <div class="card-header">
               <span class="card-title">{{ t('dashboard.ruleHitTop') }}</span>
@@ -97,7 +125,7 @@
       </el-col>
 
       <el-col :xs="24" :lg="7">
-        <el-card class="chart-card">
+        <el-card class="chart-card" v-loading="severityLoading">
           <template #header>
             <div class="card-header">
               <span class="card-title">{{ t('dashboard.severityDistribution') }}</span>
@@ -108,7 +136,7 @@
       </el-col>
 
       <el-col :xs="24" :lg="7">
-        <el-card class="chart-card">
+        <el-card class="chart-card" v-loading="scoreLoading">
           <template #header>
             <div class="card-header">
               <span class="card-title">{{ t('dashboard.projectScoreRanking') }}</span>
@@ -284,6 +312,11 @@ const scoreChartRef = ref<HTMLElement>()
 const trendPeriod = ref<'week' | 'month' | 'year'>('week')
 const recentLoading = ref(false)
 const tasksLoading = ref(false)
+const summaryLoading = ref(false)
+const trendLoading = ref(false)
+const ruleHitLoading = ref(false)
+const severityLoading = ref(false)
+const scoreLoading = ref(false)
 
 let trendChart: echarts.ECharts | null = null
 let pieChart: echarts.ECharts | null = null
@@ -705,13 +738,23 @@ const renderScoreChart = (data?: OverviewProjectScoreVO) => {
 }
 
 const loadSummary = async () => {
-  stats.value = await getOverviewProjectSummary()
-  renderPieChart()
+  summaryLoading.value = true
+  try {
+    stats.value = await getOverviewProjectSummary()
+    renderPieChart()
+  } finally {
+    summaryLoading.value = false
+  }
 }
 
 const loadTrend = async () => {
-  const trend = await getOverviewAnalysisTrend(trendPeriod.value)
-  renderTrendChart(trend)
+  trendLoading.value = true
+  try {
+    const trend = await getOverviewAnalysisTrend(trendPeriod.value)
+    renderTrendChart(trend)
+  } finally {
+    trendLoading.value = false
+  }
 }
 
 const loadRecentProjects = async () => {
@@ -733,14 +776,23 @@ const loadCurrentTasks = async () => {
 }
 
 const loadOverviewCharts = async () => {
-  const [ruleHits, severity, scores] = await Promise.all([
-    getOverviewRuleHits(),
-    getOverviewSeverityDistribution(),
-    getOverviewProjectScores()
-  ])
-  renderRuleHitChart(ruleHits)
-  renderSeverityChart(severity)
-  renderScoreChart(scores)
+  ruleHitLoading.value = true
+  severityLoading.value = true
+  scoreLoading.value = true
+  try {
+    const [ruleHits, severity, scores] = await Promise.all([
+      getOverviewRuleHits(),
+      getOverviewSeverityDistribution(),
+      getOverviewProjectScores()
+    ])
+    renderRuleHitChart(ruleHits)
+    renderSeverityChart(severity)
+    renderScoreChart(scores)
+  } finally {
+    ruleHitLoading.value = false
+    severityLoading.value = false
+    scoreLoading.value = false
+  }
 }
 
 const loadDashboard = async () => {
@@ -851,6 +903,13 @@ onUnmounted(() => {
     font-weight: 700;
     color: var(--jsp-text-primary);
     line-height: 1.2;
+
+    // 数值加载骨架占位，避免完成后跳动
+    .stat-skeleton {
+      :deep(.el-skeleton) {
+        padding: 0;
+      }
+    }
   }
 
   &__label {
