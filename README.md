@@ -2,6 +2,25 @@
 
 面向数据密集型应用的静态SQL质量管理平台。
 
+## 内置审核规则
+
+规则数据**完全由数据库管理**，代码不内置任何规则。项目初始化时手动执行
+`jsqlint-server/src/main/resources/db/init.sql` 完成规则资源初始化，预置 28 条全局规则
+（MySQL 方言，`is_builtin=1` 标识），管理员可在"审核规则"页面调整或停用：
+
+| 类别 | 规则 | 级别 |
+|---|---|---|
+| 删除/变更防护 | DELETE/UPDATE 缺少 WHERE、危险 DDL/DCL（DROP/TRUNCATE/ALTER/GRANT） | critical |
+| 查询规范 | SELECT *、无 WHERE 查询、缺少 LIMIT、DISTINCT、嵌套子查询、COUNT(1) 风格 | warning / info |
+| 性能 | 条件列函数、LIKE 前置通配符、NOT IN、笛卡尔连接、WHERE 中 OR、JOIN ON 中 OR、ORDER BY RAND、NOLOCK、复杂查询 EXPLAIN 提示 | warning / info / high |
+| 安全 | SQL 注入关键词、字符串拼接、MyBatis ${}、ORDER BY 动态拼接、UPDATE 子查询 | critical / high |
+| DDL 幂等 | CREATE 无 IF NOT EXISTS、DROP 无 IF EXISTS、加列无默认值 | info / warning |
+
+脚本可重复执行（ON DUPLICATE KEY UPDATE 幂等）。规则判定基于 Drools（`SqlAuditFact` 的 sql 文本与语句类型）。
+
+> **老库升级**：应用启动时自动检测并补充 `is_builtin` 列（`BuiltinRuleInitializer` 仅做表结构迁移，不写规则数据）；
+> 规则内容升级时重新执行 init.sql 的规则段即可。
+
 ## 项目结构
 
 | 模块 | 说明 |

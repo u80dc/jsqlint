@@ -23,6 +23,8 @@ export interface AuditRuleVO {
   suggestion?: string
   enabled: number
   enabledFlag?: boolean
+  /** 是否内置规则: 0-用户规则, 1-内置规则 */
+  isBuiltin?: number
   createUserName?: string
   createTime: string
   updateTime: string

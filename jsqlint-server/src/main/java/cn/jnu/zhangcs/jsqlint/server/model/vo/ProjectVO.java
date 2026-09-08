@@ -23,6 +23,9 @@ public class ProjectVO {
 
     private String ref;
 
+    /** SQL 方言: mysql/postgresql/oracle */
+    private String dialect;
+
     private Integer enabled;
 
     private Long createUserId;

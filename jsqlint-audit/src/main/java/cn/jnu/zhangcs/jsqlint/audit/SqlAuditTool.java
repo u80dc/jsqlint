@@ -115,8 +115,8 @@ public final class SqlAuditTool {
             fact.setSqlType(inferSqlType(fact.getSql()));
         }
 
-        // 过滤有效规则
-        List<AuditRule> effectiveRules = effectiveRules(rules);
+        // 过滤有效规则（含方言匹配：规则无方言=通用，否则需与 SQL 方言一致）
+        List<AuditRule> effectiveRules = effectiveRules(rules, fact.getDialect());
         if (effectiveRules.isEmpty()) {
             return SqlAuditResult.fromFact(fact, List.of(), 0, 0);
         }
@@ -225,7 +225,8 @@ public final class SqlAuditTool {
         StringBuilder drl = new StringBuilder();
         drl.append("package ").append(RULE_PACKAGE).append("\n\n");
         drl.append("import ").append(SqlAuditFact.class.getName()).append(";\n");
-        drl.append("import ").append(RiskLevel.class.getName()).append(";\n\n");
+        drl.append("import ").append(RiskLevel.class.getName()).append(";\n");
+        drl.append("import ").append(cn.jnu.zhangcs.jsqlint.audit.model.SqlDialect.class.getName()).append(";\n\n");
 
         for (int i = 0; i < rules.size(); i++) {
             AuditRule rule = rules.get(i);
@@ -349,9 +350,16 @@ public final class SqlAuditTool {
     /**
      * 过滤本次审核可用的规则。
      *
-     * <p>空规则、空 DRL 内容和明确禁用的规则不会进入 Drools 编译。</p>
+     * <p>空规则、空 DRL 内容和明确禁用的规则不会进入 Drools 编译。
+     * 方言匹配：规则未声明方言（null/空白）视为通用规则，对任何 SQL 生效；
+     * 声明了方言的规则仅对同方言的 SQL 生效（SQL 方言来自项目声明）。
+     * validate 校验不关心方言，按通用全量编译。</p>
      */
     private static List<AuditRule> effectiveRules(List<AuditRule> rules) {
+        return effectiveRules(rules, null);
+    }
+
+    private static List<AuditRule> effectiveRules(List<AuditRule> rules, cn.jnu.zhangcs.jsqlint.audit.model.SqlDialect sqlDialect) {
         if (rules == null || rules.isEmpty()) {
             return List.of();
         }
@@ -362,6 +370,12 @@ public final class SqlAuditTool {
                 continue;
             }
             if (Integer.valueOf(0).equals(rule.getEnabled())) {
+                continue;
+            }
+            // 方言过滤：规则声明了方言但与 SQL 方言不一致时跳过
+            cn.jnu.zhangcs.jsqlint.audit.model.SqlDialect ruleDialect =
+                    cn.jnu.zhangcs.jsqlint.audit.model.SqlDialect.fromCode(rule.getDialect());
+            if (ruleDialect != null && ruleDialect != sqlDialect) {
                 continue;
             }
             effectiveRules.add(rule);

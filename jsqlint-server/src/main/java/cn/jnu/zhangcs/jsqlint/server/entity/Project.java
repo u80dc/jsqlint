@@ -41,6 +41,11 @@ public class Project {
     private String ref;
 
     /**
+     * SQL 方言: mysql（默认）/postgresql/oracle，审核时用于过滤方言专属规则
+     */
+    private String dialect;
+
+    /**
      * 状态: 0-禁用, 1-启用
      */
     private Integer status;

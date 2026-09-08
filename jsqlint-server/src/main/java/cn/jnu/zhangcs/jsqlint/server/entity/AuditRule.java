@@ -67,6 +67,16 @@ public class AuditRule {
     private Integer enabled;
 
     /**
+     * 是否内置规则: 0-用户规则, 1-内置规则（系统初始化写入）
+     */
+    private Integer isBuiltin;
+
+    /**
+     * SQL 方言: null-通用, mysql/postgresql/oracle（规则仅对同方言 SQL 生效）
+     */
+    private String dialect;
+
+    /**
      * 创建人ID
      */
     @TableField(fill = FieldFill.INSERT)

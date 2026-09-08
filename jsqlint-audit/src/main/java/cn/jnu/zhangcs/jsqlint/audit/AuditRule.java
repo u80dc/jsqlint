@@ -65,6 +65,11 @@ public class AuditRule {
     private Integer enabled;
 
     /**
+     * SQL 方言: null-通用（全方言生效）, mysql/postgresql/oracle
+     */
+    private String dialect;
+
+    /**
      * 创建人用户ID。
      */
     private Long createUserId;

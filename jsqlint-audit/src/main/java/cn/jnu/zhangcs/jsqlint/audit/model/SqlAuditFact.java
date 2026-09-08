@@ -44,6 +44,11 @@ public class SqlAuditFact {
     private Integer lineNumber;
 
     /**
+     * SQL 方言（来自项目声明）；null 表示未声明，规则按通用匹配。
+     */
+    private SqlDialect dialect;
+
+    /**
      * 规则执行后的风险等级，默认 INFO。
      */
     private RiskLevel riskLevel = RiskLevel.INFO;

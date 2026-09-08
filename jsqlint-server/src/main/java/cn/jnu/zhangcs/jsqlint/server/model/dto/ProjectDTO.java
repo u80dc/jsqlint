@@ -23,6 +23,10 @@ public class ProjectDTO {
     @Size(max = 100, message = "引用不能超过100个字符")
     private String ref;
 
+    /** SQL 方言: mysql（默认）/postgresql/oracle */
+    @Size(max = 20, message = "方言不能超过20个字符")
+    private String dialect;
+
     @Size(max = 100, message = "提交ID不能超过100个字符")
     private String commitId;
 

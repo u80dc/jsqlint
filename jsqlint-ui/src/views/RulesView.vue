@@ -33,7 +33,14 @@
       </div>
 
       <el-table :data="ruleList" v-loading="loading" stripe class="rules-table" height="100%">
-        <el-table-column prop="name" :label="t('rules.name')" min-width="150" show-overflow-tooltip />
+        <el-table-column prop="name" :label="t('rules.name')" min-width="150" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span>{{ row.name }}</span>
+            <el-tag v-if="row.isBuiltin === 1" size="small" effect="plain" class="builtin-tag">
+              {{ t('rules.builtin') }}
+            </el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="code" :label="t('rules.code')" min-width="120" />
         <el-table-column prop="categoryDescription" :label="t('rules.category')" width="100" align="center" />
         <el-table-column prop="severityDescription" :label="t('rules.severityLevel')" width="90" align="center">
@@ -371,6 +378,11 @@ onMounted(() => {
   .rules-table {
     flex: 1;
     min-height: 0;
+  }
+
+  // 内置规则标记：跟随规则名，弱化展示
+  .builtin-tag {
+    margin-left: 6px;
   }
 
   .pagination {

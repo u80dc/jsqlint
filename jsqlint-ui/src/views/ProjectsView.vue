@@ -269,6 +269,13 @@
         <el-form-item :label="t('projects.ref')" prop="ref">
           <el-input v-model="projectForm.ref" :placeholder="t('projects.refPlaceholder')" />
         </el-form-item>
+        <el-form-item :label="t('projects.dialect')" prop="dialect">
+          <el-select v-model="projectForm.dialect" style="width: 100%">
+            <el-option label="MySQL" value="mysql" />
+            <el-option label="PostgreSQL" value="postgresql" />
+            <el-option label="Oracle" value="oracle" />
+          </el-select>
+        </el-form-item>
         <el-form-item :label="t('projects.credential')" prop="credentialId">
           <el-select v-model="projectForm.credentialId" :placeholder="t('projects.credentialPlaceholder')" style="width: 100%">
             <el-option v-for="cred in credentials" :key="cred.id" :label="cred.name" :value="cred.id" />
@@ -346,6 +353,7 @@ const projectForm = reactive({
   description: '',
   gitUrl: '',
   ref: 'main',
+  dialect: 'mysql',
   credentialId: null as number | null,
   workspaceId: 0
 })
@@ -588,6 +596,7 @@ const handleProjectDialogClose = () => {
   projectForm.description = ''
   projectForm.gitUrl = ''
   projectForm.ref = 'main'
+  projectForm.dialect = 'mysql'
   projectForm.credentialId = null
   projectForm.workspaceId = 0
 }
@@ -602,6 +611,7 @@ const handleProjectSubmit = async () => {
       description: projectForm.description || undefined,
       gitUrl: projectForm.gitUrl,
       ref: projectForm.ref,
+      dialect: projectForm.dialect,
       credentialId: projectForm.credentialId === 0 || projectForm.credentialId === null ? undefined : projectForm.credentialId,
       workspaceId: projectForm.workspaceId === 0 ? undefined : projectForm.workspaceId
     }

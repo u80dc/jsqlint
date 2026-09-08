@@ -6,6 +6,7 @@ export interface ProjectVO {
   description?: string
   gitUrl: string
   ref?: string
+  dialect?: string
   status?: number
   createTime?: string
   createUserId?: number
@@ -39,6 +40,8 @@ export interface ProjectCreateDTO {
   description?: string
   gitUrl: string
   ref: string
+  /** SQL 方言: mysql（默认）/postgresql/oracle，审核时用于过滤方言专属规则 */
+  dialect?: string
   credentialId?: number
   workspaceId?: number
 }

@@ -591,6 +591,13 @@
         <el-form-item :label="t('projects.ref')" prop="ref">
           <el-input v-model="editProjectForm.ref" :placeholder="t('projects.refPlaceholder')" />
         </el-form-item>
+        <el-form-item :label="t('projects.dialect')" prop="dialect">
+          <el-select v-model="editProjectForm.dialect" style="width: 100%">
+            <el-option label="MySQL" value="mysql" />
+            <el-option label="PostgreSQL" value="postgresql" />
+            <el-option label="Oracle" value="oracle" />
+          </el-select>
+        </el-form-item>
         <el-form-item :label="t('projects.credential')" prop="credentialId">
           <el-select v-model="editProjectForm.credentialId" :placeholder="t('projects.credentialPlaceholder')" style="width: 100%">
             <el-option v-for="cred in editCredentials" :key="cred.id" :label="cred.name" :value="cred.id" />
@@ -716,6 +723,7 @@ const editProjectForm = reactive({
   description: '',
   gitUrl: '',
   ref: '',
+  dialect: 'mysql',
   credentialId: undefined as number | undefined,
   workspaceId: 0
 })
@@ -1184,6 +1192,7 @@ const openEditProject = async () => {
   editProjectForm.description = project.value.description || ''
   editProjectForm.gitUrl = project.value.gitUrl
   editProjectForm.ref = project.value.ref || ''
+  editProjectForm.dialect = project.value.dialect || 'mysql'
   editProjectForm.credentialId = project.value.credentialId
   editProjectForm.workspaceId = project.value.workspaceId ?? 0
   // 凭证与工作空间选项并行加载（失败不阻塞弹窗打开）
@@ -1212,6 +1221,7 @@ const submitEditProject = async () => {
       description: editProjectForm.description?.trim() || undefined,
       gitUrl: editProjectForm.gitUrl.trim(),
       ref: editProjectForm.ref.trim(),
+      dialect: editProjectForm.dialect,
       credentialId: editProjectForm.credentialId,
       workspaceId: workspaceId === 0 ? undefined : workspaceId
     })

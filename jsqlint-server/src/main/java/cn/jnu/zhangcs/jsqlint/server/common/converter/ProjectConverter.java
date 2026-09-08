@@ -37,6 +37,7 @@ public class ProjectConverter {
         project.setDescription(dto.getDescription());
         project.setGitUrl(dto.getGitUrl());
         project.setRef(dto.getRef());
+        project.setDialect(dto.getDialect() != null && !dto.getDialect().isBlank() ? dto.getDialect() : "mysql");
         project.setStatus(dto.getEnabled() != null ? dto.getEnabled() : 1);
         project.setCreateUserId(createUserId);
 
@@ -52,6 +53,9 @@ public class ProjectConverter {
         }
         if (dto.getRef() != null) {
             target.setRef(dto.getRef());
+        }
+        if (dto.getDialect() != null && !dto.getDialect().isBlank()) {
+            target.setDialect(dto.getDialect());
         }
         if (dto.getEnabled() != null) {
             target.setStatus(dto.getEnabled());
@@ -69,6 +73,7 @@ public class ProjectConverter {
         vo.setDescription(project.getDescription());
         vo.setGitUrl(project.getGitUrl());
         vo.setRef(project.getRef());
+        vo.setDialect(project.getDialect());
         vo.setEnabled(project.getStatus());
         vo.setCredentialId(project.getCredentialId());
         vo.setCreateUserId(project.getCreateUserId());

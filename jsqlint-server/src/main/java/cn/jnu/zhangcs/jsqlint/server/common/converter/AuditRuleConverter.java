@@ -27,6 +27,7 @@ public class AuditRuleConverter {
         vo.setDroolsContent(rule.getDroolsContent());
         vo.setSuggestion(rule.getSuggestion());
         vo.setEnabled(rule.getEnabled());
+        vo.setIsBuiltin(rule.getIsBuiltin());
         vo.setCreateUserName(createUserName);
         vo.setCreateTime(rule.getCreateTime());
         vo.setUpdateTime(rule.getUpdateTime());

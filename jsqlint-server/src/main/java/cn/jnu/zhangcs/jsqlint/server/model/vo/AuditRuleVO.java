@@ -22,6 +22,10 @@ public class AuditRuleVO {
     private String droolsContent;
     private String suggestion;
     private Integer enabled;
+    /**
+     * 是否内置规则: 0-用户规则, 1-内置规则
+     */
+    private Integer isBuiltin;
     private String createUserName;
     private LocalDateTime createTime;
     private LocalDateTime updateTime;

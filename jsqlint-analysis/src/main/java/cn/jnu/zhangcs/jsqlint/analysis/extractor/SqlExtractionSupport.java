@@ -549,6 +549,10 @@ public final class SqlExtractionSupport {
             case "alter" -> StatementType.ALTER;
             case "drop" -> StatementType.DROP;
             case "truncate" -> StatementType.TRUNCATE;
+            // PG/Oracle 特有语句起始词：按语义归入最近的大类
+            case "merge" -> StatementType.UPDATE;          // Oracle MERGE INTO
+            case "explain", "analyze" -> StatementType.SELECT; // PG EXPLAIN/ANALYZE（读导向）
+            case "grant", "revoke" -> StatementType.CREATE;   // DCL 归入 CREATE 大类（原有分类无 DCL）
             default -> null;
         };
     }

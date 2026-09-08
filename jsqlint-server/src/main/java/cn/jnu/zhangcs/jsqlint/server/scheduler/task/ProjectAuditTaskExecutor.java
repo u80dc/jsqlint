@@ -109,9 +109,11 @@ public class ProjectAuditTaskExecutor extends ProjectTaskExecutor {
 
                 List<cn.jnu.zhangcs.jsqlint.audit.AuditRule> commonRules = toCommonRules(rules);
                 SqlAuditTool.validateRules(commonRules);
+                cn.jnu.zhangcs.jsqlint.audit.model.SqlDialect projectDialect =
+                        cn.jnu.zhangcs.jsqlint.audit.model.SqlDialect.fromCode(project.getDialect());
 
-                // 6. 执行审核（使用 Drools 规则引擎）
-                List<AuditResult> auditResults = auditStatements(projectId, statements, commonRules);
+                // 6. 执行审核（使用 Drools 规则引擎，方言来自项目声明）
+                List<AuditResult> auditResults = auditStatements(projectId, statements, commonRules, projectDialect);
                 replaceAuditResults(statements, auditResults);
                 log.info("执行审核规则完成: projectId={}, versionId={}, sqlCount={}, issueCount={}",
                         projectId, version.getId(), statements.size(), auditResults.size());
@@ -135,7 +137,8 @@ public class ProjectAuditTaskExecutor extends ProjectTaskExecutor {
     private List<AuditResult> auditStatements(
             Long projectId,
             List<SqlStatement> statements,
-            List<cn.jnu.zhangcs.jsqlint.audit.AuditRule> rules) {
+            List<cn.jnu.zhangcs.jsqlint.audit.AuditRule> rules,
+            cn.jnu.zhangcs.jsqlint.audit.model.SqlDialect dialect) {
         List<AuditResult> auditResults = new ArrayList<>();
         for (SqlStatement statement : statements) {
             for (String sql : auditSqlCandidates(statement)) {
@@ -143,6 +146,7 @@ public class ProjectAuditTaskExecutor extends ProjectTaskExecutor {
                 fact.setSourceMethod(statement.getStatementId());
                 fact.setFilePath(statement.getSourceFile());
                 fact.setLineNumber(statement.getSourceLine());
+                fact.setDialect(dialect);
 
                 SqlAuditResult result = SqlAuditTool.audit(fact, rules);
                 if (!result.hasIssues()) {
