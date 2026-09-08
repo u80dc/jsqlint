@@ -136,7 +136,20 @@
 
     <build>
         <plugins>
-
+            <!-- 根 pom 以 BOM 导入依赖管理而非 parent 继承，
+                 spring-boot-maven-plugin 不会自动生效，需显式声明以生成可执行 fat jar -->
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+                <version>${spring-boot.version}</version>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>repackage</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
         </plugins>
     </build>
 
