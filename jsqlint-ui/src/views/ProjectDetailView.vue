@@ -154,8 +154,8 @@
               </template>
             </el-table-column>
             <el-table-column prop="operatorName" :label="t('projectDetail.overview.operator')" width="100" />
-            <el-table-column :label="t('projectDetail.overview.operation')" width="140" align="center" fixed="right">
-              <template #default="{ row }">
+            <el-table-column :label="t('projectDetail.overview.operation')" width="190" align="center" fixed="right">
+              <template #default="{ row, $index }">
                 <span class="version-actions">
                   <el-tooltip v-if="canViewVersionSql(row)" :content="t('projectDetail.overview.viewSqlTip')" placement="top">
                     <span class="version-action-text" @click="handleViewVersionSql(row)">
@@ -167,7 +167,16 @@
                       {{ t('projectDetail.overview.viewReport') }}
                     </span>
                   </el-tooltip>
-                  <span v-if="!canViewVersionSql(row) && !canViewVersionReport(row)" class="version-action-empty">-</span>
+                  <el-tooltip
+                    v-if="canDiffVersion($index)"
+                    :content="t('projectDetail.overview.diffTip')"
+                    placement="top"
+                  >
+                    <span class="version-action-text" @click="openVersionDiff(row, $index)">
+                      {{ t('projectDetail.overview.diff') }}
+                    </span>
+                  </el-tooltip>
+                  <span v-if="!canViewVersionSql(row) && !canViewVersionReport(row) && !canDiffVersion($index)" class="version-action-empty">-</span>
                 </span>
               </template>
             </el-table-column>
@@ -742,6 +751,58 @@
         </el-form>
       </div>
     </el-dialog>
+
+    <!-- 版本差异弹窗：SQL 变更明细 + 风险增量 -->
+    <el-dialog
+      v-model="diffDialogVisible"
+      :title="t('projectDetail.diff.title')"
+      width="860px"
+      align-center
+    >
+      <div v-if="diffData" v-loading="diffLoading" class="diff-body">
+        <div class="diff-summary">
+          <span class="diff-summary-item diff-added">
+            {{ t('projectDetail.diff.added') }}: {{ diffData.addedCount }}
+          </span>
+          <span class="diff-summary-item diff-modified">
+            {{ t('projectDetail.diff.modified') }}: {{ diffData.modifiedCount }}
+          </span>
+          <span class="diff-summary-item diff-deleted">
+            {{ t('projectDetail.diff.deleted') }}: {{ diffData.deletedCount }}
+          </span>
+        </div>
+        <div v-if="diffData.newIssueCount > 0" class="diff-risk">
+          <span class="diff-risk-label">{{ t('projectDetail.diff.risk') }}:</span>
+          <el-tag v-if="diffData.newCriticalCount" type="danger" size="small">
+            {{ t('severity.critical') }} × {{ diffData.newCriticalCount }}
+          </el-tag>
+          <el-tag v-if="diffData.newHighCount" type="danger" effect="plain" size="small">
+            {{ t('severity.high') }} × {{ diffData.newHighCount }}
+          </el-tag>
+          <el-tag v-if="diffData.newWarningCount" type="warning" size="small">
+            {{ t('severity.warning') }} × {{ diffData.newWarningCount }}
+          </el-tag>
+          <el-tag v-if="diffData.newInfoCount" type="info" size="small">
+            {{ t('severity.info') }} × {{ diffData.newInfoCount }}
+          </el-tag>
+        </div>
+        <el-table v-if="diffData.changes.length > 0" :data="diffData.changes" size="small" max-height="420">
+          <el-table-column prop="changeType" :label="t('projectDetail.diff.changeType')" width="90" align="center">
+            <template #default="{ row }">
+              <el-tag :type="getChangeTypeTag(row.changeType)" size="small">
+                {{ getChangeTypeLabel(row.changeType) }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="statementId" :label="t('projectDetail.diff.statementId')" min-width="300" show-overflow-tooltip />
+        </el-table>
+        <el-empty
+          v-else
+          :description="t('projectDetail.diff.empty')"
+          :image-size="60"
+        />
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -759,7 +820,7 @@ import ProjectLogsPanel from '@/components/project/ProjectLogsPanel.vue'
 import ProjectMembersPanel from '@/components/project/ProjectMembersPanel.vue'
 import ProjectReportPanel from '@/components/project/ProjectReportPanel.vue'
 import ExecutionSteps, { type ExecutionStep, type ExecutionStepStatus } from '@/components/project/ExecutionSteps.vue'
-import { executeProject, getProject, getProjectCredentials, getProjectStatus, getProjectVersions, updateProject, updateProjectCredential, type CredentialVO, type ProjectVO, type ProjectVersionStepVO, type ProjectVersionVO } from '@/api/project'
+import { executeProject, getProject, getProjectCredentials, getProjectStatus, getProjectVersions, getVersionDiff, updateProject, updateProjectCredential, type CredentialVO, type ProjectVO, type ProjectVersionStepVO, type ProjectVersionVO, type VersionDiffVO } from '@/api/project'
 import type { AuditRuleVO } from '@/api/auditRule'
 import { getAuditIssues, transitIssueStatus, type AuditIssueVO } from '@/api/auditIssue'
 import { checkIsProjectAdmin } from '@/api/projectMember'
@@ -1609,6 +1670,53 @@ const submitTransit = async () => {
   } finally {
     transitSaving.value = false
   }
+}
+
+// ============================================
+// 版本差异（diff）
+// ============================================
+const diffDialogVisible = ref(false)
+const diffLoading = ref(false)
+const diffData = ref<VersionDiffVO | null>(null)
+
+/** 版本列表按时间倒序，行 index 的下一行即上一版本 */
+const canDiffVersion = (rowIndex: number) => {
+  return rowIndex >= 0 && rowIndex + 1 < versions.value.length
+}
+
+const openVersionDiff = async (row: ProjectVersionVO, rowIndex: number) => {
+  const previous = versions.value[rowIndex + 1]
+  if (!previous || !row.id || !previous.id) {
+    return
+  }
+  diffDialogVisible.value = true
+  diffLoading.value = true
+  diffData.value = null
+  try {
+    diffData.value = await getVersionDiff(projectId, previous.id, row.id)
+  } catch {
+    ElMessage.error(t('projectDetail.diff.loadError'))
+  } finally {
+    diffLoading.value = false
+  }
+}
+
+const getChangeTypeTag = (changeType?: string) => {
+  const types: Record<string, string> = {
+    ADDED: 'success',
+    MODIFIED: 'warning',
+    DELETED: 'danger'
+  }
+  return types[changeType || ''] || 'info'
+}
+
+const getChangeTypeLabel = (changeType?: string) => {
+  const labels: Record<string, string> = {
+    ADDED: t('projectDetail.diff.added'),
+    MODIFIED: t('projectDetail.diff.modified'),
+    DELETED: t('projectDetail.diff.deleted')
+  }
+  return labels[changeType || ''] || changeType || '-'
 }
 
 /**
@@ -2684,6 +2792,39 @@ const loadProjectOverview = async () => {
     border: 1px solid var(--jsp-border-color, #e4e7ed);
     border-radius: 8px;
     background: var(--jsp-bg-page);
+  }
+
+  // 版本差异弹窗
+  .diff-body {
+    min-height: 160px;
+  }
+
+  .diff-summary {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 12px;
+
+    .diff-summary-item {
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .diff-added { color: var(--el-color-success); }
+    .diff-modified { color: var(--el-color-warning); }
+    .diff-deleted { color: var(--el-color-danger); }
+  }
+
+  .diff-risk {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 12px;
+
+    .diff-risk-label {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--jsp-text-secondary);
+    }
   }
 
   // statementId 缩短展示：默认只显示"类.方法(参数)"，悬浮完整、单击复制

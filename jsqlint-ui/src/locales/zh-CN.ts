@@ -256,6 +256,8 @@ export default {
       viewSqlTip: '查看项目扫描SQL结果',
       viewReport: '报告',
       viewReportTip: '查看项目审核报告',
+      diff: '对比',
+      diffTip: '与上一版本对比 SQL 变更与风险增量',
       projectScore: '项目总分',
       monthCompliance: '本月合规率',
       sqlHealthRate: 'SQL健康率',
@@ -395,6 +397,17 @@ export default {
         dismissed: '已豁免',
         reopen: '重新打开'
       }
+    },
+    diff: {
+      title: '版本 SQL 差异',
+      added: '新增',
+      modified: '修改',
+      deleted: '删除',
+      risk: '风险增量',
+      changeType: '变更类型',
+      statementId: 'Statement ID',
+      empty: '两版本之间没有 SQL 变更',
+      loadError: '加载版本差异失败'
     },
     whitelist: {
       title: 'SQL白名单',

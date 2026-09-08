@@ -39,6 +39,8 @@ public class ProjectAuditTaskExecutor extends ProjectTaskExecutor {
 
     private final TransactionTemplate transactionTemplate;
 
+    private final cn.jnu.zhangcs.jsqlint.server.service.ProjectVersionService projectVersionService;
+
     public ProjectAuditTaskExecutor(TaskService taskService,
                                     ProjectService projectService,
                                     ProjectVersionStepService projectVersionStepService,
@@ -46,13 +48,15 @@ public class ProjectAuditTaskExecutor extends ProjectTaskExecutor {
                                     SqlWhitelistService sqlWhitelistService,
                                     SqlStatementService sqlStatementService,
                                     AuditResultMapper auditResultMapper,
-                                    TransactionTemplate transactionTemplate) {
+                                    TransactionTemplate transactionTemplate,
+                                    cn.jnu.zhangcs.jsqlint.server.service.ProjectVersionService projectVersionService) {
         super(taskService, projectService, projectVersionStepService);
         this.auditRuleService = auditRuleService;
         this.sqlWhitelistService = sqlWhitelistService;
         this.sqlStatementService = sqlStatementService;
         this.auditResultMapper = auditResultMapper;
         this.transactionTemplate = transactionTemplate;
+        this.projectVersionService = projectVersionService;
     }
 
     @Override
@@ -112,11 +116,25 @@ public class ProjectAuditTaskExecutor extends ProjectTaskExecutor {
                 cn.jnu.zhangcs.jsqlint.audit.model.SqlDialect projectDialect =
                         cn.jnu.zhangcs.jsqlint.audit.model.SqlDialect.fromCode(project.getDialect());
 
-                // 6. 执行审核（使用 Drools 规则引擎，方言来自项目声明）
-                List<AuditResult> auditResults = auditStatements(projectId, statements, commonRules, projectDialect);
-                replaceAuditResults(statements, auditResults);
-                log.info("执行审核规则完成: projectId={}, versionId={}, sqlCount={}, issueCount={}",
-                        projectId, version.getId(), statements.size(), auditResults.size());
+                // 6. 增量审核：SQL 内容未变（statementId+sqlHash 相同）的语句跳过重审，
+                //    其既有审核结果（含处理状态）原样保留；仅新增/变更 SQL 进入规则评估。
+                //    规则集变更会通过 ruleChanged 触发全量兜底。
+                Map<String, String> lastAuditedHashes = loadLastAuditedHashes(projectId, version.getId());
+                final var versionTime = version.getOperationTime();
+                boolean ruleChanged = rules.stream().anyMatch(r -> r.getUpdateTime() != null
+                        && versionTime != null
+                        && r.getUpdateTime().isAfter(versionTime));
+                List<SqlStatement> toAudit = ruleChanged ? statements : filterChangedStatements(statements, lastAuditedHashes);
+                int skipped = statements.size() - toAudit.size();
+                if (skipped > 0) {
+                    log.info("增量审核: projectId={}, 跳过未变更 SQL {} 条, 重审 {} 条（规则变更={}）",
+                            projectId, skipped, toAudit.size(), ruleChanged);
+                }
+
+                List<AuditResult> auditResults = auditStatements(projectId, toAudit, commonRules, projectDialect);
+                replaceAuditResultsIncremental(statements, toAudit, auditResults);
+                log.info("执行审核规则完成: projectId={}, versionId={}, sqlCount={}, reAudited={}, issueCount={}",
+                        projectId, version.getId(), statements.size(), toAudit.size(), auditResults.size());
             }
 
             log.info("审核完成: projectId={}, versionId={}", projectId, version.getId());
@@ -277,8 +295,75 @@ public class ProjectAuditTaskExecutor extends ProjectTaskExecutor {
         });
     }
 
-    private Map<String, AuditResult> snapshotHandledStatus(List<SqlStatement> statements) {
-        if (statements == null || statements.isEmpty()) {
+    /**
+     * 加载上一已审核版本的 statementId → sqlHash 映射，作为增量基准。
+     *
+     * <p>取当前版本之前、最近一个完成过规则审核的版本，读其全部 SQL 语句哈希。
+     * 没有历史审核版本（首审）返回空 Map → 全量审核。</p>
+     */
+    private Map<String, String> loadLastAuditedHashes(Long projectId, Long currentVersionId) {
+        List<cn.jnu.zhangcs.jsqlint.server.entity.ProjectVersion> versions =
+                projectVersionService.getList(projectId);
+        cn.jnu.zhangcs.jsqlint.server.entity.ProjectVersion lastAudited = null;
+        for (cn.jnu.zhangcs.jsqlint.server.entity.ProjectVersion candidate : versions) {
+            if (candidate.getId() >= currentVersionId) {
+                continue;
+            }
+            if (projectVersionStepService.isStepSuccess(candidate.getId(), ProjectVersionStepType.RULE_AUDIT)) {
+                lastAudited = candidate;
+                break;
+            }
+        }
+        if (lastAudited == null) {
+            return Map.of();
+        }
+        List<SqlStatement> previousStatements = sqlStatementService.getByProjectAndVersion(projectId, lastAudited.getId());
+        Map<String, String> hashes = new HashMap<>();
+        for (SqlStatement statement : previousStatements) {
+            if (statement.getStatementId() != null && statement.getSqlHash() != null) {
+                hashes.putIfAbsent(statement.getStatementId(), statement.getSqlHash());
+            }
+        }
+        return hashes;
+    }
+
+    /**
+     * 过滤出需要重审的语句：新增（基准中无）或 SQL 内容变化（哈希不同）。
+     */
+    private List<SqlStatement> filterChangedStatements(List<SqlStatement> statements, Map<String, String> lastAuditedHashes) {
+        if (lastAuditedHashes.isEmpty()) {
+            return statements;
+        }
+        return statements.stream()
+                .filter(statement -> {
+                    if (statement.getStatementId() == null || statement.getSqlHash() == null) {
+                        return true;
+                    }
+                    return !statement.getSqlHash().equals(lastAuditedHashes.get(statement.getStatementId()));
+                })
+                .toList();
+    }
+
+    /**
+     * 增量结果落库：只删除并重建"本次重审语句"的结果，未变更语句的既有结果
+     * （含处理状态）原样保留。
+     */
+    private void replaceAuditResultsIncremental(
+            List<SqlStatement> allStatements, List<SqlStatement> reAudited, List<AuditResult> newResults) {
+        if (reAudited.size() == allStatements.size()) {
+            // 全量路径，沿用含状态继承的替换
+            replaceAuditResults(allStatements, newResults);
+            return;
+        }
+        transactionTemplate.executeWithoutResult(status -> {
+            Map<String, AuditResult> handledSnapshot = snapshotHandledStatus(reAudited);
+            deleteAuditResults(reAudited);
+            inheritHandledStatus(newResults, handledSnapshot);
+            saveAuditResults(newResults);
+        });
+    }
+
+    private Map<String, AuditResult> snapshotHandledStatus(List<SqlStatement> statements) {        if (statements == null || statements.isEmpty()) {
             return Map.of();
         }
         List<Long> scanIds = statements.stream()

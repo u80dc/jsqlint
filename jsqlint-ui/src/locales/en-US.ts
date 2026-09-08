@@ -256,6 +256,8 @@ export default {
       viewSqlTip: 'View project scanned SQL results',
       viewReport: 'View Report',
       viewReportTip: 'View project audit report',
+      diff: 'Diff',
+      diffTip: 'Compare SQL changes and risk delta with the previous version',
       projectScore: 'Project Score',
       monthCompliance: 'Monthly Compliance',
       sqlHealthRate: 'SQL Health Rate',
@@ -395,6 +397,17 @@ export default {
         dismissed: 'Dismissed',
         reopen: 'Reopen'
       }
+    },
+    diff: {
+      title: 'Version SQL Diff',
+      added: 'Added',
+      modified: 'Modified',
+      deleted: 'Deleted',
+      risk: 'Risk Delta',
+      changeType: 'Change',
+      statementId: 'Statement ID',
+      empty: 'No SQL changes between versions',
+      loadError: 'Failed to load version diff'
     },
     whitelist: {
       title: 'SQL Whitelist',

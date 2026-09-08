@@ -160,6 +160,40 @@ export const getProjectVersions = (projectId: number): Promise<ProjectVersionVO[
   return request.get<ProjectVersionVO[]>(`/api/projects/${projectId}/versions`)
 }
 
+export interface SqlChangeVO {
+  id?: number
+  statementId?: string
+  changeType?: string
+  fromSqlHash?: string
+  toSqlHash?: string
+  diffSummary?: Record<string, unknown>
+}
+
+export interface VersionDiffVO {
+  projectId: number
+  fromVersionId: number
+  toVersionId: number
+  changes: SqlChangeVO[]
+  addedCount: number
+  modifiedCount: number
+  deletedCount: number
+  newCriticalCount: number
+  newHighCount: number
+  newWarningCount: number
+  newInfoCount: number
+  newIssueCount: number
+}
+
+export const getVersionDiff = (
+  projectId: number,
+  fromVersionId: number,
+  toVersionId: number
+): Promise<VersionDiffVO> => {
+  return request.get<VersionDiffVO>(`/api/projects/${projectId}/versions/diff`, {
+    params: { from: fromVersionId, to: toVersionId }
+  })
+}
+
 export const getProjectStatus = (projectId: number): Promise<ProjectStatusVO> => {
   return request.get<ProjectStatusVO>(`/api/projects/${projectId}/status`)
 }
