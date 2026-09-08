@@ -52,6 +52,14 @@ public interface AuditRuleService {
     AuditRule getRuleById(Long id);
 
     /**
+     * 按 ID 集合批量获取规则（问题列表填充规则名用）
+     *
+     * @param ids 规则ID集合
+     * @return 规则列表
+     */
+    List<AuditRule> getRulesByIds(java.util.Collection<Long> ids);
+
+    /**
      * 新增规则
      *
      * @param rule 规则信息

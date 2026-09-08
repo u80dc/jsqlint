@@ -371,6 +371,31 @@ export default {
       operation: '操作',
       loadError: '加载项目SQL失败'
     },
+    issues: {
+      title: '问题',
+      view: '查看',
+      dialogTitle: '审核问题处理',
+      severity: '级别',
+      rule: '命中规则',
+      message: '问题描述',
+      status: '状态',
+      handler: '处理人',
+      remark: '备注',
+      handle: '处理',
+      targetStatus: '目标状态',
+      remarkPlaceholder: '豁免原因 / 修复说明（可选）',
+      addToWhitelist: '同时加入 SQL 白名单（后续版本不再报告此问题）',
+      loadError: '加载问题列表失败',
+      transitSuccess: '处理状态已更新',
+      transitError: '处理状态更新失败',
+      statusOptions: {
+        open: '待处理',
+        confirmed: '已确认',
+        resolved: '已修复',
+        dismissed: '已豁免',
+        reopen: '重新打开'
+      }
+    },
     whitelist: {
       title: 'SQL白名单',
       total: '共 {count} 条',

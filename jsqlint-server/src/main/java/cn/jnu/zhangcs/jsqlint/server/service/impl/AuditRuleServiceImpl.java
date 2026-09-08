@@ -97,6 +97,16 @@ public class AuditRuleServiceImpl implements AuditRuleService {
     }
 
     @Override
+    public List<AuditRule> getRulesByIds(java.util.Collection<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return List.of();
+        }
+        List<AuditRule> rules = auditRuleMapper.selectBatchIds(ids);
+        rules.forEach(this::fillDescriptions);
+        return rules;
+    }
+
+    @Override
     @Transactional
     public AuditRule createRule(AuditRule rule, Long userId) {
         // 检查规则代码唯一性

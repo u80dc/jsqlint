@@ -371,6 +371,31 @@ export default {
       operation: 'Operation',
       loadError: 'Failed to load project SQL'
     },
+    issues: {
+      title: 'Issues',
+      view: 'View',
+      dialogTitle: 'Audit Issue Handling',
+      severity: 'Severity',
+      rule: 'Rule',
+      message: 'Message',
+      status: 'Status',
+      handler: 'Handler',
+      remark: 'Remark',
+      handle: 'Handle',
+      targetStatus: 'Target Status',
+      remarkPlaceholder: 'Dismissal reason / fix note (optional)',
+      addToWhitelist: 'Also add to SQL whitelist (won\'t report in future versions)',
+      loadError: 'Failed to load issues',
+      transitSuccess: 'Issue status updated',
+      transitError: 'Failed to update issue status',
+      statusOptions: {
+        open: 'Open',
+        confirmed: 'Confirmed',
+        resolved: 'Resolved',
+        dismissed: 'Dismissed',
+        reopen: 'Reopen'
+      }
+    },
     whitelist: {
       title: 'SQL Whitelist',
       total: '{count} items',

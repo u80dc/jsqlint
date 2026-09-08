@@ -329,12 +329,17 @@ CREATE TABLE IF NOT EXISTS `jsl_audit_result` (
                                                   `line_number` INT                   DEFAULT NULL COMMENT '行号',
                                                   `sql_content` TEXT COMMENT 'SQL内容',
                                                   `suggestion` TEXT COMMENT '修复建议',
-                                                  `create_time` DATETIME              DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+                                                  `status`        VARCHAR(20)  NOT NULL DEFAULT 'OPEN' COMMENT '处理状态: OPEN-待处理, CONFIRMED-已确认, RESOLVED-已修复, DISMISSED-已豁免',
+                                                  `handle_user_id` BIGINT               DEFAULT NULL COMMENT '处理人',
+                                                  `handle_time`   DATETIME              DEFAULT NULL COMMENT '处理时间',
+                                                  `handle_remark` VARCHAR(500)          DEFAULT NULL COMMENT '处理备注（豁免原因/修复说明）',
+                                                  `create_time`   DATETIME              DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
                                                   PRIMARY KEY (`id`),
                                                   KEY `idx_project_id` (`project_id`),
                                                   KEY `idx_scan_id` (`scan_id`),
                                                   KEY `idx_rule_id` (`rule_id`),
-                                                  KEY `idx_severity` (`severity`)
+                                                  KEY `idx_severity` (`severity`),
+                                                  KEY `idx_status` (`status`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='审核结果表';
 
 -- SQL 白名单表（V2026.06.25 新增）

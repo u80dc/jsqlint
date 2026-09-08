@@ -268,9 +268,58 @@ public class ProjectAuditTaskExecutor extends ProjectTaskExecutor {
 
     private void replaceAuditResults(List<SqlStatement> statements, List<AuditResult> auditResults) {
         transactionTemplate.executeWithoutResult(status -> {
+            // 重新审核前快照既有处理状态，按 SQL指纹+规则ID 继承到新结果：
+            // SQL 未变的已处理问题（确认/修复/豁免）不因重扫丢失；SQL 变更视为新问题回 OPEN
+            Map<String, AuditResult> handledSnapshot = snapshotHandledStatus(statements);
             deleteAuditResults(statements);
+            inheritHandledStatus(auditResults, handledSnapshot);
             saveAuditResults(auditResults);
         });
+    }
+
+    private Map<String, AuditResult> snapshotHandledStatus(List<SqlStatement> statements) {
+        if (statements == null || statements.isEmpty()) {
+            return Map.of();
+        }
+        List<Long> scanIds = statements.stream()
+                .map(SqlStatement::getId)
+                .filter(id -> id != null)
+                .toList();
+        Map<String, AuditResult> handled = new HashMap<>();
+        for (int i = 0; i < scanIds.size(); i += 500) {
+            List<AuditResult> batch = auditResultMapper.selectList(
+                    new LambdaQueryWrapper<AuditResult>()
+                            .in(AuditResult::getScanId, scanIds.subList(i, Math.min(i + 500, scanIds.size())))
+                            .isNotNull(AuditResult::getStatus)
+                            .ne(AuditResult::getStatus, "OPEN"));
+            for (AuditResult result : batch) {
+                if (result.getSqlContent() == null || result.getRuleId() == null) {
+                    continue;
+                }
+                String key = FingerprintUtils.fingerprint(result.getSqlContent()) + ":" + result.getRuleId();
+                handled.putIfAbsent(key, result);
+            }
+        }
+        return handled;
+    }
+
+    private void inheritHandledStatus(List<AuditResult> auditResults, Map<String, AuditResult> handledSnapshot) {
+        if (auditResults == null || handledSnapshot.isEmpty()) {
+            return;
+        }
+        for (AuditResult result : auditResults) {
+            if (result.getSqlContent() == null || result.getRuleId() == null) {
+                continue;
+            }
+            String key = FingerprintUtils.fingerprint(result.getSqlContent()) + ":" + result.getRuleId();
+            AuditResult previous = handledSnapshot.get(key);
+            if (previous != null) {
+                result.setStatus(previous.getStatus());
+                result.setHandleUserId(previous.getHandleUserId());
+                result.setHandleTime(previous.getHandleTime());
+                result.setHandleRemark(previous.getHandleRemark());
+            }
+        }
     }
 
     private List<cn.jnu.zhangcs.jsqlint.audit.AuditRule> toCommonRules(List<AuditRule> rules) {

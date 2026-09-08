@@ -340,6 +340,21 @@
           <el-table-column prop="paramCount" :label="t('projectDetail.projectSql.paramCount')" width="90" align="center">
             <template #default="{ row }">{{ row.paramCount ?? 0 }}</template>
           </el-table-column>
+          <el-table-column :label="t('projectDetail.issues.title')" width="90" align="center">
+            <template #default="{ row }">
+              <el-badge
+                v-if="issueCountsByScan[row.id] > 0"
+                :value="issueCountsByScan[row.id]"
+                :type="issueOpenCountsByScan[row.id] > 0 ? 'danger' : 'info'"
+                class="issue-badge"
+              >
+                <el-button text size="small" @click.stop="toggleIssuePanel(row)">
+                  {{ t('projectDetail.issues.view') }}
+                </el-button>
+              </el-badge>
+              <span v-else class="issue-none">0</span>
+            </template>
+          </el-table-column>
           <el-table-column :label="t('projectDetail.projectSql.operation')" width="80" align="center" fixed="right">
             <template #default="{ row }">
               <div class="action-icons-row">
@@ -655,6 +670,78 @@
         <el-button type="primary" :loading="savingCredential" @click="handleSaveCredential">{{ t('common.confirm') }}</el-button>
       </template>
     </el-dialog>
+
+    <!-- 问题处理弹窗：单条 SQL 的审核问题列表 + 状态流转 -->
+    <el-dialog
+      v-model="issueDialogVisible"
+      :title="t('projectDetail.issues.dialogTitle')"
+      width="860px"
+      align-center
+    >
+      <div v-if="issueStatementId" class="issue-dialog-subtitle">{{ issueStatementId }}</div>
+      <el-table :data="issueList" v-loading="issueLoading" size="small">
+        <el-table-column prop="severity" :label="t('projectDetail.issues.severity')" width="90" align="center">
+          <template #default="{ row }">
+            <el-tag :type="getIssueSeverityType(row.severity)" size="small">{{ row.severity }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="ruleName" :label="t('projectDetail.issues.rule')" min-width="140" show-overflow-tooltip />
+        <el-table-column prop="message" :label="t('projectDetail.issues.message')" min-width="200" show-overflow-tooltip />
+        <el-table-column prop="status" :label="t('projectDetail.issues.status')" width="100" align="center">
+          <template #default="{ row }">
+            <el-tag :type="getIssueStatusType(row.status)" size="small">{{ row.statusDescription }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column :label="t('projectDetail.issues.handler')" width="100" align="center">
+          <template #default="{ row }">{{ row.handleUserName || '-' }}</template>
+        </el-table-column>
+        <el-table-column prop="handleRemark" :label="t('projectDetail.issues.remark')" min-width="120" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.handleRemark || '-' }}</template>
+        </el-table-column>
+        <el-table-column :label="t('common.operation')" width="80" align="center" fixed="right">
+          <template #default="{ row }">
+            <el-button text type="primary" size="small" @click="openTransit(row)">
+              {{ t('projectDetail.issues.handle') }}
+            </el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <!-- 状态流转内嵌面板 -->
+      <div v-if="transitTarget" class="issue-transit-panel">
+        <el-form label-width="90px" size="small">
+          <el-form-item :label="t('projectDetail.issues.targetStatus')">
+            <el-radio-group v-model="transitForm.status">
+              <el-radio-button
+                v-for="opt in availableTransitions(transitTarget.status)"
+                :key="opt.value"
+                :value="opt.value"
+              >{{ opt.label }}</el-radio-button>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item :label="t('projectDetail.issues.remark')">
+            <el-input
+              v-model="transitForm.remark"
+              type="textarea"
+              :rows="2"
+              maxlength="500"
+              :placeholder="t('projectDetail.issues.remarkPlaceholder')"
+            />
+          </el-form-item>
+          <el-form-item v-if="transitForm.status === 'DISMISSED'">
+            <el-checkbox v-model="transitForm.addToWhitelist">
+              {{ t('projectDetail.issues.addToWhitelist') }}
+            </el-checkbox>
+          </el-form-item>
+          <el-form-item>
+            <el-button size="small" @click="transitTarget = null">{{ t('common.cancel') }}</el-button>
+            <el-button type="primary" size="small" :loading="transitSaving" @click="submitTransit">
+              {{ t('common.confirm') }}
+            </el-button>
+          </el-form-item>
+        </el-form>
+      </div>
+    </el-dialog>
   </div>
 </template>
 
@@ -674,6 +761,7 @@ import ProjectReportPanel from '@/components/project/ProjectReportPanel.vue'
 import ExecutionSteps, { type ExecutionStep, type ExecutionStepStatus } from '@/components/project/ExecutionSteps.vue'
 import { executeProject, getProject, getProjectCredentials, getProjectStatus, getProjectVersions, updateProject, updateProjectCredential, type CredentialVO, type ProjectVO, type ProjectVersionStepVO, type ProjectVersionVO } from '@/api/project'
 import type { AuditRuleVO } from '@/api/auditRule'
+import { getAuditIssues, transitIssueStatus, type AuditIssueVO } from '@/api/auditIssue'
 import { checkIsProjectAdmin } from '@/api/projectMember'
 import { createProjectAuditRule, deleteProjectAuditRule, getProjectAuditRules, toggleProjectAuditRule, updateProjectAuditRule } from '@/api/projectAuditRule'
 import { downloadProjectReportPdf, getProjectReport, type ProjectReportVO } from '@/api/projectReport'
@@ -1367,6 +1455,7 @@ const loadProjectSql = async (versionId = getRouteVersionId()) => {
       if (list.length > 0) {
         projectSqlVersion.value = version
         projectSqlList.value = list
+        loadIssueCounts()
         return
       }
     }
@@ -1387,6 +1476,139 @@ const formatSqlLocation = (row: SqlStatementVO) => {
     return '-'
   }
   return row.sourceLine ? `${row.sourceFile}:${row.sourceLine}` : row.sourceFile
+}
+
+// ============================================
+// 审核问题处理（行内入口 + 弹窗处理）
+// ============================================
+const issueDialogVisible = ref(false)
+const issueLoading = ref(false)
+const issueList = ref<AuditIssueVO[]>([])
+const issueStatementId = ref('')
+const issueScanId = ref<number | null>(null)
+/** 每条 SQL 的问题计数（总数/待处理数），行内徽标用 */
+const issueCountsByScan = reactive<Record<number, number>>({})
+const issueOpenCountsByScan = reactive<Record<number, number>>({})
+const transitTarget = ref<AuditIssueVO | null>(null)
+const transitSaving = ref(false)
+const transitForm = reactive({
+  status: 'CONFIRMED',
+  remark: '',
+  addToWhitelist: false
+})
+
+const getIssueSeverityType = (severity?: string) => {
+  const types: Record<string, string> = {
+    critical: 'danger',
+    high: 'danger',
+    warning: 'warning',
+    info: 'info'
+  }
+  return types[severity || ''] || 'info'
+}
+
+const getIssueStatusType = (status?: string) => {
+  const types: Record<string, string> = {
+    OPEN: 'danger',
+    CONFIRMED: 'warning',
+    RESOLVED: 'success',
+    DISMISSED: 'info'
+  }
+  return types[status || 'OPEN'] || 'danger'
+}
+
+/** 状态机与后端 IssueStatus.canTransit 保持一致 */
+const availableTransitions = (current: string) => {
+  const options: { value: string; label: string }[] = []
+  if (current === 'OPEN') {
+    options.push({ value: 'CONFIRMED', label: t('projectDetail.issues.statusOptions.confirmed') })
+    options.push({ value: 'DISMISSED', label: t('projectDetail.issues.statusOptions.dismissed') })
+  } else if (current === 'CONFIRMED') {
+    options.push({ value: 'RESOLVED', label: t('projectDetail.issues.statusOptions.resolved') })
+    options.push({ value: 'DISMISSED', label: t('projectDetail.issues.statusOptions.dismissed') })
+    options.push({ value: 'OPEN', label: t('projectDetail.issues.statusOptions.reopen') })
+  } else {
+    options.push({ value: 'OPEN', label: t('projectDetail.issues.statusOptions.reopen') })
+  }
+  return options
+}
+
+/** 加载全部问题的计数，按 scanId 分组到行内徽标 */
+const loadIssueCounts = async () => {
+  if (!projectId || projectSqlList.value.length === 0) {
+    return
+  }
+  try {
+    const result = await getAuditIssues(projectId, { pageSize: 500 })
+    const total: Record<number, number> = {}
+    const open: Record<number, number> = {}
+    for (const issue of result.list) {
+      if (issue.scanId == null) {
+        continue
+      }
+      total[issue.scanId] = (total[issue.scanId] || 0) + 1
+      if (issue.status === 'OPEN') {
+        open[issue.scanId] = (open[issue.scanId] || 0) + 1
+      }
+    }
+    Object.keys(issueCountsByScan).forEach(k => delete issueCountsByScan[Number(k)])
+    Object.assign(issueCountsByScan, total)
+    Object.keys(issueOpenCountsByScan).forEach(k => delete issueOpenCountsByScan[Number(k)])
+    Object.assign(issueOpenCountsByScan, open)
+  } catch {
+    // 计数加载失败不阻塞列表展示
+  }
+}
+
+const toggleIssuePanel = async (row: SqlStatementVO) => {
+  issueScanId.value = row.id
+  issueStatementId.value = row.statementId || ''
+  issueDialogVisible.value = true
+  transitTarget.value = null
+  issueLoading.value = true
+  try {
+    const result = await getAuditIssues(projectId, { scanId: row.id, pageSize: 100 })
+    issueList.value = result.list
+  } catch {
+    issueList.value = []
+    ElMessage.error(t('projectDetail.issues.loadError'))
+  } finally {
+    issueLoading.value = false
+  }
+}
+
+const openTransit = (row: AuditIssueVO) => {
+  transitTarget.value = row
+  const first = availableTransitions(row.status)[0]
+  transitForm.status = first ? first.value : 'CONFIRMED'
+  transitForm.remark = ''
+  transitForm.addToWhitelist = false
+}
+
+const submitTransit = async () => {
+  if (!transitTarget.value) {
+    return
+  }
+  transitSaving.value = true
+  try {
+    await transitIssueStatus(projectId, transitTarget.value.id, {
+      status: transitForm.status,
+      remark: transitForm.remark || undefined,
+      addToWhitelist: transitForm.status === 'DISMISSED' ? transitForm.addToWhitelist : undefined
+    })
+    ElMessage.success(t('projectDetail.issues.transitSuccess'))
+    transitTarget.value = null
+    // 刷新弹窗列表与行内徽标
+    if (issueScanId.value != null) {
+      const result = await getAuditIssues(projectId, { scanId: issueScanId.value, pageSize: 100 })
+      issueList.value = result.list
+    }
+    await loadIssueCounts()
+  } catch {
+    ElMessage.error(t('projectDetail.issues.transitError'))
+  } finally {
+    transitSaving.value = false
+  }
 }
 
 /**
@@ -2435,6 +2657,33 @@ const loadProjectOverview = async () => {
     :deep(.clickable-row) {
       cursor: pointer;
     }
+  }
+
+  // 问题徽标：待处理>0 红色，全部处理完灰色
+  .issue-badge {
+    :deep(.el-badge__content) {
+      transform: translate(80%, -30%);
+    }
+  }
+
+  .issue-none {
+    color: $text-placeholder;
+  }
+
+  // 问题弹窗：语句副标题与流转面板
+  .issue-dialog-subtitle {
+    margin-bottom: 10px;
+    font-size: 12px;
+    color: var(--jsp-text-secondary);
+    word-break: break-all;
+  }
+
+  .issue-transit-panel {
+    margin-top: 14px;
+    padding: 12px 14px;
+    border: 1px solid var(--jsp-border-color, #e4e7ed);
+    border-radius: 8px;
+    background: var(--jsp-bg-page);
   }
 
   // statementId 缩短展示：默认只显示"类.方法(参数)"，悬浮完整、单击复制

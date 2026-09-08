@@ -66,6 +66,26 @@ public class AuditResult {
     private String suggestion;
 
     /**
+     * 处理状态: OPEN-待处理, CONFIRMED-已确认, RESOLVED-已修复, DISMISSED-已豁免
+     */
+    private String status;
+
+    /**
+     * 处理人ID
+     */
+    private Long handleUserId;
+
+    /**
+     * 处理时间
+     */
+    private LocalDateTime handleTime;
+
+    /**
+     * 处理备注（豁免原因/修复说明）
+     */
+    private String handleRemark;
+
+    /**
      * 创建时间
      */
     @TableField(fill = FieldFill.INSERT)
@@ -82,4 +102,16 @@ public class AuditResult {
      */
     @TableField(exist = false)
     private String projectName;
+
+    /**
+     * 处理人名称（非持久化，用于查询结果展示）
+     */
+    @TableField(exist = false)
+    private String handleUserName;
+
+    /**
+     * 处理状态描述（非持久化，用于查询结果展示）
+     */
+    @TableField(exist = false)
+    private String statusDescription;
 }
