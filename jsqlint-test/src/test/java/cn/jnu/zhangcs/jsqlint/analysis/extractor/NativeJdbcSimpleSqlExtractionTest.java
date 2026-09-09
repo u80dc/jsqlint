@@ -29,18 +29,13 @@ class NativeJdbcSimpleSqlExtractionTest {
         SqlExtractionResult result = new NativeJdbcSqlExtractor().extract(context);
         List<SqlStatementResult> statements = assemble(context, result);
 
-        // deleteByDynamicStatus 的 SQL 经过程间内联（buildDeleteSql 返回值展开）成功提取；
-        // queryUsers 的 SQL 跨方法传参（字段/容器中转）仍走诊断而非静默丢弃
+        // deleteByDynamicStatus 经过程间返回值内联提取；queryUsers 经调用方实参回溯提取
+        //（sql 由调用方 search() 用 StringBuilder 构造后传入通用执行方法）。
+        // 两条跨方法链路均已打通，跳过诊断应为空。
         assertAll(
-                () -> assertEquals(17, statements.size(), () -> "Expected SQL statements from native-jdbc-simple, got " + statements.size()),
-                () -> assertTrue(result.diagnostics().stream()
-                                .noneMatch(diagnostic -> diagnostic.contains("deleteByDynamicStatus")),
-                        () -> "deleteByDynamicStatus should be inlined and extracted, got: "
-                                + String.join("\n", result.diagnostics())),
-                () -> assertTrue(result.diagnostics().stream()
-                                .anyMatch(diagnostic -> diagnostic.contains("queryUsers")),
-                        () -> "Expected skip diagnostic for queryUsers (cross-method param), got: "
-                                + String.join("\n", result.diagnostics())),
+                () -> assertEquals(18, statements.size(), () -> "Expected SQL statements from native-jdbc-simple, got " + statements.size()),
+                () -> assertTrue(result.diagnostics().isEmpty(),
+                        () -> "Expected no skip diagnostics, got: " + String.join("\n", result.diagnostics())),
                 () -> assertTrue(statements.stream()
                         .allMatch(statement -> statement.getSourceType() == SqlSourceType.PARAM_SQL)),
                 () -> assertTrue(statements.stream()

@@ -72,6 +72,50 @@ public final class ValueModelResolver {
     }
 
     /**
+     * 跨方法传参回溯：本方法的形参在调用点被传入的实参值。
+     * 仅在传入 View 的多方法模式下可用，单方法模式返回 null。
+     *
+     * @param callee         形参所在方法（即本解析器绑定的方法）
+     * @param parameterIndex 形参下标
+     * @param visiting       回溯环检测集合
+     * @return 实参在调用方上下文中的值模型；不可回溯返回 null
+     */
+    public ResolvedValue resolveCallerArgument(
+            SootMethod callee,
+            int parameterIndex,
+            java.util.Set<MethodSignature> visiting) {
+        if (interprocedural == null) {
+            return null;
+        }
+        return interprocedural.resolveCallerArgument(callee, parameterIndex, visiting);
+    }
+
+    /**
+     * 是否支持调用方实参回溯（多方法模式，view 非 null）。
+     */
+    public boolean supportsCallerBacktrack() {
+        return interprocedural != null;
+    }
+
+    /**
+     * 解析器绑定的方法（回溯时的被调方法）。
+     */
+    public SootMethod boundMethod() {
+        return method;
+    }
+
+    /**
+     * 跨方法传参回溯的公开入口：返回实参的取值模型（不带流转步骤）。
+     * 供提取阶段在通用执行方法（queryUsers(sql,...)）形参无法过程内解析时调用。
+     *
+     * @return 实参值模型；不可回溯返回 null
+     */
+    public ValueModel resolveCallerArgumentModel(SootMethod callee, int parameterIndex) {
+        ResolvedValue resolved = resolveCallerArgument(callee, parameterIndex, new java.util.HashSet<>());
+        return resolved == null ? null : resolved.value();
+    }
+
+    /**
      * 解析表达式在指定语句之前的取值模型（不含流转步骤）。
      *
      * @param value       待解析的 Jimple 表达式
@@ -959,6 +1003,15 @@ public final class ValueModelResolver {
     private ResolvedValue resolveInvoke(AbstractInvokeExpr invoke, int beforeIndex, Set<String> visitingLocals) {
         if (invoke instanceof JDynamicInvokeExpr dynamicInvoke && isStringConcatDynamicInvoke(dynamicInvoke)) {
             return resolveStringConcatDynamicInvoke(dynamicInvoke, beforeIndex, visitingLocals);
+        }
+
+        // StringBuilder.toString()：透明穿透到基座局部变量，触发
+        // withStringBuilderWritesAfterDefinition 的 append 累积（sql.toString() 形态）
+        if (invoke instanceof AbstractInstanceInvokeExpr instanceToString
+                && "toString".equals(invoke.getMethodSignature().getName())
+                && isStringBuilderType(invoke.getMethodSignature().getDeclClassType().getFullyQualifiedName())
+                && instanceToString.getBase() instanceof Local stringBuilderBase) {
+            return resolveLocal(stringBuilderBase, beforeIndex, new LinkedHashSet<>(visitingLocals));
         }
 
         // 过程间内联：应用内方法（有方法体）且非 getter/setter 时尝试展开返回值。

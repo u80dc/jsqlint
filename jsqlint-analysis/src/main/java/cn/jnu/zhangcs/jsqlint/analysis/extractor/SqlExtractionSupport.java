@@ -129,6 +129,14 @@ public final class SqlExtractionSupport {
                 continue;
             }
 
+            // 参数名占位的 SQL（形参直接作为 SQL 文本、回溯也失败）不进入语句构造，
+            // 否则 detectStatementType 会把 "param0" 之类识别失败并产生噪音诊断
+            if (sqlValue.get().model() instanceof ValueModel.ParameterValue) {
+                diagnostics.add("跳过SQL调用点（SQL来自未解析的调用方实参）: "
+                        + method.getSignature() + " @语句" + i);
+                continue;
+            }
+
             // 归并绑定调用（setXxx）的记录：prepareStatement 返回的语句局部变量上
             // 的后续 set 调用，其参数下标与绑定值随语句传递，供组装阶段合并推断
             List<BoundParameter> boundParameters = collectBoundParameters(resolver, stmts, invoke, i);
@@ -160,6 +168,42 @@ public final class SqlExtractionSupport {
         }
         String flattened = sql.replaceAll("\\s+", " ").trim();
         return flattened.length() <= 80 ? flattened : flattened.substring(0, 80) + "...";
+    }
+
+    /**
+     * 跨方法传参回溯：SQL 实参是本方法形参（通用执行方法形态：
+     * {@code queryUsers(String sql, ...)}）时，找调用点并在调用方上下文
+     * 重新解析实参。命中后走与 {@link #resolveSqlValue} 相同的字符串解析与
+     * 参数依赖提取，形参依赖改记调用方方法。
+     *
+     * @return 解析出的 SQL 值；无可解析调用点返回 {@link Optional#empty()}
+     */
+    private static Optional<SqlValue> resolveViaCallers(
+            sootup.core.views.View view,
+            SootMethod method,
+            ValueModelResolver resolver,
+            AbstractInvokeExpr invoke,
+            int sqlArgumentIndex) {
+
+        if (view == null) {
+            return Optional.empty();
+        }
+        ValueModel callerArgument = resolver.resolveCallerArgumentModel(method, sqlArgumentIndex);
+        if (callerArgument == null) {
+            return Optional.empty();
+        }
+
+        ValueModel model = callerArgument;
+        MethodParameterRef target = MethodParameterRef.of(invoke.getMethodSignature(), sqlArgumentIndex);
+        List<MethodParameterRef> parameters = model.parameterDependencies().stream()
+                .map(dependency -> MethodParameterRef.of(
+                        resolver.methodSignature(),
+                        dependency.index(),
+                        dependency.name()))
+                .filter(MethodParameterRef::isValid)
+                .toList();
+        return STRING_VALUE_RESOLVER.resolve(model, target)
+                .map(value -> new SqlValue(value.value(), model, parameters, value.diagnostics()));
     }
 
     /**
@@ -300,18 +344,33 @@ public final class SqlExtractionSupport {
             int statementIndex) {
 
         ValueModel model = resolver.resolve(invoke.getArg(sqlArgumentIndex), statementIndex);
+
+        // 跨方法传参回溯：SQL 实参就是本方法形参（通用执行方法 queryUsers(sql,...) 形态）
+        // 时，直接用形参采样会得到无意义的 "param0" 文本。先沿应用类找调用点，
+        // 在调用方上下文解析实参（调用方通常已用 StringBuilder/拼接构造好 SQL）。
+        // 回溯失败（无调用点/调用方也解析不出）时维持形参模型走原有参数追踪链路。
+        if (model instanceof ValueModel.ParameterValue
+                && resolver.supportsCallerBacktrack()) {
+            ValueModel callerModel =
+                    resolver.resolveCallerArgumentModel(resolver.boundMethod(), sqlArgumentIndex);
+            if (callerModel != null && !(callerModel instanceof ValueModel.ParameterValue)) {
+                model = callerModel;
+            }
+        }
+        final ValueModel resolvedModel = model;
+
         MethodParameterRef target = MethodParameterRef.of(invoke.getMethodSignature(), sqlArgumentIndex);
         // SQL 依赖的调用者形参（拼接、数组、对象字段里的参数依赖）作为参数追踪入口，
         // 缺失该列表时调用点语句的参数推断与轨迹为空。
-        List<MethodParameterRef> parameters = model.parameterDependencies().stream()
+        List<MethodParameterRef> parameters = resolvedModel.parameterDependencies().stream()
                 .map(dependency -> MethodParameterRef.of(
                         resolver.methodSignature(),
                         dependency.index(),
                         dependency.name()))
                 .filter(MethodParameterRef::isValid)
                 .toList();
-        return STRING_VALUE_RESOLVER.resolve(model, target)
-                .map(value -> new SqlValue(value.value(), model, parameters, value.diagnostics()));
+        return STRING_VALUE_RESOLVER.resolve(resolvedModel, target)
+                .map(value -> new SqlValue(value.value(), resolvedModel, parameters, value.diagnostics()));
     }
 
     /**

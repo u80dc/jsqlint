@@ -35,6 +35,11 @@ final class InterproceduralResolver {
      */
     private static final int MAX_INLINE_DEPTH = 3;
 
+    /**
+     * 调用方回溯结果上限：多个调用点时取首个可解析实参即停止扫描。
+     */
+    private static final int MAX_CALLER_RESULTS = 1;
+
     private final View view;
 
     InterproceduralResolver(View view) {
@@ -65,6 +70,112 @@ final class InterproceduralResolver {
         }
 
         return inlineMethodBody(method, parameters, 0, new java.util.HashSet<>());
+    }
+
+    /**
+     * 调用方实参回溯：SQL 执行方法的形参（如 queryUsers(sql, params) 的 sql）
+     * 无法在本方法内解析为字符串时，沿应用类找调用点，在调用方上下文解析实参。
+     *
+     * <p>核心场景：{@code return queryUsers(sql.toString(), parameters)}——
+     * 调用方已构造好 SQL 再传给通用执行方法。多个调用点时取首个可解析结果；
+     * 回溯失败返回 null，调用方维持原有诊断路径。</p>
+     *
+     * @param callee         SQL 实参所在的被调方法（如 queryUsers）
+     * @param parameterIndex 形参下标（SQL 文本在方法签名的位置）
+     * @param visiting       回溯环检测（方法签名集合）
+     * @return 实参在调用方上下文中的值模型；无调用点/全部失败返回 null
+     */
+    ResolvedValue resolveCallerArgument(
+            SootMethod callee,
+            int parameterIndex,
+            java.util.Set<MethodSignature> visiting) {
+
+        MethodSignature calleeSignature = callee.getSignature();
+        if (!visiting.add(calleeSignature)) {
+            return null;
+        }
+        try {
+            ResolvedValue resolved = null;
+            // 先廉价筛出真正调用 callee 的方法（不构建解析器），再仅对这些方法做实参解析，
+            // 避免为全部应用类方法构建到达定义分析
+            for (sootup.core.model.SootClass clazz : view.getClasses()
+                    .filter(sootup.core.model.SootClass::isApplicationClass)
+                    .toList()) {
+                for (SootMethod callerMethod : clazz.getMethods()) {
+                    if (!callerMethod.hasBody()
+                            || callerMethod.getSignature().equals(calleeSignature)
+                            || !containsCallTo(callerMethod, calleeSignature)) {
+                        continue;
+                    }
+                    ResolvedValue result = resolveArgumentAtCallSite(
+                            callerMethod, calleeSignature, parameterIndex, visiting);
+                    if (result != null) {
+                        resolved = result;
+                        break;
+                    }
+                }
+                if (resolved != null) {
+                    break;
+                }
+            }
+            return resolved;
+        } finally {
+            visiting.remove(calleeSignature);
+        }
+    }
+
+    /**
+     * 方法体内是否包含对目标签名的调用（语句文本预筛，不构建解析器）。
+     */
+    private boolean containsCallTo(SootMethod method, MethodSignature target) {
+        String targetText = target.toString();
+        for (Stmt stmt : method.getBody().getStmts()) {
+            if (stmt.toString().contains(targetText)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 在单个调用方方法内找对 callee 的调用点，并在调用方上下文解析指定实参。
+     */
+    private ResolvedValue resolveArgumentAtCallSite(
+            SootMethod callerMethod,
+            MethodSignature calleeSignature,
+            int parameterIndex,
+            java.util.Set<MethodSignature> visiting) {
+
+        List<Stmt> stmts = callerMethod.getBody().getStmts();
+        ValueModelResolver callerResolver = new ValueModelResolver(callerMethod, view);
+        for (int i = 0; i < stmts.size(); i++) {
+            Optional<AbstractInvokeExpr> invoke = invokeOf(stmts.get(i));
+            if (invoke.isEmpty()
+                    || !invoke.get().getMethodSignature().equals(calleeSignature)
+                    || parameterIndex >= invoke.get().getArgCount()) {
+                continue;
+            }
+            // 在调用方上下文解析实参（可继续触发返回值内联/嵌套回溯）
+            ResolvedValue argument = callerResolver.resolveWithTrace(invoke.get().getArg(parameterIndex), i);
+            if (!(argument.value() instanceof ValueModel.ParameterValue)
+                    && !(argument.value() instanceof ValueModel.UnknownValue)) {
+                return argument;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 提取语句中的调用表达式（与 SqlExtractionSupport.invokeOf 同构，避免跨包暴露）。
+     */
+    private static Optional<AbstractInvokeExpr> invokeOf(Stmt stmt) {
+        if (stmt instanceof JAssignStmt assign) {
+            return assign.getInvokeExpr();
+        }
+        if (stmt instanceof sootup.core.jimple.common.stmt.JInvokeStmt invokeStmt) {
+            return invokeStmt.getInvokeExpr();
+        }
+        return Optional.empty();
     }
 
     private ResolvedValue inlineMethodBody(
