@@ -116,9 +116,12 @@ export JSQLINT_JWT_SECRET='生产专用密钥至少32字节长度...'
 ## 开发
 
 ```bash
-# 后端全量测试
-mvn -pl jsqlint-test -am test
+# 后端全量测试（jsqlint-test 模块默认不参与构建，需激活 with-tests profile）
+mvn -Pwith-tests -DskipTests=false clean test
 
 # 前端本地联调（Vite dev server，端口 3000）
 cd jsqlint-ui && npm run dev
 ```
+
+> **构建说明**：`.mvn/maven.config` 默认携带 `-DskipTests=true`（打包不跑测试），
+> 且 `jsqlint-test` 模块仅在 `-Pwith-tests` profile 下参与构建。跑测试时两个开关都要带。

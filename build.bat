@@ -26,8 +26,8 @@ if /i not "%SKIP_SERVER%"=="skipServer" (
     call mvn -q -pl %SERVER_MODULE% -am -DskipTests package
   )
   if errorlevel 1 goto :fail
-  REM exact fat jar name: spring-boot repackage keeps -SNAPSHOT.jar, original goes to .jar.original
-  copy /y "%ROOT_DIR%\%SERVER_MODULE%\target\jsqlint-server-0.0.1-SNAPSHOT.jar" "%DIST_DIR%\%JAR_NAME%" >nul
+  REM fat jar carries exec classifier; plain jar stays for jsqlint-test dependency
+  copy /y "%ROOT_DIR%\%SERVER_MODULE%\target\jsqlint-server-0.0.1-SNAPSHOT-exec.jar" "%DIST_DIR%\%JAR_NAME%" >nul
   if errorlevel 1 goto :fail
   echo     server jar: %DIST_DIR%\%JAR_NAME%
 )

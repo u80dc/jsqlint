@@ -11,8 +11,17 @@
         <module>jsqlint-analysis</module>
         <module>jsqlint-audit</module>
         <module>jsqlint-server</module>
-        <module>jsqlint-test</module>
     </modules>
+    <profiles>
+        <!-- 测试模块默认不参与构建（打包产物不含测试代码）；
+             跑测试时加 -Pwith-tests 激活 -->
+        <profile>
+            <id>with-tests</id>
+            <modules>
+                <module>jsqlint-test</module>
+            </modules>
+        </profile>
+    </profiles>
 
     <properties>
         <maven.compiler.source>21</maven.compiler.source>

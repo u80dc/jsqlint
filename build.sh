@@ -27,8 +27,8 @@ if [ "$SKIP_SERVER" != "skipServer" ]; then
   else
     mvn -q -pl "$SERVER_MODULE" -am -DskipTests package
   fi
-  # 精确文件名：spring-boot repackage 后 fat jar 为 -SNAPSHOT.jar，原始瘦 jar 在 .jar.original
-  cp "$SERVER_MODULE/target/jsqlint-server-0.0.1-SNAPSHOT.jar" "$DIST_DIR/$JAR_NAME"
+  # fat jar 带 exec 分类器（主构件保持普通 jar 供 jsqlint-test 依赖）
+  cp "$SERVER_MODULE/target/jsqlint-server-0.0.1-SNAPSHOT-exec.jar" "$DIST_DIR/$JAR_NAME"
   echo "    后端产物: $DIST_DIR/$JAR_NAME"
 fi
 

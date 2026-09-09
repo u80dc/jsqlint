@@ -142,6 +142,11 @@
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <version>${spring-boot.version}</version>
+                <configuration>
+                    <!-- 可执行 fat jar 用 exec 分类器附加，主构件保持普通 jar：
+                         jsqlint-test 依赖本模块时才能从本地仓库解析到 BOOT-INF 之外的类 -->
+                    <classifier>exec</classifier>
+                </configuration>
                 <executions>
                     <execution>
                         <goals>
