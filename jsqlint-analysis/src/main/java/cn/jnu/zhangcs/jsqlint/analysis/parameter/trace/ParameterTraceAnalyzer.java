@@ -156,7 +156,7 @@ public final class ParameterTraceAnalyzer {
             Value actualArgument = invoke.getArg(target.index());
             // 在调用点之前解析实际参数，使局部别名、常量、数组与简单表达式
             // 都能被显式表示。
-            ValueModelResolver.ResolvedValue resolvedArgument = resolver.resolveWithTrace(actualArgument, i);
+            ResolvedValue resolvedArgument = resolver.resolveWithTrace(actualArgument, i);
             ValueModel argument = resolvedArgument.value();
             List<ValueFlowStep> valueFlow = new ArrayList<>();
             valueFlow.add(new ValueFlowStep(

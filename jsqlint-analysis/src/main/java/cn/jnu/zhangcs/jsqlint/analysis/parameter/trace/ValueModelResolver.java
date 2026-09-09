@@ -33,17 +33,33 @@ public final class ValueModelResolver {
     private final List<Stmt> statements;
     private final Map<String, ValueModel.ParameterValue> parameterLocals;
     private final ReachingDefinitions reaching;
+    /** 类视图，用于过程间内联时加载被调用方法体；null 表示单方法模式（不内联） */
+    private final sootup.core.views.View view;
+    /** 过程间内联器；view 为 null 时同样为 null */
+    private final InterproceduralResolver interprocedural;
 
     /**
-     * 创建绑定指定方法的解析器。
+     * 创建绑定指定方法的解析器（单方法模式，不做过程间内联）。
      *
      * @param method 待解析的方法，需包含方法体
      */
     public ValueModelResolver(SootMethod method) {
+        this(method, null);
+    }
+
+    /**
+     * 创建绑定指定方法与类视图的解析器。
+     *
+     * @param method 待解析的方法，需包含方法体
+     * @param view  SootUp 类视图，非 null 时启用过程间返回值内联
+     */
+    public ValueModelResolver(SootMethod method, sootup.core.views.View view) {
         this.method = method;
         this.statements = method.getBody().getStmts();
         this.parameterLocals = collectParameterLocals();
         this.reaching = ReachingDefinitions.analyze(method);
+        this.view = view;
+        this.interprocedural = view == null ? null : new InterproceduralResolver(view);
     }
 
     /**
@@ -75,6 +91,141 @@ public final class ValueModelResolver {
      */
     ResolvedValue resolveWithTrace(Value value, int beforeIndex) {
         return resolveInternal(value, beforeIndex, new LinkedHashSet<>());
+    }
+
+    /**
+     * 过程间内联入口：以本方法为被调用方上下文解析 return 操作数，
+     * 形参引用按调用方实参替换。仅在 InterproceduralResolver 回调中使用。
+     *
+     * @param returnedValue 被调用方 return 语句的操作数
+     * @param arguments     调用方实参模型（与形参下标对应）
+     * @param depth         当前内联深度
+     * @param inlining      内联环检测集合
+     * @param inter         内联器（嵌套调用回调）
+     * @return 解析结果
+     */
+    ResolvedValue resolveWithArgumentSubstitution(
+            Value returnedValue,
+            List<ValueModel.ParameterValue> arguments,
+            int depth,
+            java.util.Set<MethodSignature> inlining,
+            InterproceduralResolver inter) {
+
+        // 形参替换表：被调方法的 IdentityStmt(@parameterN) 绑定的局部名 → 实参模型
+        Map<String, ValueModel.ParameterValue> substitution = new LinkedHashMap<>();
+        for (Map.Entry<String, ValueModel.ParameterValue> entry : parameterLocals.entrySet()) {
+            int index = entry.getValue().index();
+            if (index < arguments.size()) {
+                substitution.put(entry.getKey(), arguments.get(index));
+            }
+        }
+
+        ResolvedValue resolved = resolveSubstituted(returnedValue, substitution, depth, inlining, inter);
+        List<ValueFlowStep> flow = new ArrayList<>();
+        flow.add(flowStep(-1, null, ValueFlowStep.Kind.METHOD_INVOKE,
+                method.getSignature().getName() + " (inlined)", resolved.value()));
+        flow.addAll(resolved.flow());
+        return new ResolvedValue(resolved.value(), flow);
+    }
+
+    /**
+     * 带形参替换的解析：@parameter 引用直接返回实参模型，其余走标准路径。
+     *
+     * <p>invokedynamic 字符串拼接（Java 9+ 的 {@code "a" + param} 编译产物）
+     * 在此单独展开：其参数里的形参 Local 必须走替换表，否则会解析成
+     * 被调方法自己的 ParameterValue，丢失调用方实参身份。</p>
+     */
+    private ResolvedValue resolveSubstituted(
+            Value value,
+            Map<String, ValueModel.ParameterValue> substitution,
+            int depth,
+            java.util.Set<MethodSignature> inlining,
+            InterproceduralResolver inter) {
+
+        if (value instanceof sootup.core.jimple.basic.Local local
+                && substitution.containsKey(local.getName())) {
+            ValueModel.ParameterValue argument = substitution.get(local.getName());
+            return new ResolvedValue(argument, List.of(flowStep(
+                    -1, null, ValueFlowStep.Kind.PARAMETER_BIND,
+                    local.getName() + " := " + argument.display(), argument)));
+        }
+        if (value instanceof sootup.core.jimple.common.expr.JCastExpr castExpr) {
+            ResolvedValue operand = resolveSubstituted(castExpr.getOp(), substitution, depth, inlining, inter);
+            ValueModel cast = new ValueModel.CastValue(typeName(value), operand.value());
+            List<ValueFlowStep> flow = new ArrayList<>();
+            flow.add(flowStep(-1, null, ValueFlowStep.Kind.CAST, value.toString(), cast));
+            flow.addAll(operand.flow());
+            return new ResolvedValue(cast, flow);
+        }
+        if (value instanceof sootup.core.jimple.common.expr.JAddExpr addExpr) {
+            ResolvedValue left = resolveSubstituted(addExpr.getOp1(), substitution, depth, inlining, inter);
+            ResolvedValue right = resolveSubstituted(addExpr.getOp2(), substitution, depth, inlining, inter);
+            List<ValueFlowStep> flow = new ArrayList<>(left.flow());
+            flow.addAll(right.flow());
+            return new ResolvedValue(concat(left.value(), right.value()), flow);
+        }
+        if (value instanceof sootup.core.jimple.common.expr.JDynamicInvokeExpr dynamicInvoke
+                && isStringConcatDynamicInvoke(dynamicInvoke)) {
+            List<ValueModel> parts = new ArrayList<>();
+            List<ValueFlowStep> flow = new ArrayList<>();
+            for (int i = 0; i < dynamicInvoke.getArgCount(); i++) {
+                ResolvedValue part = resolveSubstituted(dynamicInvoke.getArg(i), substitution, depth, inlining, inter);
+                parts.add(part.value());
+                flow.addAll(part.flow());
+            }
+            String recipe = concatRecipe(dynamicInvoke);
+            return new ResolvedValue(
+                    concatFromRecipe(recipe, parts),
+                    flow);
+        }
+        // 其余形态（常量、嵌套调用等）交给标准解析；嵌套的应用内调用
+        // 经 resolveInvoke 的过程间钩子继续内联
+        return resolveInternal(value, statements.size(), new LinkedHashSet<>());
+    }
+
+    /**
+     * 按字符串拼接 recipe（=实参占位、=常量占位）组装 Concat 模型，
+     * 与 {@link #resolveStringConcatDynamicInvoke} 保持同构，但成分走替换结果。
+     */
+    private ValueModel concatFromRecipe(String recipe, List<ValueModel> arguments) {
+        List<ValueModel> parts = new ArrayList<>();
+        if (recipe == null) {
+            arguments.forEach(parts::add);
+            return new ValueModel.ConcatValue(parts);
+        }
+        int argumentIndex = 0;
+        int constantIndex = 1;
+        StringBuilder literal = new StringBuilder();
+        for (int i = 0; i < recipe.length(); i++) {
+            char ch = recipe.charAt(i);
+            if (ch == '') {
+                flushLiteral(parts, literal);
+                if (argumentIndex < arguments.size()) {
+                    parts.add(arguments.get(argumentIndex));
+                } else {
+                    parts.add(new ValueModel.UnknownValue("missing string concat argument"));
+                }
+                argumentIndex++;
+            } else if (ch == '') {
+                flushLiteral(parts, literal);
+                parts.add(bootstrapConstantPlaceholder(constantIndex++));
+            } else {
+                literal.append(ch);
+            }
+        }
+        flushLiteral(parts, literal);
+        while (argumentIndex < arguments.size()) {
+            parts.add(arguments.get(argumentIndex++));
+        }
+        return new ValueModel.ConcatValue(parts);
+    }
+
+    /**
+     * 内联展开时的 bootstrap 常量占位：形参列表里没有常量实参，
+     * 保留占位避免与完整解析的成分偏移错位。
+     */
+    private ValueModel bootstrapConstantPlaceholder(int index) {
+        return new ValueModel.UnknownValue("bootstrap constant " + index);
     }
 
     private ResolvedValue resolveInternal(Value value, int beforeIndex, Set<String> visitingLocals) {
@@ -810,6 +961,18 @@ public final class ValueModelResolver {
             return resolveStringConcatDynamicInvoke(dynamicInvoke, beforeIndex, visitingLocals);
         }
 
+        // 过程间内联：应用内方法（有方法体）且非 getter/setter 时尝试展开返回值。
+        // helper 拼 SQL 返回（buildDeleteSql(tenant)）是该路径的核心场景；
+        // 内联失败（库方法/环/超深/多 return）自然退回 InvokeValue 占位。
+        if (interprocedural != null && !isAccessorLike(invoke.getMethodSignature())) {
+            final Set<String> visitingForInline = new LinkedHashSet<>(visitingLocals);
+            ResolvedValue inlined = interprocedural.tryInlineReturn(invoke,
+                    (argument, index) -> resolveInternal(argument, beforeIndex, new LinkedHashSet<>(visitingForInline)));
+            if (inlined != null) {
+                return inlined;
+            }
+        }
+
         // 方法调用保留为 InvokeValue 节点。解析器记录其接收者与参数，
         // 但不在 p1 阶段推断返回值。
         ValueModel receiver = null;
@@ -837,6 +1000,17 @@ public final class ValueModelResolver {
         orderedFlow.addAll(flow);
         orderedFlow.addAll(argumentFlow);
         return new ResolvedValue(invokeValue, orderedFlow);
+    }
+
+    /**
+     * getter/setter 一类访问器不做过程间内联：实体属性读取由调用方
+     * 的 getter 穿透逻辑处理，内联反而丢失语义标记。
+     */
+    private boolean isAccessorLike(MethodSignature signature) {
+        String name = signature.getName();
+        return name.startsWith("get") || name.startsWith("is")
+                || name.startsWith("set") || "toString".equals(name)
+                || "builder".equals(name);
     }
 
     private boolean isStringConcatDynamicInvoke(JDynamicInvokeExpr invoke) {
@@ -1026,27 +1200,5 @@ public final class ValueModelResolver {
         return colon >= 0 ? name.substring(0, colon).trim() : name.trim();
     }
 
-    /**
-     * 解析结果：取值模型及其流转步骤。
-     *
-     * @param value 取值模型
-     * @param flow  从使用点到定义点的流转步骤
-     */
-    record ResolvedValue(ValueModel value, List<ValueFlowStep> flow) {
-
-        ResolvedValue {
-            Objects.requireNonNull(value, "value");
-            flow = flow == null ? List.of() : List.copyOf(flow);
-        }
-
-        /**
-         * 创建不带流转步骤的解析结果。
-         *
-         * @param value 取值模型
-         * @return 解析结果
-         */
-        static ResolvedValue of(ValueModel value) {
-            return new ResolvedValue(value, List.of());
-        }
-    }
+    // ResolvedValue 已提升为包级 record（InterproceduralResolver 需跨类引用）
 }

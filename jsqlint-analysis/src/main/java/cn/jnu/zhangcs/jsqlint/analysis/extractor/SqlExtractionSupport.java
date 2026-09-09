@@ -69,7 +69,7 @@ public final class SqlExtractionSupport {
                 .getClasses()
                 .filter(SootClass::isApplicationClass)
                 .forEach(clazz -> clazz.getMethods().forEach(method ->
-                        extractCallSites(method, targetMatcher, statements, diagnostics)));
+                        extractCallSites(method, context.view(), targetMatcher, statements, diagnostics)));
         return new SqlExtractionResult(statements, diagnostics);
     }
 
@@ -82,12 +82,14 @@ public final class SqlExtractionSupport {
      * 依赖调用者形参的为 EXTERNAL_INPUT，二者统一进入参数推断结果。</p>
      *
      * @param method        当前方法
+     * @param view          SootUp 类视图，非 null 时启用过程间返回值内联（helper 拼 SQL 场景）
      * @param targetMatcher 方法签名到 SQL 调用目标的匹配器
      * @param statements    用于收集提取结果
      * @param diagnostics   用于收集被跳过调用点的诊断
      */
     private static void extractCallSites(
             SootMethod method,
+            sootup.core.views.View view,
             Function<MethodSignature, Optional<SqlCallTarget>> targetMatcher,
             List<SqlStatement> statements,
             List<String> diagnostics) {
@@ -97,7 +99,7 @@ public final class SqlExtractionSupport {
         }
 
         List<Stmt> stmts = method.getBody().getStmts();
-        ValueModelResolver resolver = new ValueModelResolver(method);
+        ValueModelResolver resolver = new ValueModelResolver(method, view);
         for (int i = 0; i < stmts.size(); i++) {
             Stmt stmt = stmts.get(i);
             Optional<AbstractInvokeExpr> invokeOptional = invokeOf(stmt);
