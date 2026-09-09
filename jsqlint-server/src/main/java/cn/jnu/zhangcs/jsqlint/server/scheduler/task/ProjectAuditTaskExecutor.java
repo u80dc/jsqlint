@@ -174,6 +174,8 @@ public class ProjectAuditTaskExecutor extends ProjectTaskExecutor {
             }
         }
 
+        auditResults = collapseSampleVariants(auditResults);
+
         // 白名单过滤：移除命中白名单的审核结果
         Set<String> whitelistKeys = sqlWhitelistService.loadWhitelistSet(projectId);
         if (!whitelistKeys.isEmpty()) {
@@ -190,6 +192,50 @@ public class ProjectAuditTaskExecutor extends ProjectTaskExecutor {
         }
 
         return auditResults;
+    }
+
+    /**
+     * 动态 SQL 多渲染变体收敛：同一语句的不同参数采样组合若命中相同规则
+     * 且仅字面量采样值不同（规范化后同形），只保留首个渲染变体的结果。
+     *
+     * <p>判定键为「规范化SQL指纹 + 规则ID」：SQL 中带引号的字符串/数字字面量
+     * 统一替换为 {@code ?} 后计算指纹。LIKE('%','name_xxx','%') 这类采样差异
+     * 会被归并为一条问题，避免用户处理面板被同规则重复行淹没；
+     * 真正结构性差异（不同列/不同条件）规范化后指纹不同，不受影响。</p>
+     */
+    private List<AuditResult> collapseSampleVariants(List<AuditResult> auditResults) {
+        if (auditResults.size() <= 1) {
+            return auditResults;
+        }
+        Set<String> seen = new java.util.HashSet<>();
+        List<AuditResult> collapsed = new ArrayList<>(auditResults.size());
+        int removed = 0;
+        for (AuditResult result : auditResults) {
+            String key = normalizedFingerprint(result.getSqlContent()) + ":" + result.getRuleId();
+            if (seen.add(key)) {
+                collapsed.add(result);
+            } else {
+                removed++;
+            }
+        }
+        if (removed > 0) {
+            log.info("采样变体收敛: 合并{}条同形渲染结果", removed);
+        }
+        return collapsed;
+    }
+
+    /**
+     * 规范化 SQL：带引号的字符串字面量与非科学计数数字字面量替换为 {@code ?}，
+     * 用于消除参数采样差异后计算指纹。
+     */
+    private String normalizedFingerprint(String sql) {
+        if (sql == null || sql.isBlank()) {
+            return "";
+        }
+        String normalized = sql
+                .replaceAll("'([^']|'')*'", "?")
+                .replaceAll("\\b\\d+(\\.\\d+)?\\b", "?");
+        return FingerprintUtils.fingerprint(normalized);
     }
 
     private List<AuditResult> toAuditResults(Long projectId, SqlStatement statement, SqlAuditResult result) {
