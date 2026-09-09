@@ -205,6 +205,7 @@ export default {
       auditError: 'Failed to audit project',
       reportSubmitted: 'Report task submitted',
       reportError: 'Failed to generate report',
+      executeSubmitted: 'Execution task submitted, queuing…',
       executeError: 'Failed to execute project',
       downloadReportError: 'Failed to download report',
       credentialUpdateSuccess: 'Credential updated',

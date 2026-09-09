@@ -857,6 +857,14 @@ const projectSqlVersion = ref<ProjectVersionVO | null>(null)
 const isProjectAdmin = ref(false)
 const executionRunning = ref(false)
 const executionSubmitting = ref(false)
+/**
+ * 执行等待态：提交执行后记录当时的版本 ID。轮询若仍返回该旧版本
+ * （新版本尚未创建、任务仍在排队），步骤条保持灰色等待不被旧数据覆盖；
+ * 后端返回不同版本 ID（新版本已创建、步骤开始流转）时自动解除。
+ */
+const executionPendingSinceVersionId = ref<number | null>(null)
+/** 最近一次状态查询返回的版本 ID，供提交执行时确定等待基线 */
+const lastStatusVersionId = ref<number | null>(null)
 const STATUS_REFRESH_INTERVAL = 10000
 let statusRefreshTimer: ReturnType<typeof setInterval> | null = null
 let statusRefreshing = false
@@ -1445,9 +1453,15 @@ const toggleExecution = async () => {
   try {
     const submitted = await executeProject(projectId)
     if (submitted) {
+      // 记录提交前的版本 ID 并进入灰色等待态：排队期间轮询拿到旧版本
+      // 数据不覆盖（见 loadProjectStatus 的等待守卫），直到新版本创建、
+      // 第一步转 running 后自动解除
+      executionPendingSinceVersionId.value = lastStatusVersionId.value
+      projectSteps.value = createDefaultProjectSteps()
       await loadVersions()
       await loadProjectStatus()
       executionRunning.value = true
+      ElMessage.success(t('projectDetail.messages.executeSubmitted'))
     } else {
       ElMessage.error(t('projectDetail.messages.executeError'))
     }
@@ -1815,6 +1829,22 @@ const loadProjectStatus = async (silent = false) => {
   try {
     const data = await getProjectStatus(projectId)
     const steps = data.steps || []
+    lastStatusVersionId.value = data.versionId ?? null
+
+    // 执行等待态守卫：提交执行后后端仍返回提交前的旧版本（排队中、
+    // 新版本未创建）时，不用旧版本的全绿状态覆盖灰色等待
+    const waitingForNewVersion = executionPendingSinceVersionId.value !== null
+      && data.versionId != null
+      && data.versionId === executionPendingSinceVersionId.value
+      && !steps.some(step => step.status === 1)
+    if (waitingForNewVersion) {
+      projectSteps.value = createDefaultProjectSteps()
+      executionRunning.value = false
+      return
+    }
+    // 版本 ID 变化（新版本已创建）或旧版本出现 running 步骤：等待结束
+    executionPendingSinceVersionId.value = null
+
     projectSteps.value = steps.length > 0
       ? [...steps]
         .sort((a, b) => a.stepOrder - b.stepOrder)

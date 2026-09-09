@@ -205,6 +205,7 @@ export default {
       auditError: '审核项目失败',
       reportSubmitted: '报告生成任务已提交',
       reportError: '生成报告失败',
+      executeSubmitted: '执行任务已提交，排队中…',
       executeError: '执行项目失败',
       downloadReportError: '下载报告失败',
       credentialUpdateSuccess: '凭证更新成功',
