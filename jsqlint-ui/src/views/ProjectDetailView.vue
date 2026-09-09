@@ -351,16 +351,18 @@
           </el-table-column>
           <el-table-column :label="t('projectDetail.issues.title')" width="90" align="center">
             <template #default="{ row }">
-              <el-badge
+              <el-button
                 v-if="issueCountsByScan[row.id] > 0"
-                :value="issueCountsByScan[row.id]"
-                :type="issueOpenCountsByScan[row.id] > 0 ? 'danger' : 'info'"
+                text
+                size="small"
                 class="issue-badge"
+                @click.stop="toggleIssuePanel(row)"
               >
-                <el-button text size="small" @click.stop="toggleIssuePanel(row)">
-                  {{ t('projectDetail.issues.view') }}
-                </el-button>
-              </el-badge>
+                <span
+                  class="issue-badge-count"
+                  :class="issueOpenCountsByScan[row.id] > 0 ? 'is-open' : 'is-cleared'"
+                >{{ issueCountsByScan[row.id] }}</span>
+              </el-button>
               <span v-else class="issue-none">0</span>
             </template>
           </el-table-column>
@@ -2797,10 +2799,21 @@ const loadProjectOverview = async () => {
     }
   }
 
-  // 问题徽标：待处理>0 红色，全部处理完灰色
+  // 问题徽标：数字内联跟随"查看"，颜色区分待处理（红）/已清零（灰），
+  // 不用 el-badge 的绝对定位上标——列宽 90px 下上标会被表格裁切
   .issue-badge {
-    :deep(.el-badge__content) {
-      transform: translate(80%, -30%);
+    .issue-badge-count {
+      margin-left: 4px;
+      font-size: 12px;
+      font-weight: 600;
+
+      &.is-open {
+        color: var(--el-color-danger);
+      }
+
+      &.is-cleared {
+        color: var(--jsp-text-secondary);
+      }
     }
   }
 
