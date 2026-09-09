@@ -30,14 +30,6 @@ public class ProjectOverviewServiceImpl implements ProjectOverviewService {
 
     private static final List<String> SQL_TYPE_ORDER = List.of("SELECT", "INSERT", "UPDATE", "DELETE");
 
-    private static final int SECURITY_SQL_WEIGHT = 4;
-
-    private static final int PERFORMANCE_SQL_WEIGHT = 3;
-
-    private static final int QUALITY_SQL_WEIGHT = 2;
-
-    private static final int OTHER_SQL_WEIGHT = 1;
-
     private final ProjectService projectService;
 
     private final ProjectVersionService projectVersionService;
@@ -462,29 +454,12 @@ public class ProjectOverviewServiceImpl implements ProjectOverviewService {
                                int performanceSqlCount,
                                int qualitySqlCount,
                                int otherSqlCount) {
-        if (totalSqlCount <= 0) {
-            return 100;
-        }
-        long weightedIssueScore = (long) securitySqlCount * SECURITY_SQL_WEIGHT
-                + (long) performanceSqlCount * PERFORMANCE_SQL_WEIGHT
-                + (long) qualitySqlCount * QUALITY_SQL_WEIGHT
-                + (long) otherSqlCount * OTHER_SQL_WEIGHT;
-        long maxWeightedScore = (long) totalSqlCount * SECURITY_SQL_WEIGHT;
-        int deduction = (int) Math.round(weightedIssueScore * 100.0 / maxWeightedScore);
-        return Math.max(0, 100 - deduction);
+        return cn.jnu.zhangcs.jsqlint.server.service.ProjectScoreCalculator.score(
+                totalSqlCount, securitySqlCount, performanceSqlCount, qualitySqlCount, otherSqlCount);
     }
 
     private String rating(int score) {
-        if (score >= 90) {
-            return "A";
-        }
-        if (score >= 75) {
-            return "B";
-        }
-        if (score >= 60) {
-            return "C";
-        }
-        return "D";
+        return cn.jnu.zhangcs.jsqlint.server.service.ProjectScoreCalculator.rating(score);
     }
 
     private int countSeveritySql(List<AuditResult> auditResults, String severity) {

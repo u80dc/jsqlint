@@ -338,28 +338,21 @@ public class ProjectReportTaskExecutor extends ProjectTaskExecutor {
                 .orElse(null);
     }
 
+    /**
+     * 统一评分口径：与项目概览一致，按问题 SQL 数（scanId 去重）× 规则分类
+     * 加权后归一化扣分，报告内已按分类统计 issueSqlCount，直接复用。
+     */
     private int score(ProjectReport report) {
-        int deduction = report.getCriticalCount() * 20
-                + report.getHighCount() * 10
-                + report.getWarningCount() * 3
-                + report.getInfoCount();
-        return Math.max(0, 100 - deduction);
+        return cn.jnu.zhangcs.jsqlint.server.service.ProjectScoreCalculator.score(
+                report.getTotalSqlCount(),
+                report.getSecurityIssueSqlCount(),
+                report.getPerformanceIssueSqlCount(),
+                report.getQualityIssueSqlCount(),
+                report.getOtherIssueSqlCount());
     }
 
     private String rating(int score) {
-        if (score >= 95) {
-            return "S";
-        }
-        if (score >= 85) {
-            return "A";
-        }
-        if (score >= 70) {
-            return "B";
-        }
-        if (score >= 60) {
-            return "C";
-        }
-        return "D";
+        return cn.jnu.zhangcs.jsqlint.server.service.ProjectScoreCalculator.rating(score);
     }
 
     private void saveReport(ProjectReport report) {
