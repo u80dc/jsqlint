@@ -7,6 +7,8 @@ export interface ProjectAuditRuleDTO {
   description?: string
   severity?: string
   category?: string
+  /** SQL方言: 不传/空-通用，mysql/postgresql/oracle */
+  dialect?: string
   droolsContent?: string
   suggestion?: string
   enabled?: boolean

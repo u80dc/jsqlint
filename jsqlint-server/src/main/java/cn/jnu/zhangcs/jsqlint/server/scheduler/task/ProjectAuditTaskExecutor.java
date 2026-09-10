@@ -473,6 +473,7 @@ public class ProjectAuditTaskExecutor extends ProjectTaskExecutor {
         commonRule.setDroolsContent(rule.getDroolsContent());
         commonRule.setSuggestion(rule.getSuggestion());
         commonRule.setEnabled(rule.getEnabled());
+        commonRule.setDialect(rule.getDialect());
         commonRule.setCreateUserId(rule.getCreateUserId());
         commonRule.setCreateTime(rule.getCreateTime());
         commonRule.setUpdateTime(rule.getUpdateTime());

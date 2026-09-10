@@ -23,6 +23,7 @@ public class AuditRuleConverter {
         vo.setSeverityDescription(rule.getSeverityDescription());
         vo.setCategory(rule.getCategory());
         vo.setCategoryDescription(rule.getCategoryDescription());
+        vo.setDialect(rule.getDialect());
         vo.setProjectId(rule.getProjectId());
         vo.setDroolsContent(rule.getDroolsContent());
         vo.setSuggestion(rule.getSuggestion());
@@ -45,6 +46,7 @@ public class AuditRuleConverter {
         rule.setDescription(dto.getDescription());
         rule.setSeverity(dto.getSeverity());
         rule.setCategory(dto.getCategory());
+        rule.setDialect(dto.getDialect());
         rule.setDroolsContent(dto.getDroolsContent());
         rule.setSuggestion(dto.getSuggestion());
         return rule;
@@ -59,6 +61,7 @@ public class AuditRuleConverter {
         rule.setDescription(dto.getDescription());
         rule.setSeverity(dto.getSeverity());
         rule.setCategory(dto.getCategory());
+        rule.setDialect(dto.getDialect());
         rule.setDroolsContent(dto.getDroolsContent());
         rule.setSuggestion(dto.getSuggestion());
     }

@@ -672,6 +672,11 @@ export default {
     category: '分类',
     severityLevel: '严重级别',
     builtin: '内置',
+    dialect: 'SQL方言',
+    dialectPlaceholder: '不限方言（通用规则）',
+    dialectOptions: {
+      all: '通用'
+    },
     description: '规则描述',
     suggestion: '修改建议',
     status: '状态',

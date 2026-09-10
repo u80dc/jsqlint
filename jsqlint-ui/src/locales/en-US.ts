@@ -673,6 +673,11 @@ export default {
     category: 'Category',
     severityLevel: 'Severity',
     builtin: 'Built-in',
+    dialect: 'SQL Dialect',
+    dialectPlaceholder: 'All dialects (universal rule)',
+    dialectOptions: {
+      all: 'Universal'
+    },
     description: 'Description',
     suggestion: 'Suggestion',
     status: 'Status',

@@ -18,6 +18,10 @@ public class AuditRuleVO {
     private String severityDescription;
     private String category;
     private String categoryDescription;
+    /**
+     * SQL 方言: null-通用, mysql/postgresql/oracle
+     */
+    private String dialect;
     private Long projectId;
     private String droolsContent;
     private String suggestion;

@@ -76,6 +76,7 @@ public class ProjectAuditRuleServiceImpl implements ProjectAuditRuleService {
         rule.setDescription(dto.getDescription());
         rule.setSeverity(dto.getSeverity());
         rule.setCategory(dto.getCategory());
+        rule.setDialect(dto.getDialect());
         rule.setDroolsContent(dto.getDroolsContent());
         rule.setSuggestion(dto.getSuggestion());
         rule.setEnabled(Boolean.FALSE.equals(dto.getEnabled()) ? 0 : 1);
@@ -116,6 +117,10 @@ public class ProjectAuditRuleServiceImpl implements ProjectAuditRuleService {
         }
         if (hasText(dto.getCategory())) {
             rule.setCategory(dto.getCategory());
+        }
+        // 方言允许显式清空（传空串=改回通用规则），仅在字段出现时更新
+        if (dto.getDialect() != null) {
+            rule.setDialect(dto.getDialect().isBlank() ? null : dto.getDialect());
         }
         if (dto.getEnabled() != null) {
             rule.setEnabled(dto.getEnabled() ? 1 : 0);

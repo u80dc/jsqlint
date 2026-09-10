@@ -429,6 +429,12 @@
           <el-table-column prop="name" :label="t('projectDetail.rules.ruleName')" min-width="150" show-overflow-tooltip />
           <el-table-column prop="code" :label="t('projectDetail.rules.ruleCode')" min-width="150" show-overflow-tooltip />
           <el-table-column prop="categoryDescription" :label="t('projectDetail.rules.category')" width="110" align="center" />
+          <el-table-column :label="t('rules.dialect')" width="100" align="center">
+            <template #default="{ row }">
+              <el-tag v-if="row.dialect" size="small" effect="plain">{{ dialectLabel(row.dialect) }}</el-tag>
+              <span v-else class="dialect-none">{{ t('rules.dialectOptions.all') }}</span>
+            </template>
+          </el-table-column>
           <el-table-column prop="severityDescription" :label="t('projectDetail.rules.severity')" width="90" align="center">
             <template #default="{ row }">
               <el-tag :type="getSeverityType(row.severity)" size="small">
@@ -548,6 +554,14 @@
             <el-option :label="t('projectDetail.rules.categoryQuality')" value="SQL_QUALITY" />
             <el-option :label="t('projectDetail.rules.categorySecurity')" value="SECURITY" />
             <el-option :label="t('projectDetail.rules.categoryPerformance')" value="PERFORMANCE" />
+          </el-select>
+        </el-form-item>
+        <el-form-item :label="t('rules.dialect')" prop="dialect">
+          <el-select v-model="ruleForm.dialect" :placeholder="t('rules.dialectPlaceholder')" clearable style="width: 100%">
+            <el-option :label="t('rules.dialectOptions.all')" value="" />
+            <el-option label="MySQL" value="mysql" />
+            <el-option label="PostgreSQL" value="postgresql" />
+            <el-option label="Oracle" value="oracle" />
           </el-select>
         </el-form-item>
         <el-form-item :label="t('projectDetail.rules.severity')" prop="severity">
@@ -982,6 +996,7 @@ interface ProjectRuleForm {
   suggestion: string
   severity: string
   category: string
+  dialect: string
   droolsContent: string
   enabled: boolean
 }
@@ -993,6 +1008,7 @@ const ruleForm = reactive<ProjectRuleForm>({
   suggestion: '',
   severity: 'warning',
   category: 'SQL_QUALITY',
+  dialect: '',
   droolsContent: '',
   enabled: true
 })
@@ -1075,6 +1091,15 @@ const getSeverityType = (severity: string) => {
   }
 }
 
+const dialectLabel = (dialect: string) => {
+  const labels: Record<string, string> = {
+    mysql: 'MySQL',
+    postgresql: 'PostgreSQL',
+    oracle: 'Oracle'
+  }
+  return labels[dialect] || dialect
+}
+
 const handleAddProjectRule = () => {
   ruleIsEdit.value = false
   resetRuleForm()
@@ -1090,6 +1115,7 @@ const handleEditProjectRule = (row: AuditRuleVO) => {
   ruleForm.suggestion = row.suggestion || ''
   ruleForm.severity = row.severity
   ruleForm.category = row.category
+  ruleForm.dialect = row.dialect || ''
   ruleForm.droolsContent = row.droolsContent
   ruleForm.enabled = row.enabled === 1
   ruleDialogVisible.value = true
@@ -1173,6 +1199,7 @@ const resetRuleForm = () => {
   ruleForm.suggestion = ''
   ruleForm.severity = 'warning'
   ruleForm.category = 'SQL_QUALITY'
+  ruleForm.dialect = ''
   ruleForm.droolsContent = ''
   ruleForm.enabled = true
   currentRuleId.value = 0
@@ -1195,6 +1222,7 @@ const handleSubmitProjectRule = async () => {
         suggestion: ruleForm.suggestion,
         severity: ruleForm.severity,
         category: ruleForm.category,
+        dialect: ruleForm.dialect,
         droolsContent: ruleForm.droolsContent,
         enabled: ruleForm.enabled
       })
@@ -1207,6 +1235,7 @@ const handleSubmitProjectRule = async () => {
         suggestion: ruleForm.suggestion,
         severity: ruleForm.severity,
         category: ruleForm.category,
+        dialect: ruleForm.dialect,
         droolsContent: ruleForm.droolsContent,
         enabled: ruleForm.enabled
       })
@@ -2691,6 +2720,11 @@ const loadProjectOverview = async () => {
 
   .rules-table {
     width: 100%;
+  }
+
+  // 通用方言（无方言限定）弱化展示
+  .dialect-none {
+    color: var(--jsp-text-placeholder, #a8abb2);
   }
 
   .rules-pagination,

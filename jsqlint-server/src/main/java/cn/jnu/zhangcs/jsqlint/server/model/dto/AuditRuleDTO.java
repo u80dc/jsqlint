@@ -31,6 +31,12 @@ public class AuditRuleDTO {
     @Pattern(regexp = "^(SQL_QUALITY|SECURITY|PERFORMANCE)$", message = "规则分类必须是 SQL_QUALITY/SECURITY/PERFORMANCE 之一")
     private String category;
 
+    /**
+     * SQL 方言: null/空白-通用，mysql/postgresql/oracle（规则仅对同方言 SQL 生效）
+     */
+    @Pattern(regexp = "^(mysql|postgresql|oracle)$", message = "SQL方言必须是 mysql/postgresql/oracle 之一")
+    private String dialect;
+
     @NotBlank(message = "Drools规则内容不能为空")
     private String droolsContent;
 

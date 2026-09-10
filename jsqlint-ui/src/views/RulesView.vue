@@ -43,6 +43,12 @@
         </el-table-column>
         <el-table-column prop="code" :label="t('rules.code')" min-width="120" />
         <el-table-column prop="categoryDescription" :label="t('rules.category')" width="100" align="center" />
+        <el-table-column :label="t('rules.dialect')" width="100" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="row.dialect" size="small" effect="plain">{{ dialectLabel(row.dialect) }}</el-tag>
+            <span v-else class="dialect-none">{{ t('rules.dialectOptions.all') }}</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="severityDescription" :label="t('rules.severityLevel')" width="90" align="center">
           <template #default="{ row }">
             <el-tag :type="getSeverityType(row.severity)" size="small">
@@ -103,6 +109,14 @@
             <el-option :label="t('rules.categoryOptions.quality')" value="SQL_QUALITY" />
             <el-option :label="t('rules.categoryOptions.security')" value="SECURITY" />
             <el-option :label="t('rules.categoryOptions.performance')" value="PERFORMANCE" />
+          </el-select>
+        </el-form-item>
+        <el-form-item :label="t('rules.dialect')" prop="dialect">
+          <el-select v-model="form.dialect" :placeholder="t('rules.dialectPlaceholder')" clearable style="width: 100%">
+            <el-option :label="t('rules.dialectOptions.all')" value="" />
+            <el-option label="MySQL" value="mysql" />
+            <el-option label="PostgreSQL" value="postgresql" />
+            <el-option label="Oracle" value="oracle" />
           </el-select>
         </el-form-item>
         <el-form-item :label="t('rules.severityLevel')" prop="severity">
@@ -178,6 +192,7 @@ const form = reactive({
   suggestion: '',
   severity: 'warning',
   category: 'SQL_QUALITY',
+  dialect: '',
   droolsContent: ''
 })
 
@@ -202,6 +217,15 @@ const getSeverityType = (severity: string) => {
     info: 'info'
   }
   return types[severity] || 'info'
+}
+
+const dialectLabel = (dialect: string) => {
+  const labels: Record<string, string> = {
+    mysql: 'MySQL',
+    postgresql: 'PostgreSQL',
+    oracle: 'Oracle'
+  }
+  return labels[dialect] || dialect
 }
 
 const loadRules = async () => {
@@ -255,6 +279,7 @@ const handleEdit = (row: AuditRuleVO) => {
   form.suggestion = row.suggestion || ''
   form.severity = row.severity
   form.category = row.category
+  form.dialect = row.dialect || ''
   form.droolsContent = row.droolsContent
   dialogVisible.value = true
 }
@@ -270,6 +295,7 @@ const resetForm = () => {
   form.suggestion = ''
   form.severity = 'warning'
   form.category = 'SQL_QUALITY'
+  form.dialect = ''
   form.droolsContent = ''
   formRef.value?.clearValidate()
 }
@@ -286,6 +312,7 @@ const handleSubmit = async () => {
         suggestion: form.suggestion,
         severity: form.severity,
         category: form.category,
+        dialect: form.dialect,
         droolsContent: form.droolsContent
       })
       ElMessage.success(t('rules.messages.updateSuccess'))
@@ -297,6 +324,7 @@ const handleSubmit = async () => {
         suggestion: form.suggestion,
         severity: form.severity,
         category: form.category,
+        dialect: form.dialect,
         droolsContent: form.droolsContent
       })
       ElMessage.success(t('rules.messages.createSuccess'))
@@ -383,6 +411,11 @@ onMounted(() => {
   // 内置规则标记：跟随规则名，弱化展示
   .builtin-tag {
     margin-left: 6px;
+  }
+
+  // 通用方言（无方言限定）弱化展示
+  .dialect-none {
+    color: var(--jsp-text-placeholder, #a8abb2);
   }
 
   .pagination {

@@ -90,6 +90,7 @@ public class AuditRuleController {
         mergedDto.setDescription(dto.getDescription());
         mergedDto.setSeverity(dto.getSeverity() != null ? dto.getSeverity() : existing.getSeverity());
         mergedDto.setCategory(dto.getCategory() != null ? dto.getCategory() : existing.getCategory());
+        mergedDto.setDialect(dto.getDialect() != null ? dto.getDialect() : existing.getDialect());
         mergedDto.setDroolsContent(dto.getDroolsContent() != null ? dto.getDroolsContent() : existing.getDroolsContent());
         mergedDto.setSuggestion(dto.getSuggestion() != null ? dto.getSuggestion() : existing.getSuggestion());
 

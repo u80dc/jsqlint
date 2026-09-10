@@ -6,6 +6,8 @@ export interface AuditRuleDTO {
   description?: string
   severity: string
   category: string
+  /** SQL方言: 不传/空-通用，mysql/postgresql/oracle */
+  dialect?: string
   droolsContent: string
   suggestion?: string
 }
@@ -19,6 +21,8 @@ export interface AuditRuleVO {
   severityDescription: string
   category: string
   categoryDescription: string
+  /** SQL方言: 空-通用, mysql/postgresql/oracle */
+  dialect?: string
   droolsContent: string
   suggestion?: string
   enabled: number
@@ -40,6 +44,7 @@ export interface AuditRuleUpdateDTO {
   description?: string
   severity?: string
   category?: string
+  dialect?: string
   droolsContent?: string
   suggestion?: string
 }
