@@ -824,7 +824,7 @@ import ProjectReportPanel from '@/components/project/ProjectReportPanel.vue'
 import ExecutionSteps, { type ExecutionStep, type ExecutionStepStatus } from '@/components/project/ExecutionSteps.vue'
 import { executeProject, getProject, getProjectCredentials, getProjectStatus, getProjectVersions, getVersionDiff, updateProject, updateProjectCredential, type CredentialVO, type ProjectVO, type ProjectVersionStepVO, type ProjectVersionVO, type VersionDiffVO } from '@/api/project'
 import type { AuditRuleVO } from '@/api/auditRule'
-import { getAuditIssues, transitIssueStatus, type AuditIssueVO } from '@/api/auditIssue'
+import { getAuditIssueCounts, getAuditIssues, transitIssueStatus, type AuditIssueVO } from '@/api/auditIssue'
 import { checkIsProjectAdmin } from '@/api/projectMember'
 import { createProjectAuditRule, deleteProjectAuditRule, getProjectAuditRules, toggleProjectAuditRule, updateProjectAuditRule } from '@/api/projectAuditRule'
 import { downloadProjectReportPdf, getProjectReport, type ProjectReportVO } from '@/api/projectReport'
@@ -1524,6 +1524,7 @@ const loadProjectSql = async (versionId = getRouteVersionId()) => {
     if (versionId) {
       projectSqlVersion.value = findVersion(versionId)
       projectSqlList.value = await getSqlStatementsByProjectAndVersion(projectId, versionId)
+      loadIssueCounts()
       return
     }
 
@@ -1610,23 +1611,21 @@ const availableTransitions = (current: string) => {
   return options
 }
 
-/** 加载全部问题的计数，按 scanId 分组到行内徽标 */
+/** 加载按 scanId 聚合的问题计数（后端与问题弹窗同口径），刷新行内徽标 */
 const loadIssueCounts = async () => {
   if (!projectId || projectSqlList.value.length === 0) {
     return
   }
   try {
-    const result = await getAuditIssues(projectId, { pageSize: 500 })
+    const counts = await getAuditIssueCounts(projectId, projectSqlVersion.value?.id)
     const total: Record<number, number> = {}
     const open: Record<number, number> = {}
-    for (const issue of result.list) {
-      if (issue.scanId == null) {
+    for (const item of counts) {
+      if (item.scanId == null) {
         continue
       }
-      total[issue.scanId] = (total[issue.scanId] || 0) + 1
-      if (issue.status === 'OPEN') {
-        open[issue.scanId] = (open[issue.scanId] || 0) + 1
-      }
+      total[item.scanId] = item.total
+      open[item.scanId] = item.openCount
     }
     Object.keys(issueCountsByScan).forEach(k => delete issueCountsByScan[Number(k)])
     Object.assign(issueCountsByScan, total)

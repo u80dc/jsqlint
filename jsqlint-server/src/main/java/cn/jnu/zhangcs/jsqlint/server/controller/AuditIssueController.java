@@ -3,13 +3,16 @@ package cn.jnu.zhangcs.jsqlint.server.controller;
 import cn.jnu.zhangcs.jsqlint.server.common.enums.IssueStatus;
 import cn.jnu.zhangcs.jsqlint.server.common.exception.BizException;
 import cn.jnu.zhangcs.jsqlint.server.entity.AuditResult;
+import cn.jnu.zhangcs.jsqlint.server.entity.SqlStatement;
 import cn.jnu.zhangcs.jsqlint.server.entity.SqlWhitelist;
 import cn.jnu.zhangcs.jsqlint.server.mapper.AuditResultMapper;
 import cn.jnu.zhangcs.jsqlint.server.model.dto.SqlWhitelistDTO;
+import cn.jnu.zhangcs.jsqlint.server.model.vo.AuditIssueCountVO;
 import cn.jnu.zhangcs.jsqlint.server.model.vo.AuditIssueVO;
 import cn.jnu.zhangcs.jsqlint.server.security.LoginUser;
 import cn.jnu.zhangcs.jsqlint.server.service.AuditRuleService;
 import cn.jnu.zhangcs.jsqlint.server.service.ProjectService;
+import cn.jnu.zhangcs.jsqlint.server.service.SqlStatementService;
 import cn.jnu.zhangcs.jsqlint.server.service.SqlWhitelistService;
 import cn.jnu.zhangcs.jsqlint.server.service.UserService;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -23,6 +26,8 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -45,9 +50,13 @@ public class AuditIssueController {
 
     private static final int SQL_SUMMARY_LENGTH = 200;
 
+    /** 计数端点 IN 查询分批大小，避免语句过多撑爆 SQL 长度 */
+    private static final int COUNT_BATCH_SIZE = 500;
+
     private final AuditResultMapper auditResultMapper;
     private final AuditRuleService auditRuleService;
     private final ProjectService projectService;
+    private final SqlStatementService sqlStatementService;
     private final UserService userService;
     private final SqlWhitelistService sqlWhitelistService;
 
@@ -98,6 +107,53 @@ public class AuditIssueController {
             counts.putIfAbsent(status.getCode(), 0L);
         }
         return ResponseEntity.ok(counts);
+    }
+
+    @Operation(summary = "按SQL语句统计问题数", description = "按 scanId 分组返回问题总数与待处理数（与问题列表同口径，供 SQL 列表行内徽标）")
+    @GetMapping("/counts")
+    public ResponseEntity<List<AuditIssueCountVO>> countsByScan(
+            @Parameter(name = "projectId", description = "项目ID", example = "1") @PathVariable("projectId") Long projectId,
+            @Parameter(name = "versionId", description = "SQL语句所在版本ID（可选，缺省统计全项目）", example = "3") @RequestParam(value = "versionId", required = false) Long versionId) {
+        // 徽标计数与问题弹窗按 scanId 过滤同口径：先圈定版本下的语句 ID，再聚合其问题数
+        List<Long> scanIds = List.of();
+        if (versionId != null) {
+            scanIds = sqlStatementService.getByProjectAndVersion(projectId, versionId)
+                    .stream()
+                    .map(SqlStatement::getId)
+                    .filter(Objects::nonNull)
+                    .toList();
+            if (scanIds.isEmpty()) {
+                return ResponseEntity.ok(List.of());
+            }
+        }
+
+        List<AuditResult> results = new ArrayList<>();
+        if (scanIds.isEmpty()) {
+            results = auditResultMapper.selectList(new LambdaQueryWrapper<AuditResult>()
+                    .eq(AuditResult::getProjectId, projectId)
+                    .isNotNull(AuditResult::getScanId));
+        } else {
+            // IN 列表过大有 SQL 长度风险，按 500 分批（与审核任务的批处理一致）
+            for (int i = 0; i < scanIds.size(); i += COUNT_BATCH_SIZE) {
+                results.addAll(auditResultMapper.selectList(new LambdaQueryWrapper<AuditResult>()
+                        .eq(AuditResult::getProjectId, projectId)
+                        .in(AuditResult::getScanId, scanIds.subList(i, Math.min(i + COUNT_BATCH_SIZE, scanIds.size())))));
+            }
+        }
+
+        Map<Long, List<AuditResult>> byScan = results.stream()
+                .collect(Collectors.groupingBy(AuditResult::getScanId));
+        List<AuditIssueCountVO> voList = byScan.entrySet().stream()
+                .map(entry -> AuditIssueCountVO.builder()
+                        .scanId(entry.getKey())
+                        .total((long) entry.getValue().size())
+                        .openCount(entry.getValue().stream()
+                                .filter(r -> r.getStatus() == null || IssueStatus.OPEN.getCode().equals(r.getStatus()))
+                                .count())
+                        .build())
+                .sorted(Comparator.comparing(AuditIssueCountVO::getScanId))
+                .toList();
+        return ResponseEntity.ok(voList);
     }
 
     @Operation(summary = "问题状态流转", description = "确认/修复/豁免/重新打开；豁免时可选同时写入 SQL 白名单（需项目管理员权限）")

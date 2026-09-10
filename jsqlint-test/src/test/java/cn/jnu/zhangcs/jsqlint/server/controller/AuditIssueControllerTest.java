@@ -4,12 +4,14 @@ import cn.jnu.zhangcs.jsqlint.server.common.enums.IssueStatus;
 import cn.jnu.zhangcs.jsqlint.server.common.exception.BizException;
 import cn.jnu.zhangcs.jsqlint.server.common.exception.GlobalExceptionHandler;
 import cn.jnu.zhangcs.jsqlint.server.entity.AuditResult;
+import cn.jnu.zhangcs.jsqlint.server.entity.SqlStatement;
 import cn.jnu.zhangcs.jsqlint.server.entity.SqlWhitelist;
 import cn.jnu.zhangcs.jsqlint.server.entity.User;
 import cn.jnu.zhangcs.jsqlint.server.mapper.AuditResultMapper;
 import cn.jnu.zhangcs.jsqlint.server.security.LoginUser;
 import cn.jnu.zhangcs.jsqlint.server.service.AuditRuleService;
 import cn.jnu.zhangcs.jsqlint.server.service.ProjectService;
+import cn.jnu.zhangcs.jsqlint.server.service.SqlStatementService;
 import cn.jnu.zhangcs.jsqlint.server.service.SqlWhitelistService;
 import cn.jnu.zhangcs.jsqlint.server.service.UserService;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -64,6 +66,9 @@ class AuditIssueControllerTest {
 
     @Mock
     private UserService userService;
+
+    @Mock
+    private SqlStatementService sqlStatementService;
 
     @Mock
     private SqlWhitelistService sqlWhitelistService;
@@ -150,6 +155,52 @@ class AuditIssueControllerTest {
                 .andExpect(jsonPath("$.RESOLVED").value(1))
                 .andExpect(jsonPath("$.CONFIRMED").value(0))
                 .andExpect(jsonPath("$.DISMISSED").value(0));
+    }
+
+    @Test
+    void countsByScan_groupsByScanIdWithOpenCount() throws Exception {
+        AuditResult openA = result(1L, 5L, "OPEN");
+        openA.setScanId(10L);
+        AuditResult resolvedA = result(2L, 5L, "RESOLVED");
+        resolvedA.setScanId(10L);
+        AuditResult openB = result(3L, 5L, "OPEN");
+        openB.setScanId(11L);
+        // 无版本过滤：直接全项目聚合
+        when(auditResultMapper.selectList(any())).thenReturn(List.of(openA, resolvedA, openB));
+
+        mockMvc.perform(get("/api/projects/5/issues/counts"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(2))
+                .andExpect(jsonPath("$[0].scanId").value(10))
+                .andExpect(jsonPath("$[0].total").value(2))
+                .andExpect(jsonPath("$[0].openCount").value(1))
+                .andExpect(jsonPath("$[1].scanId").value(11))
+                .andExpect(jsonPath("$[1].total").value(1))
+                .andExpect(jsonPath("$[1].openCount").value(1));
+    }
+
+    @Test
+    void countsByScan_withVersion_filtersByStatementIds() throws Exception {
+        SqlStatement statement = new SqlStatement();
+        statement.setId(10L);
+        when(sqlStatementService.getByProjectAndVersion(5L, 3L)).thenReturn(List.of(statement));
+        when(auditResultMapper.selectList(any())).thenReturn(List.of(result(1L, 5L, "OPEN")));
+
+        mockMvc.perform(get("/api/projects/5/issues/counts").param("versionId", "3"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].scanId").value(10))
+                .andExpect(jsonPath("$[0].total").value(1))
+                .andExpect(jsonPath("$[0].openCount").value(1));
+    }
+
+    @Test
+    void countsByScan_emptyVersion_returnsEmptyList() throws Exception {
+        when(sqlStatementService.getByProjectAndVersion(5L, 3L)).thenReturn(List.of());
+
+        mockMvc.perform(get("/api/projects/5/issues/counts").param("versionId", "3"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(0));
     }
 
     @Test

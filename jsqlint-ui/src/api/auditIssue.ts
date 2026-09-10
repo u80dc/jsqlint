@@ -30,6 +30,12 @@ export interface AuditIssueListParams {
   pageSize?: number
 }
 
+export interface AuditIssueCountVO {
+  scanId: number
+  total: number
+  openCount: number
+}
+
 export interface TransitStatusDTO {
   status: string
   remark?: string
@@ -45,6 +51,15 @@ export const getAuditIssues = (
 
 export const getAuditIssueStatistics = (projectId: number): Promise<Record<string, number>> => {
   return request.get(`/api/projects/${projectId}/issues/statistics`)
+}
+
+export const getAuditIssueCounts = (
+  projectId: number,
+  versionId?: number
+): Promise<AuditIssueCountVO[]> => {
+  return request.get(`/api/projects/${projectId}/issues/counts`, {
+    params: versionId ? { versionId } : {}
+  })
 }
 
 export const transitIssueStatus = (
