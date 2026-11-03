@@ -1,7 +1,0 @@
-export const formatDateTime = (value?: string | null) => {
-  if (!value) {
-    return '-'
-  }
-
-  return new Date(value).toLocaleString('zh-CN')
-}

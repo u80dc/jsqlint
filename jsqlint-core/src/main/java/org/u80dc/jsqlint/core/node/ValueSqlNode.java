@@ -1,0 +1,65 @@
+package org.u80dc.jsqlint.core.node;
+
+import lombok.Getter;
+
+import java.util.Objects;
+
+/**
+ * 将表达式结果输出到 SQL：原始拼接和绑定参数是不同语义。
+ * 表达式的语言由 SqlExpressionEvaluator 决定，节点不依赖 JDBC 或 MyBatis。
+ *
+ * @author u80dc
+ */
+@Getter
+public final class ValueSqlNode implements SqlNode {
+    private final String expression;
+    private final Kind kind;
+    /**
+     * 仅用于已知 null；未知值始终保留节点。
+     */
+    private final String nullText;
+    /**
+     * 保留模板中的绑定选项，供适配层解释；core 的样例渲染不执行类型处理器。
+     */
+    private final String bindingOptions;
+    private ValueSqlNode(String expression, Kind kind, String nullText, String bindingOptions) {
+        if (expression == null || expression.isBlank()) {
+            throw new IllegalArgumentException("expression must not be blank");
+        }
+        this.expression = expression;
+        this.kind = kind;
+        this.nullText = Objects.requireNonNull(nullText, "nullText");
+        this.bindingOptions = Objects.requireNonNull(bindingOptions, "bindingOptions");
+    }
+
+    public static ValueSqlNode raw(String expression) {
+        return raw(expression, "");
+    }
+
+    /**
+     * 例如 Java 字符串拼接使用 nullText="null"。
+     */
+    public static ValueSqlNode raw(String expression, String nullText) {
+        return new ValueSqlNode(expression, Kind.RAW_TEXT, nullText, "");
+    }
+
+    public static ValueSqlNode parameter(String expression) {
+        return parameter(expression, "");
+    }
+
+    public static ValueSqlNode parameter(String expression, String bindingOptions) {
+        return new ValueSqlNode(expression, Kind.PARAMETER, "NULL", bindingOptions);
+    }
+
+    @Override
+    public boolean isDynamic() {
+        return true;
+    }
+
+    @Override
+    public SqlNodeType getType() {
+        return SqlNodeType.VALUE;
+    }
+
+    public enum Kind {RAW_TEXT, PARAMETER}
+}
