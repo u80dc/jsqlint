@@ -40,33 +40,33 @@ public final class SqlNodeRenderer {
             case ValueSqlNode value -> value(value, context);
             case MixedSqlNode mixed -> mixed(mixed, context);
             case IfSqlNode conditional -> {
-                SqlValue value = context.evaluate(conditional.getTest());
+                SqlValue value = context.evaluate(conditional.test());
                 yield switch (value.truth()) {
-                    case TRUE -> selected(node, conditional.getContents(), context);
+                    case TRUE -> selected(node, conditional.contents(), context);
                     case FALSE -> literal("");
-                    case UNKNOWN -> unresolved(node, context, conditional.getTest(), value);
+                    case UNKNOWN -> unresolved(node, context, conditional.test(), value);
                 };
             }
             case ChooseSqlNode choose -> choose(choose, context);
             case BindSqlNode bind -> {
-                SqlValue value = context.evaluate(bind.getExpression());
+                SqlValue value = context.evaluate(bind.expression());
                 if (value instanceof SqlValue.Known known) {
-                    context.values.put(bind.getName(), known.value());
+                    context.values.put(bind.name(), known.value());
                     yield literal("");
                 }
-                yield unresolved(node, context, bind.getExpression(), value);
+                yield unresolved(node, context, bind.expression(), value);
             }
             case ForEachSqlNode foreach -> foreach(foreach, context);
-            case WhereSqlNode where -> wrapped(node, where.getContents(), context, "WHERE", "", true, false, "", "");
-            case SetSqlNode set -> wrapped(node, set.getContents(), context, "SET", "", false, true, "", "");
-            case TrimSqlNode trim -> wrapped(node, trim.getContents(), context, trim.getPrefix(), trim.getSuffix(),
-                    false, false, trim.getPrefixOverrides(), trim.getSuffixOverrides());
+            case WhereSqlNode where -> wrapped(node, where.contents(), context, "WHERE", "", true, false, "", "");
+            case SetSqlNode set -> wrapped(node, set.contents(), context, "SET", "", false, true, "", "");
+            case TrimSqlNode trim -> wrapped(node, trim.contents(), context, trim.prefix(), trim.suffix(),
+                    false, false, trim.prefixOverrides(), trim.suffixOverrides());
         };
     }
 
     private static Fragment mixed(MixedSqlNode mixed, Context context) {
         List<SqlNode> result = new ArrayList<>();
-        List<SqlNode> children = mixed.getContents();
+        List<SqlNode> children = mixed.contents();
         for (int i = 0; i < children.size(); i++) {
             Fragment fragment = visit(children.get(i), context);
             result.add(fragment.node);
@@ -87,17 +87,17 @@ public final class SqlNodeRenderer {
     }
 
     private static Fragment choose(ChooseSqlNode choose, Context context) {
-        for (IfSqlNode branch : choose.getWhenContents()) {
-            SqlValue value = context.evaluate(branch.getTest());
+        for (IfSqlNode branch : choose.whenContents()) {
+            SqlValue value = context.evaluate(branch.test());
             if (value.truth() == SqlValue.Truth.UNKNOWN) {
-                return unresolved(choose, context, branch.getTest(), value);
+                return unresolved(choose, context, branch.test(), value);
             }
             if (value.truth() == SqlValue.Truth.TRUE) {
-                return selected(choose, branch.getContents(), context);
+                return selected(choose, branch.contents(), context);
             }
         }
-        return choose.getOtherwiseContents() == null ? literal("")
-                : selected(choose, choose.getOtherwiseContents(), context);
+        return choose.otherwiseContents() == null ? literal("")
+                : selected(choose, choose.otherwiseContents(), context);
     }
 
     private static Fragment wrapped(SqlNode owner, SqlNode contents, Context context,
@@ -155,12 +155,12 @@ public final class SqlNodeRenderer {
     }
 
     private static Fragment foreach(ForEachSqlNode foreach, Context context) {
-        SqlValue collection = context.evaluate(foreach.getCollection());
+        SqlValue collection = context.evaluate(foreach.collection());
         if (collection instanceof SqlValue.Unknown) {
-            return unresolved(foreach, context, foreach.getCollection(), collection);
+            return unresolved(foreach, context, foreach.collection(), collection);
         }
         Object value = ((SqlValue.Known) collection).value();
-        if (value == null && foreach.isNullable()) {
+        if (value == null && foreach.nullable()) {
             return literal("");
         }
         List<Map.Entry<Object, Object>> items = new ArrayList<>();
@@ -176,32 +176,35 @@ public final class SqlNodeRenderer {
                 items.add(new java.util.AbstractMap.SimpleImmutableEntry<>(i, Array.get(value, i)));
             }
         } else {
-            return unresolved(foreach, context, foreach.getCollection(),
+            return unresolved(foreach, context, foreach.collection(),
                     new SqlValue.Unknown("foreach requires a non-null collection, array or map"));
         }
         List<String> sqls = new ArrayList<>();
         for (var item : items) {
             Context child = context.copy();
-            child.values.put(foreach.getItem(), item.getValue());
-            child.values.put(foreach.getIndex(), item.getKey());
-            Fragment fragment = visit(foreach.getContents(), child);
+            if (!foreach.index().isEmpty()) {
+                child.values.put(foreach.index(), item.getKey());
+            }
+            // Bind the item last so an explicitly shared name resolves to the element value.
+            child.values.put(foreach.item(), item.getValue());
+            Fragment fragment = visit(foreach.contents(), child);
             context.absorb(child, false); // Iteration variables and binds are local to each iteration.
             if (!fragment.complete) {
                 return new Fragment(foreach, false);
             }
             String sql = flatText(fragment.node);
-            if (!foreach.isSkipBlank() || !sql.isBlank()) {
+            if (!foreach.skipBlank() || !sql.isBlank()) {
                 sqls.add(sql);
             }
         }
-        return sqls.isEmpty() ? literal("") : literal(foreach.getOpen()
-                + String.join(foreach.getSeparator(), sqls) + foreach.getClose());
+        return sqls.isEmpty() ? literal("") : literal(foreach.open()
+                + String.join(foreach.separator(), sqls) + foreach.close());
     }
 
     private static Fragment text(TextSqlNode text, Context context) {
         SqlNode parsed;
         try {
-            parsed = SqlNodeBuilder.templateText(text.getText());
+            parsed = SqlNodeBuilder.templateText(text.text());
         } catch (IllegalArgumentException e) {
             context.diagnostics.add(new SqlDiagnostic("INVALID_PARAMETER", e.getMessage()));
             return new Fragment(text, false);
@@ -242,10 +245,10 @@ public final class SqlNodeRenderer {
 
     private static String flatText(SqlNode node) {
         return switch (node) {
-            case StaticTextSqlNode text -> text.getText();
+            case StaticTextSqlNode text -> text.text();
             case MixedSqlNode mixed -> {
                 StringBuilder result = new StringBuilder();
-                mixed.getContents().forEach(child -> result.append(flatText(child)));
+                mixed.contents().forEach(child -> result.append(flatText(child)));
                 yield result.toString();
             }
             default -> throw new IllegalStateException("A completed result must contain only literal text");

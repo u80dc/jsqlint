@@ -43,11 +43,11 @@ class SqlNodeBuilderTest {
     void attributesDoNotLeakFromNestedElements() {
         var outer = assertInstanceOf(TrimSqlNode.class,
                 SqlNodeBuilder.buildScript("<trim><trim prefix='(' suffix=')'>id</trim></trim>"));
-        assertEquals("", outer.getPrefix());
-        assertEquals("", outer.getSuffix());
-        var inner = assertInstanceOf(TrimSqlNode.class, outer.getContents());
-        assertEquals("(", inner.getPrefix());
-        assertEquals(")", inner.getSuffix());
+        assertEquals("", outer.prefix());
+        assertEquals("", outer.suffix());
+        var inner = assertInstanceOf(TrimSqlNode.class, outer.contents());
+        assertEquals("(", inner.prefix());
+        assertEquals(")", inner.suffix());
     }
 
     @Test
@@ -98,15 +98,20 @@ class SqlNodeBuilderTest {
     void nodeCollectionsAreDefensivelyCopiedAndUnmodifiable() {
         var children = new ArrayList<SqlNode>(List.of(new StaticTextSqlNode("SELECT 1")));
         var mixed = new MixedSqlNode(children);
+        var mixedLookup = Map.of(mixed, "mixed");
         children.clear();
-        assertEquals(1, mixed.getContents().size());
-        assertThrows(UnsupportedOperationException.class, () -> mixed.getContents().clear());
+        assertEquals(1, mixed.contents().size());
+        assertThrows(UnsupportedOperationException.class, () -> mixed.contents().clear());
+        assertEquals("mixed", mixedLookup.get(new MixedSqlNode(List.of(new StaticTextSqlNode("SELECT 1")))));
 
         var branches = new ArrayList<>(List.of(new IfSqlNode("flag", mixed)));
         var choose = new ChooseSqlNode(branches, null);
+        var chooseLookup = Map.of(choose, "choose");
         branches.clear();
-        assertEquals(1, choose.getWhenContents().size());
-        assertThrows(UnsupportedOperationException.class, () -> choose.getWhenContents().clear());
+        assertEquals(1, choose.whenContents().size());
+        assertThrows(UnsupportedOperationException.class, () -> choose.whenContents().clear());
+        assertEquals("choose", chooseLookup.get(new ChooseSqlNode(
+                List.of(new IfSqlNode("flag", new MixedSqlNode(List.of(new StaticTextSqlNode("SELECT 1"))))), null)));
         assertThrows(NullPointerException.class, () -> new IfSqlNode("flag", null));
         assertThrows(IllegalArgumentException.class, () -> new BindSqlNode("", "1"));
     }

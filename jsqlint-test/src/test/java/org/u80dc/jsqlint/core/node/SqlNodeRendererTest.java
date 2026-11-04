@@ -1,7 +1,11 @@
 package org.u80dc.jsqlint.core.node;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
+import java.math.BigDecimal;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -135,6 +139,65 @@ class SqlNodeRendererTest {
         var node = script("<foreach collection='values' item='item' index='key' separator=','>#{key}=#{item}</foreach> #{item}");
         assertEquals("'a'=1,'b'=2 'outer'", SqlNodeRenderer.render(node,
                 Map.of("values", values, "item", "outer")).sql().orElseThrow());
+    }
+
+    @Test
+    void omittedIndexDoesNotOverwriteAnItemNamedIndex() {
+        var node = script("<foreach collection='ids' item='index' separator=','>#{index}</foreach>");
+        assertEquals("10,20", SqlNodeRenderer.render(node, Map.of("ids", List.of(10, 20))).sql().orElseThrow());
+        for (String index : Arrays.asList(null, "", " ")) {
+            var direct = new ForEachSqlNode("ids", "index", index, "", "", ",", ValueSqlNode.parameter("index"));
+            assertEquals("10,20", SqlNodeRenderer.render(direct, Map.of("ids", List.of(10, 20))).sql().orElseThrow());
+        }
+    }
+
+    @Test
+    void omittedIndexPreservesAnOuterLoopIndex() {
+        var node = script("<foreach collection='rows' item='row' index='index' separator=';'>"
+                + "<foreach collection='row' item='value' separator=','>#{index}:#{value}</foreach>"
+                + "</foreach>|#{index}");
+        assertEquals("0:10,0:20;1:30,1:40|99", SqlNodeRenderer.render(node,
+                Map.of("rows", List.of(List.of(10, 20), List.of(30, 40)), "index", 99)).sql().orElseThrow());
+    }
+
+    @Test
+    void identicalItemAndIndexNamesUseTheItemAndRestoreOuterBinding() {
+        var node = script("<foreach collection='values' item='entry' index='entry' separator=','>"
+                + "#{entry}</foreach>|#{entry}");
+        var map = new LinkedHashMap<String, Integer>();
+        map.put("a", 10);
+        map.put("b", 20);
+        for (Object values : List.of(List.of(10, 20), new int[]{10, 20}, map)) {
+            var result = SqlNodeRenderer.render(node, Map.of("values", values, "entry", "outer"));
+            assertEquals("10,20|'outer'", result.sql().orElseThrow());
+            assertEquals("outer", result.parameters().get("entry"));
+        }
+        assertEquals("NULL,20|'outer'", SqlNodeRenderer.render(node,
+                Map.of("values", Arrays.asList(null, 20), "entry", "outer")).sql().orElseThrow());
+    }
+
+    @Test
+    void identicalLoopNamesRemainCorrectWhenResumingUnknownValues() {
+        var node = script("<foreach collection='ids' item='v' index='v' separator=','>#{v}:#{extra}</foreach>|#{v}");
+        var pending = SqlNodeRenderer.render(node, Map.of("ids", List.of(10, 20), "v", 99));
+        assertFalse(pending.complete());
+        assertEquals(99, pending.parameters().get("v"));
+        var completed = new LinkedHashMap<>(pending.parameters());
+        completed.put("extra", 7);
+        assertEquals("10:7,20:7|99",
+                SqlNodeRenderer.render(pending.residual(), completed).sql().orElseThrow());
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = {"1E-1000", "-1E-1000", "0E-1000"})
+    void exactNumericTruthControlsIfChooseAndBooleanExpressions(String amount) {
+        var node = script("SELECT <choose><when test='amount'>1</when><otherwise>0</otherwise></choose>"
+                + "<if test='amount'> WHERE enabled=1</if>"
+                + "<if test='amount and true'> AND active=1</if>"
+                + "<if test='not amount'> WHERE enabled=0</if>");
+        BigDecimal value = new BigDecimal(amount);
+        assertEquals(value.signum() == 0 ? "SELECT 0 WHERE enabled=0" : "SELECT 1 WHERE enabled=1 AND active=1",
+                SqlNodeRenderer.render(node, Map.of("amount", value)).sql().orElseThrow());
     }
 
     @Test

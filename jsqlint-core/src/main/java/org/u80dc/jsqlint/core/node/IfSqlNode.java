@@ -1,20 +1,17 @@
 package org.u80dc.jsqlint.core.node;
 
-import lombok.Getter;
+import java.util.Objects;
 
 /**
  * IF 条件节点
  *
  * @author u80dc
  */
-@Getter
-public final class IfSqlNode implements SqlNode {
+public record IfSqlNode(String test, SqlNode contents) implements SqlNode {
 
-    public IfSqlNode(String test, SqlNode contents) {
+    public IfSqlNode {
         test = requireText(test, "test");
-        contents = java.util.Objects.requireNonNull(contents, "contents");
-        this.test = test;
-        this.contents = contents;
+        Objects.requireNonNull(contents, "contents");
     }
 
     private static String requireText(String value, String name) {
@@ -23,10 +20,6 @@ public final class IfSqlNode implements SqlNode {
         }
         return value;
     }
-
-    private final String test;
-
-    private final SqlNode contents;
 
     @Override
     public boolean isDynamic() {

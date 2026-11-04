@@ -1,20 +1,15 @@
 package org.u80dc.jsqlint.core.node;
 
-import lombok.Getter;
-
 /**
  * BIND节点，对应变量声明`<bind></bind>`标签
  *
  * @author u80dc
  */
-@Getter
-public final class BindSqlNode implements SqlNode {
+public record BindSqlNode(String name, String expression) implements SqlNode {
 
-    public BindSqlNode(String name, String expression) {
+    public BindSqlNode {
         name = requireText(name, "name");
         expression = requireText(expression, "expression");
-        this.name = name;
-        this.expression = expression;
     }
 
     private static String requireText(String value, String name) {
@@ -23,10 +18,6 @@ public final class BindSqlNode implements SqlNode {
         }
         return value;
     }
-
-    private final String name;
-
-    private final String expression;
 
     @Override
     public boolean isDynamic() {

@@ -13,6 +13,24 @@ JDBC 字符串拼接 ──转换───────┘
 mapper、include、参数名等框架上下文。`core` 接收转换结果，也允许直接构造节点。
 节点采用密封接口、不可变列表及构造校验，不需要为不同来源建立平行的节点继承体系。
 
+## 节点数据模型
+
+除 `ValueSqlNode` 外，节点均为 record，使用 `text()`、`contents()`、`test()` 等组件访问器；
+foreach 的布尔属性通过 `nullable()`、`skipBlank()` 访问。原来的 `getXxx()` / `isNullable()` /
+`isSkipBlank()` 调用需要相应迁移，`SqlNode.isDynamic()` 和 `getType()` 保持不变。
+
+`ValueSqlNode` 保留 final 类、私有构造器和 `raw(...)` / `parameter(...)` 工厂，
+避免任意组合输出类型、null 替代文本和绑定选项；它继续使用 `getExpression()`、`getKind()`、
+`getNullText()`、`getBindingOptions()` 访问属性。
+
+所有节点按具体类型和全部语义字段进行结构比较，包含子节点顺序、原始文本、表达式和绑定选项。
+`ValueSqlNode` 同样实现值语义的 `equals/hashCode`，因此包含表达式的树也能按结构比较。
+这不进行 SQL 语义等价判断；空白不同或结构不同，即使渲染结果相同，也可能不相等。
+需要区分相同结构的不同出现位置时，使用对象身份或单独的位置标识。
+
+record 构造器保留原有校验与默认值；`MixedSqlNode`、`ChooseSqlNode` 使用 `List.copyOf`
+复制列表，防止外部修改影响节点或哈希值。`TextSqlNode` 仍表示尚未解析的模板文本。
+
 ## 统一模板与节点语义
 
 模板使用 MyBatis 风格标签，并提供少量用于精确保留拼接语义的扩展。
@@ -99,13 +117,17 @@ String sql = completed.sql().orElseThrow();
 - `#{}` 渲染为样例字面量，`${}` 渲染为原始文本；未知值不会变成 NULL 或空串。
   jdbcType 等绑定选项保存在 `ValueSqlNode.bindingOptions`；选项不参与执行语义模拟。
 - foreach 支持集合、数组及 Map，迭代变量和 bind 在单次迭代中局部生效；
+  item 未指定时默认为 `item`，index 未指定或为空白时不绑定索引变量，因此不会隐式遮蔽外层索引。
+  item 与 index 允许同名；先绑定索引、再绑定元素，同名时使用元素值（包括已知 null）。
+  迭代结束后保留外层变量原值。
   已知空集合产生空片段，默认跳过纯空白迭代片段；`skipBlank="false"` 保留所有迭代片段。
   未知集合始终产生未完成结果。已知 null 默认也产生未完成结果，显式指定 `nullable="true"`
   才视为空集合。若 MyBatis 设置了全局 nullable 默认值，适配层需把有效值写入模板。
 - `renderSamples` 只处理调用方提供的参数样例，不自动制造跨参数组合。
 
 默认表达式求值器支持字面量、属性及下标、比较、加减、布尔运算、
-size/length/isEmpty。它不是完整 OGNL 引擎；任意方法调用等不支持语法返回 Unknown。
+size/length/isEmpty。数值零为 false、非零为 true；BigDecimal 与 BigInteger 使用精确判零，
+避免极小非零值在转换为 double 后被误判。它不是完整 OGNL 引擎；任意方法调用等不支持语法返回 Unknown。
 未来的框架适配层可通过 `SqlExpressionEvaluator` 注入无副作用的求值实现。
 本模板对空白拼接、循环绑定作用域有上述明确定义，不保证逐字符复刻 MyBatis 的运行时行为；
 需要严格复刻时，由适配层在归一化阶段处理框架的隐式空格、绑定作用域等差异。
@@ -116,6 +138,8 @@ size/length/isEmpty。它不是完整 OGNL 引擎；任意方法调用等不支�
 
 ## 验证
 
+测试源码统一位于 `jsqlint-test` 模块，在仓库根目录执行：
+
 ```powershell
-.\mvnw.cmd -pl jsqlint-core -am '-Dmaven.test.skip=false' '-DskipTests=false' test
+.\mvnw.cmd -pl jsqlint-test -am '-Dmaven.test.skip=false' '-DskipTests=false' test
 ```

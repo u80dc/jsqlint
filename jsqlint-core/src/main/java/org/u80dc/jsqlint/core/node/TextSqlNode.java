@@ -1,6 +1,6 @@
 package org.u80dc.jsqlint.core.node;
 
-import lombok.Getter;
+import java.util.Objects;
 
 /**
  * 尚未拆分占位符的模板文本。新代码可通过 SqlNodeBuilder.templateText
@@ -8,13 +8,10 @@ import lombok.Getter;
  *
  * @author u80dc
  */
-@Getter
-public final class TextSqlNode implements SqlNode {
+public record TextSqlNode(String text) implements SqlNode {
 
-    private final String text;
-
-    public TextSqlNode(String text) {
-        this.text = java.util.Objects.requireNonNull(text, "text");
+    public TextSqlNode {
+        Objects.requireNonNull(text, "text");
     }
 
     @Override

@@ -1,5 +1,7 @@
 package org.u80dc.jsqlint.core.node;
 
+import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.util.Objects;
 
 /**
@@ -18,6 +20,12 @@ public sealed interface SqlValue permits SqlValue.Known, SqlValue.Unknown {
         }
         if (value instanceof Boolean bool) {
             return bool ? Truth.TRUE : Truth.FALSE;
+        }
+        if (value instanceof BigDecimal decimal) {
+            return decimal.signum() == 0 ? Truth.FALSE : Truth.TRUE;
+        }
+        if (value instanceof BigInteger integer) {
+            return integer.signum() == 0 ? Truth.FALSE : Truth.TRUE;
         }
         if (value instanceof Number number) {
             return number.doubleValue() == 0 ? Truth.FALSE : Truth.TRUE;

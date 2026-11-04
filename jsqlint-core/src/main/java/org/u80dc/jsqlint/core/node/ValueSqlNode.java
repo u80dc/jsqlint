@@ -1,5 +1,6 @@
 package org.u80dc.jsqlint.core.node;
 
+import lombok.EqualsAndHashCode;
 import lombok.Getter;
 
 import java.util.Objects;
@@ -7,10 +8,12 @@ import java.util.Objects;
 /**
  * 将表达式结果输出到 SQL：原始拼接和绑定参数是不同语义。
  * 表达式的语言由 SqlExpressionEvaluator 决定，节点不依赖 JDBC 或 MyBatis。
+ * 保留私有构造器和工厂方法以约束字段组合，按全部语义字段比较相等性。
  *
  * @author u80dc
  */
 @Getter
+@EqualsAndHashCode
 public final class ValueSqlNode implements SqlNode {
     private final String expression;
     private final Kind kind;

@@ -1,7 +1,5 @@
 package org.u80dc.jsqlint.core.node;
 
-import lombok.Getter;
-
 import java.util.List;
 
 /**
@@ -9,15 +7,11 @@ import java.util.List;
  *
  * @author u80dc
  */
-@Getter
-public final class MixedSqlNode implements SqlNode {
+public record MixedSqlNode(List<SqlNode> contents) implements SqlNode {
 
-    public MixedSqlNode(List<SqlNode> contents) {
+    public MixedSqlNode {
         contents = List.copyOf(contents);
-        this.contents = contents;
     }
-
-    private final List<SqlNode> contents;
 
     @Override
     public boolean isDynamic() {

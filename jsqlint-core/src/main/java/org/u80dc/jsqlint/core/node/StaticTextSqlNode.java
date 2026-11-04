@@ -1,19 +1,16 @@
 package org.u80dc.jsqlint.core.node;
 
-import lombok.Getter;
+import java.util.Objects;
 
 /**
  * 静态文本节点（不包含动态表达式）
  *
  * @author u80dc
  */
-@Getter
-public final class StaticTextSqlNode implements SqlNode {
+public record StaticTextSqlNode(String text) implements SqlNode {
 
-    private final String text;
-
-    public StaticTextSqlNode(String text) {
-        this.text = java.util.Objects.requireNonNull(text, "text");
+    public StaticTextSqlNode {
+        Objects.requireNonNull(text, "text");
     }
 
     @Override

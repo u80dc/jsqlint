@@ -1,20 +1,16 @@
 package org.u80dc.jsqlint.core.node;
 
-import lombok.Getter;
+import java.util.Objects;
 
 /**
  * WHERE 节点
  *
  * @author u80dc
  */
-@Getter
-public final class WhereSqlNode implements SqlNode {
+public record WhereSqlNode(SqlNode contents) implements SqlNode {
 
-    private final SqlNode contents;
-
-    public WhereSqlNode(SqlNode contents) {
-        contents = java.util.Objects.requireNonNull(contents, "contents");
-        this.contents = contents;
+    public WhereSqlNode {
+        Objects.requireNonNull(contents, "contents");
     }
 
     @Override

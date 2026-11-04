@@ -10,6 +10,7 @@
 | `jsqlint-core` | 核心节点模型、脚本解析及支持未知值的 SQL 渲染（[使用说明](jsqlint-core/README.md)） |
 | `jsqlint-jdbc` | JDBC SQL 分析模块（已建立骨架，待迁移逻辑） |
 | `jsqlint-mybatis` | MyBatis SQL 分析模块（已建立骨架，待迁移逻辑） |
+| `jsqlint-test` | 集中存放所有模块的测试代码与测试资源（[使用说明](jsqlint-test/README.md)） |
 
 ## 构建
 
@@ -33,3 +34,14 @@ build.bat
 # Windows
 .\mvnw.cmd package
 ```
+
+## 测试
+
+所有测试统一放在 `jsqlint-test/src/test/java`，测试资源放在该模块的 `src/test/resources`。
+项目默认跳过测试；在仓库根目录显式启用，并通过 `-am` 构建被测模块：
+
+```powershell
+.\mvnw.cmd -pl jsqlint-test -am '-Dmaven.test.skip=false' '-DskipTests=false' test
+```
+
+Linux / macOS 使用相同参数，将命令替换为 `./mvnw`。
