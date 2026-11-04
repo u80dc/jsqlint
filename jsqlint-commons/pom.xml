@@ -1,0 +1,107 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>org.u80dc.jsqlint</groupId>
+        <artifactId>jsqlint</artifactId>
+        <version>${revision}</version>
+        <relativePath>../pom.xml</relativePath>
+    </parent>
+
+    <artifactId>jsqlint-commons</artifactId>
+    <packaging>jar</packaging>
+    <description>公共基础模块，统一 SootUp 字节码、源码及 Maven/Gradle 项目输入</description>
+
+    <properties>
+        <maven-embedder.version>3.9.16</maven-embedder.version>
+        <maven-resolver.version>1.9.27</maven-resolver.version>
+        <wagon.version>3.5.3</wagon.version>
+        <plexus-utils.version>3.6.1</plexus-utils.version>
+        <gradle-tooling-api.version>9.8.2</gradle-tooling-api.version>
+    </properties>
+
+    <repositories>
+        <!-- Gradle Tooling API 的官方发布仓库。 -->
+        <repository>
+            <id>gradle-releases</id>
+            <url>https://repo.gradle.org/gradle/libs-releases</url>
+            <releases>
+                <enabled>true</enabled>
+            </releases>
+            <snapshots>
+                <enabled>false</enabled>
+            </snapshots>
+        </repository>
+    </repositories>
+
+    <dependencies>
+        <!-- 编译产物通过 SootUp 字节码前端转换为 Jimple，版本继承父 POM。 -->
+        <dependency>
+            <groupId>org.soot-oss</groupId>
+            <artifactId>sootup.core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.soot-oss</groupId>
+            <artifactId>sootup.java.core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.soot-oss</groupId>
+            <artifactId>sootup.java.bytecode.frontend</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.soot-oss</groupId>
+            <artifactId>sootup.interceptors</artifactId>
+        </dependency>
+        <!-- Maven 配置参考 main 分支的 jsqlint-common/pom.xml。 -->
+        <!-- 通过 MavenCli 在当前 JVM 中执行 Maven。 -->
+        <dependency>
+            <groupId>org.apache.maven</groupId>
+            <artifactId>maven-embedder</artifactId>
+            <version>${maven-embedder.version}</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.slf4j</groupId>
+                    <artifactId>slf4j-simple</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <!-- Maven 仓库连接与 HTTP 依赖下载。 -->
+        <dependency>
+            <groupId>org.apache.maven.resolver</groupId>
+            <artifactId>maven-resolver-connector-basic</artifactId>
+            <version>${maven-resolver.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.maven.resolver</groupId>
+            <artifactId>maven-resolver-transport-http</artifactId>
+            <version>${maven-resolver.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.maven.wagon</groupId>
+            <artifactId>wagon-http</artifactId>
+            <version>${wagon.version}</version>
+            <exclusions>
+                <exclusion>
+                    <groupId>org.slf4j</groupId>
+                    <artifactId>slf4j-simple</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.codehaus.plexus</groupId>
+                    <artifactId>plexus-utils</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+        <dependency>
+            <groupId>org.codehaus.plexus</groupId>
+            <artifactId>plexus-utils</artifactId>
+            <version>${plexus-utils.version}</version>
+        </dependency>
+
+        <!-- 通过 GradleConnector 调用目标工程的 Gradle 构建。 -->
+        <dependency>
+            <groupId>org.gradle</groupId>
+            <artifactId>gradle-tooling-api</artifactId>
+            <version>${gradle-tooling-api.version}</version>
+        </dependency>
+    </dependencies>
+</project>

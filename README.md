@@ -7,6 +7,7 @@
 | 模块 | 说明 |
 |---|---|
 | `jsqlint-analysis` | SQL 静态分析引擎（SootUp 字节码分析、参数追踪、值推断） |
+| `jsqlint-commons` | 统一 SootUp 输入，支持字节码、Java 源码及 Maven/Gradle 项目自动编译（[使用说明](jsqlint-commons/README.md)） |
 | `jsqlint-core` | 核心节点模型、脚本解析及支持未知值的 SQL 渲染（[使用说明](jsqlint-core/README.md)） |
 | `jsqlint-jdbc` | JDBC SQL 分析模块（已建立骨架，待迁移逻辑） |
 | `jsqlint-mybatis` | MyBatis SQL 分析模块（已建立骨架，待迁移逻辑） |

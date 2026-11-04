@@ -15,6 +15,12 @@
     <dependencies>
         <dependency>
             <groupId>org.u80dc.jsqlint</groupId>
+            <artifactId>jsqlint-commons</artifactId>
+            <version>${revision}</version>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.u80dc.jsqlint</groupId>
             <artifactId>jsqlint-core</artifactId>
             <version>${revision}</version>
             <scope>test</scope>

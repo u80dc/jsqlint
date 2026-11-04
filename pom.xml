@@ -8,6 +8,7 @@
     <packaging>pom</packaging>
     <modules>
         <module>jsqlint-analysis</module>
+        <module>jsqlint-commons</module>
         <module>jsqlint-core</module>
         <module>jsqlint-jdbc</module>
         <module>jsqlint-mybatis</module>

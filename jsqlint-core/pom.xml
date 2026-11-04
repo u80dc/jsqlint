@@ -11,11 +11,43 @@
     <artifactId>jsqlint-core</artifactId>
     <packaging>jar</packaging>
 
-    <properties>
-    </properties>
-
     <dependencies>
-
+        <!-- SootUp 及其传递依赖的版本统一由父 POM 导入的 BOM 管理。 -->
+        <!-- Java 程序模型 -->
+        <dependency>
+            <groupId>org.soot-oss</groupId>
+            <artifactId>sootup.java.core</artifactId>
+        </dependency>
+        <!-- 调用图 -->
+        <dependency>
+            <groupId>org.soot-oss</groupId>
+            <artifactId>sootup.callgraph</artifactId>
+        </dependency>
+        <!-- Jimple 预处理与转换 -->
+        <dependency>
+            <groupId>org.soot-oss</groupId>
+            <artifactId>sootup.interceptors</artifactId>
+        </dependency>
+        <!-- Java 字节码前端；SootUp 3.x 已移除 Java 源码前端。 -->
+        <dependency>
+            <groupId>org.soot-oss</groupId>
+            <artifactId>sootup.java.bytecode.frontend</artifactId>
+        </dependency>
+        <!-- 过程内分析 -->
+        <dependency>
+            <groupId>org.soot-oss</groupId>
+            <artifactId>sootup.analysis.intraprocedural</artifactId>
+        </dependency>
+        <!-- 过程间分析 -->
+        <dependency>
+            <groupId>org.soot-oss</groupId>
+            <artifactId>sootup.analysis.interprocedural</artifactId>
+        </dependency>
+        <!-- 代码属性图 -->
+        <dependency>
+            <groupId>org.soot-oss</groupId>
+            <artifactId>sootup.codepropertygraph</artifactId>
+        </dependency>
     </dependencies>
 
 </project>
