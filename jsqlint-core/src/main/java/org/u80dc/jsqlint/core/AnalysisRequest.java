@@ -9,6 +9,7 @@ import java.util.Objects;
 /**
  * 调用方持有输入的所有权；分析器不会关闭这些 input locations。
  * 可只传资源。JDK 运行时和依赖由调用方显式提供，保留输入顺序与 SourceType。
+ * options 中未指定的覆盖项继承接收此请求的 Analyzer 实例配置。
  * @author u80dc
  */
 public record AnalysisRequest(List<? extends AnalysisInputLocation> locations,

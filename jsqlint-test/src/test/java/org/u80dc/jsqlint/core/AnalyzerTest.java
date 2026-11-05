@@ -49,7 +49,7 @@ class AnalyzerTest {
         Analyzer analyzer = jdbc();
         for (Path input : List.of(classes, jar, classes.resolve("example/Sample.class"))) {
             Capture capture = new Capture();
-            assertEquals(SUCCESS, analyzer.analyze(input, null, options(capture)).status());
+            assertEquals(SUCCESS, analyzer.analyze(input, options(capture)).status());
             assertEquals(List.of("SELECT 1 -- comment\nFROM sample"), capture.completeSql());
         }
     }
@@ -63,7 +63,7 @@ class AnalyzerTest {
                 }
                 """);
         Capture capture = new Capture();
-        assertEquals(SUCCESS, new Analyzer().analyze(source, null, options(capture)).status());
+        assertEquals(SUCCESS, new Analyzer().analyze(source, options(capture)).status());
         assertEquals(List.of("SELECT 42"), capture.completeSql());
         assertEquals(List.of("jdbc"), capture.modules);
     }
@@ -73,7 +73,7 @@ class AnalyzerTest {
         Path classes = compile("Sample", "public class Sample {}");
         Files.writeString(classes.resolve("Sample.java"), "invalid Java");
         Capture capture = new Capture();
-        assertEquals(FAILED, jdbc().analyze(classes, null, options(capture)).status());
+        assertEquals(FAILED, jdbc().analyze(classes, options(capture)).status());
         assertTrue(capture.diagnostics.stream().anyMatch(text -> text.contains("jsqlint-commons")));
     }
 
@@ -90,7 +90,7 @@ class AnalyzerTest {
                 }
                 """);
         Capture capture = new Capture();
-        assertEquals(SUCCESS, jdbc().analyze(classes, null, options(capture)).status());
+        assertEquals(SUCCESS, jdbc().analyze(classes, options(capture)).status());
         assertEquals(List.of("SELECT * FROM users", "SELECT * FROM roles"), capture.completeSql());
         assertEquals(3, capture.sql.size());
         assertFalse(capture.sql.getLast().complete());
@@ -109,7 +109,7 @@ class AnalyzerTest {
                 }
                 """);
         Capture capture = new Capture();
-        assertEquals(SUCCESS, jdbc().analyze(classes, null, options(capture)).status());
+        assertEquals(SUCCESS, jdbc().analyze(classes, options(capture)).status());
         var choice = assertInstanceOf(ChooseSqlNode.class, capture.templates.getFirst());
         assertEquals(Set.of(new StaticTextSqlNode("SELECT 1"), new StaticTextSqlNode("SELECT 2")),
                 new HashSet<>(choice.whenContents().stream().map(IfSqlNode::contents).toList()));
@@ -125,8 +125,9 @@ class AnalyzerTest {
                 }
                 """);
         Capture capture = new Capture();
-        var options = new AnalysisOptions(Duration.ZERO, 1, 2, () -> false, capture);
-        assertEquals(PARTIAL, jdbc().analyze(classes, null, options).status());
+        var config = AnalyzerConfig.defaults().withMaxTraceDepth(1).withMethodCacheSize(2);
+        var analyzer = new Analyzer(config, List.of(new JdbcAnalysisModule()), List.of());
+        assertEquals(PARTIAL, analyzer.analyze(classes, options(capture)).status());
         assertEquals(1, capture.sql.size());
         assertFalse(capture.sql.getFirst().complete());
         assertTrue(capture.diagnostics.stream().anyMatch(text -> text.startsWith("TRACE_LIMIT")));
@@ -143,7 +144,7 @@ class AnalyzerTest {
                 }
                 """);
         Capture capture = new Capture();
-        assertEquals(SUCCESS, jdbc().analyze(classes, null, options(capture)).status());
+        assertEquals(SUCCESS, jdbc().analyze(classes, options(capture)).status());
         assertEquals(List.of("SELECT 7"), capture.completeSql());
     }
 
@@ -248,8 +249,8 @@ class AnalyzerTest {
             }
         };
         var analyzer = new Analyzer(List.of(), List.of(resolver));
-        var options = new AnalysisOptions(Duration.ZERO, 32, 8, cancelled::get, new Capture());
-        assertEquals(CANCELLED, analyzer.analyze(file, null, options).status());
+        var options = AnalysisOptions.defaults().withCancelled(cancelled::get).withListener(new Capture());
+        assertEquals(CANCELLED, analyzer.analyze(file, options).status());
         assertEquals(1, input.closeCount);
     }
 
@@ -262,7 +263,7 @@ class AnalyzerTest {
                 if (progress.resources() == 1) cancelled.set(true);
             }
         };
-        var options = new AnalysisOptions(Duration.ZERO, 32, 8, cancelled::get, capture);
+        var options = AnalysisOptions.defaults().withCancelled(cancelled::get).withListener(capture);
         var request = new AnalysisRequest(List.of(), List.of(memory(Map.of("one.sql", "SELECT 1", "two.sql", "SELECT 2"))), options);
         assertEquals(CANCELLED, new Analyzer(List.of(sqlFiles("sql")), List.of()).analyze(request).status());
         assertEquals(AnalysisListener.Stage.FINISHED, capture.progress.getLast().stage());
@@ -273,7 +274,7 @@ class AnalyzerTest {
     void deadlineAndListenerFailureHaveExplicitTerminalStates() {
         var resource = memory(Map.of("query.sql", "SELECT 1"));
         Capture capture = new Capture();
-        var deadline = new AnalysisOptions(Duration.ofNanos(1), 32, 8, () -> false, capture);
+        var deadline = options(capture).withTimeout(Duration.ofNanos(1));
         var analyzer = new Analyzer(List.of(sqlFiles("sql")), List.of());
         assertEquals(PARTIAL, analyzer.analyze(new AnalysisRequest(List.of(), List.of(resource), deadline)).status());
         assertTrue(capture.diagnostics.stream().anyMatch(text -> text.startsWith("TIMEOUT")));
@@ -286,13 +287,83 @@ class AnalyzerTest {
     }
 
     @Test
+    void pathEntryInheritsTimeoutAndUnlimitedOverrideDoesNotChangeDefaults() throws Exception {
+        Path classes = compile("Sample", "public class Sample {}");
+        var config = AnalyzerConfig.defaults().withTimeout(Duration.ofNanos(1));
+        var analyzer = new Analyzer(config, List.of(), List.of());
+        assertEquals(PARTIAL, analyzer.analyze(classes).status());
+
+        Capture capture = new Capture();
+        var unlimited = options(capture).withTimeout(Duration.ZERO);
+        assertEquals(SUCCESS, analyzer.analyze(classes, unlimited).status());
+        assertEquals(AnalysisListener.Stage.FINISHED, capture.progress.getLast().stage());
+        // 单次覆盖不修改实例配置；null 明确恢复继承，而零明确取消超时限制。
+        assertEquals(PARTIAL, analyzer.analyze(classes, unlimited.withTimeout(null)).status());
+        assertTrue(capture.diagnostics.stream().anyMatch(text -> text.startsWith("TIMEOUT")));
+        assertEquals(PARTIAL, analyzer.analyze(classes).status());
+    }
+
+    @Test
+    void locationAndResourceRequestsInheritTheSameAnalyzerDefaults() throws Exception {
+        var analyzer = new Analyzer(AnalyzerConfig.defaults().withTimeout(Duration.ofNanos(1)),
+                List.of(sqlFiles("sql")), List.of());
+        try (var location = new TrackingLocation(null)) {
+            assertEquals(PARTIAL, analyzer.analyze(List.of(location)).status());
+            assertEquals(SUCCESS, analyzer.analyze(new AnalysisRequest(List.of(location), List.of(),
+                    AnalysisOptions.defaults().withTimeout(Duration.ZERO))).status());
+            assertFalse(location.closed);
+        }
+
+        var resource = memory(Map.of("query.sql", "SELECT 16"));
+        var request = new AnalysisRequest(List.of(), List.of(resource));
+        assertEquals(PARTIAL, analyzer.analyze(request).status());
+        Capture capture = new Capture();
+        assertEquals(SUCCESS, analyzer.analyze(new AnalysisRequest(List.of(), List.of(resource),
+                options(capture).withTimeout(Duration.ZERO))).status());
+        assertEquals(List.of("SELECT 16"), capture.completeSql());
+        assertEquals(PARTIAL, analyzer.analyze(request).status());
+    }
+
+    @Test
+    void perCallCancellationAndListenerDoNotLeakIntoNextAnalysis() {
+        var analyzer = new Analyzer(AnalyzerConfig.defaults(), List.of(sqlFiles("sql")), List.of());
+        var resource = memory(Map.of("query.sql", "SELECT 17"));
+        Capture cancelledCapture = new Capture();
+        var cancelled = options(cancelledCapture).withCancelled(() -> true);
+        assertEquals(CANCELLED, analyzer.analyze(new AnalysisRequest(List.of(), List.of(resource), cancelled)).status());
+        var previousProgress = List.copyOf(cancelledCapture.progress);
+
+        Capture next = new Capture();
+        assertEquals(SUCCESS, analyzer.analyze(new AnalysisRequest(List.of(), List.of(resource), options(next))).status());
+        assertEquals(List.of("SELECT 17"), next.completeSql());
+        assertEquals(previousProgress, cancelledCapture.progress);
+        assertTrue(cancelledCapture.sql.isEmpty());
+        assertEquals(0, next.progress.getFirst().resources());
+        assertEquals(1, next.progress.getLast().analyzed());
+    }
+
+    @Test
+    void invalidBudgetsAreRejectedBeforeAnalysisStarts() {
+        var defaults = AnalyzerConfig.defaults();
+        assertThrows(NullPointerException.class, () -> defaults.withTimeout(null));
+        assertThrows(IllegalArgumentException.class, () -> defaults.withTimeout(Duration.ofNanos(-1)));
+        assertThrows(IllegalArgumentException.class,
+                () -> AnalysisOptions.defaults().withTimeout(Duration.ofNanos(-1)));
+        assertThrows(ArithmeticException.class, () -> defaults.withTimeout(Duration.ofSeconds(Long.MAX_VALUE)));
+        assertThrows(ArithmeticException.class,
+                () -> AnalysisOptions.defaults().withTimeout(Duration.ofSeconds(Long.MAX_VALUE)));
+        assertThrows(IllegalArgumentException.class, () -> defaults.withMaxTraceDepth(0));
+        assertThrows(IllegalArgumentException.class, () -> defaults.withMethodCacheSize(0));
+    }
+
+    @Test
     void emptyDiscoverySucceedsAndInvalidContractsFailEarly() {
         var resource = memory(Map.of("ignore.txt", "not sql"));
         Analyzer analyzer = new Analyzer(List.of(sqlFiles("sql")), List.of());
         assertEquals(SUCCESS, analyzer.analyze(new AnalysisRequest(List.of(), List.of(resource))).status());
         assertThrows(IllegalArgumentException.class, () -> new AnalysisRequest(List.of(), List.of()));
         assertThrows(IllegalArgumentException.class, () -> new Analyzer(List.of(sqlFiles("same"), sqlFiles("same")), List.of()));
-        assertThrows(IllegalArgumentException.class, () -> analyzer.analyze(temporary.resolve("missing"), null));
+        assertThrows(IllegalArgumentException.class, () -> analyzer.analyze(temporary.resolve("missing")));
         assertThrows(NullPointerException.class, () -> new AnalysisResult(null));
     }
 
@@ -321,7 +392,7 @@ class AnalyzerTest {
                 }
                 """);
         Capture capture = new Capture();
-        assertEquals(PARTIAL, jdbc().analyze(classes, null, options(capture)).status());
+        assertEquals(PARTIAL, jdbc().analyze(classes, options(capture)).status());
         assertEquals(1, capture.sql.size());
         assertTrue(capture.completeSql().isEmpty());
     }
@@ -348,7 +419,7 @@ class AnalyzerTest {
                 }
                 """);
         Capture capture = new Capture();
-        assertEquals(SUCCESS, jdbc().analyze(classes, null, options(capture)).status());
+        assertEquals(SUCCESS, jdbc().analyze(classes, options(capture)).status());
         assertEquals(List.of("SELECT xtrue"), capture.completeSql());
     }
 
@@ -362,7 +433,7 @@ class AnalyzerTest {
                 }
                 """);
         Capture capture = new Capture();
-        assertEquals(PARTIAL, jdbc().analyze(classes, null, options(capture)).status());
+        assertEquals(PARTIAL, jdbc().analyze(classes, options(capture)).status());
         assertEquals(1, capture.sql.size());
         assertFalse(capture.sql.getFirst().complete());
         assertTrue(capture.diagnostics.stream().anyMatch(text -> text.startsWith("UNSUPPORTED_VALUE")));
@@ -381,7 +452,7 @@ class AnalyzerTest {
                 """);
         Capture capture = new Capture();
         var analyzer = new Analyzer(List.of(new MybatisAnalysisModule()), List.of());
-        assertEquals(SUCCESS, analyzer.analyze(classes, null, options(capture)).status());
+        assertEquals(SUCCESS, analyzer.analyze(classes, options(capture)).status());
         assertEquals(2, capture.sql.size());
         assertEquals(List.of("SELECT 13"), capture.completeSql());
     }
@@ -415,9 +486,9 @@ class AnalyzerTest {
             public void register(DiscoveryRegistry registry) { new JdbcAnalysisModule().register(registry); }
         };
         Capture one = new Capture(), two = new Capture();
-        assertEquals(SUCCESS, jdbc().analyze(classes, null, options(one)).status());
+        assertEquals(SUCCESS, jdbc().analyze(classes, options(one)).status());
         assertEquals(SUCCESS, new Analyzer(List.of(new JdbcAnalysisModule(), second), List.of())
-                .analyze(classes, null, options(two)).status());
+                .analyze(classes, options(two)).status());
         assertEquals(2, two.sql.size());
         assertEquals(one.progress.getLast().methods(), two.progress.getLast().methods());
     }
@@ -438,12 +509,12 @@ class AnalyzerTest {
             }
         };
         assertEquals(FAILED, new Analyzer(List.of(sqlFiles("sql")), List.of(resolver))
-                .analyze(source, null, options(broken)).status());
+                .analyze(source, options(broken)).status());
         assertEquals(1, location.closeCount);
     }
 
     private AnalysisOptions options(AnalysisListener listener) {
-        return new AnalysisOptions(Duration.ZERO, 32, 128, () -> false, listener);
+        return AnalysisOptions.defaults().withListener(listener);
     }
 
     private Path compile(String name, String source) throws Exception {

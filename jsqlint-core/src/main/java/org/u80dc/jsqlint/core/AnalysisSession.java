@@ -24,6 +24,7 @@ import static org.u80dc.jsqlint.core.AnalysisResult.Status;
  */
 final class AnalysisSession {
     private static final Logger LOG = LoggerFactory.getLogger(AnalysisSession.class);
+    private final AnalyzerConfig config;
     private final AnalysisOptions options;
     private final long started = System.nanoTime();
     private final List<Registered> modules = new ArrayList<>();
@@ -34,13 +35,17 @@ final class AnalysisSession {
     private long resources, methods, analyzed;
     private boolean partial;
 
-    AnalysisSession(AnalysisOptions options) { this.options = options; }
+    /** config 已与单次覆盖项合并；缓存、计时起点等状态仍在每次构造时独立创建。 */
+    AnalysisSession(AnalyzerConfig config, AnalysisOptions options) {
+        this.config = config;
+        this.options = options;
+    }
 
     /** 在工作边界协作停止；单次第三方编译或解析调用仍需自行返回。 */
     void checkpoint() {
         if (Thread.currentThread().isInterrupted() || options.cancelled().getAsBoolean())
             throw new Stop(Status.CANCELLED);
-        if (!options.timeout().isZero() && System.nanoTime() - started >= options.timeout().toNanos())
+        if (!config.timeout().isZero() && System.nanoTime() - started >= config.timeout().toNanos())
             throw new Stop(Status.PARTIAL);
     }
 
@@ -143,8 +148,8 @@ final class AnalysisSession {
         }
         progress(Stage.ANALYZING);
         // 此时所有资源定义和应用调用点已就绪，避免分析结果受发现顺序影响。
-        ValueTraceAnalyzer tracing = new ValueTraceAnalyzer(view, callers, options.maxTraceDepth(),
-                options.methodCacheSize(), this::checkpoint, this::incomplete);
+        ValueTraceAnalyzer tracing = new ValueTraceAnalyzer(view, callers, config.maxTraceDepth(),
+                config.methodCacheSize(), this::checkpoint, this::incomplete);
         if (extensions.isEmpty()) diagnostic("NO_MODULES", "No SQL discovery modules registered");
         for (Pending item : pending) {
             checkpoint();

@@ -8,22 +8,26 @@
 
 ```java
 import org.u80dc.jsqlint.core.Analyzer;
+import org.u80dc.jsqlint.core.AnalyzerConfig;
+import org.u80dc.jsqlint.core.AnalysisOptions;
 import org.u80dc.jsqlint.core.AnalysisResult;
 import java.nio.file.Path;
+import java.time.Duration;
 
 var analyzer = new Analyzer();
-AnalysisResult result = analyzer.analyze(Path.of("target/classes"), null);
+AnalysisResult result = analyzer.analyze(Path.of("target/classes"));
 // 引入 commons 后，同一入口可以接收 .java 文件、源码目录、Maven/Gradle 项目：
-AnalysisResult projectResult = analyzer.analyze(Path.of("project"), Path.of("libraries"));
+AnalysisResult projectResult = analyzer.analyze(Path.of("project"), Path.of("libraries"),
+        AnalysisOptions.defaults());
 
 // 指定本次编译的输出标识，实际路径为 ${java.io.tmpdir}/.jsqlint/my-project/。
-var options = org.u80dc.jsqlint.core.AnalysisOptions.defaults()
+var options = AnalysisOptions.defaults()
         .withClassOutputId("my-project")
-        .withCleanupClassOutput(true); // 可选：结束后清理输出，默认 false。
-AnalysisResult compiledResult = analyzer.analyze(Path.of("project"), null, options);
+        .withCleanupClassOutput(true); // 本次分析结束后清理输出。
+AnalysisResult compiledResult = analyzer.analyze(Path.of("project"), options);
 ```
 
-- Path 入口自动加入当前 JDK 运行时；第二个参数可以为 null、依赖 JAR、类目录或包含依赖 JAR 的目录。
+- Path 入口自动加入当前 JDK 运行时；三参数入口的 dependencies 可以为 null、依赖 JAR、类目录或包含依赖 JAR 的目录。
   依赖目录本身和其中递归查找的 JAR 均作为 Library。
 - core 内置字节码目录、JAR、单个 class 文件支持。单个 class 从字节码读取实际类名。
 - commons 提供 `AnalysisInputResolver`，使用已有的 `AutoCompileAnalysisInputLocation`。
@@ -57,6 +61,49 @@ AnalysisResult result = analyzer.analyze(request);
 
 commons 的项目资源默认扫描项目目录，排除 src/test、target、build、.git、.gradle、.idea；
 特殊资源目录、构建生成资源或依赖中的资源可通过 AnalysisRequest 显式提供。
+
+## 实例配置与单次选项
+
+可复用的默认配置在创建 Analyzer 时传入，只对该实例生效：
+
+```java
+var config = AnalyzerConfig.defaults()
+        .withTimeout(Duration.ofMinutes(5))
+        .withMaxTraceDepth(32)
+        .withMethodCacheSize(128)
+        .withCleanupClassOutput(true);
+var analyzer = new Analyzer(config);
+
+analyzer.analyze(Path.of("project-a")); // 使用实例默认配置。
+var options = AnalysisOptions.defaults()
+        .withClassOutputId("project-b")
+        .withTimeout(Duration.ZERO)
+        .withCleanupClassOutput(false);
+analyzer.analyze(Path.of("project-b"), options); // 仅本次不限时并保留产物。
+analyzer.analyze(Path.of("project-c")); // 仍使用五分钟超时和结束清理。
+```
+
+| 配置归属 | 内容 |
+|---|---|
+| `AnalyzerConfig` | 默认超时、最大追踪深度、方法缓存容量、默认结束清理策略 |
+| `AnalysisOptions` | 本次超时覆盖、取消信号、监听器、输出标识、结束清理覆盖 |
+
+配置优先级为：单次显式覆盖 → Analyzer 实例默认值；`AnalyzerConfig.defaults()` 提供系统默认值：
+不限时、追踪深度 32、方法缓存容量 128、保留编译产物。
+`AnalysisOptions.defaults()` 的 timeout 和 cleanupClassOutput 为 null，表示继承实例配置；
+显式传入 `Duration.ZERO` 表示本次不限时，显式传入 false 表示本次保留产物。
+`withTimeout(null)`、`withCleanupClassOutput(null)` 可恢复继承。
+
+两种配置均不可变，with 方法返回新对象。每次调用独立合并配置，不修改 Analyzer；
+输出标识、取消信号、监听器不会从上一次调用继承。Path、输入列表和 AnalysisRequest 入口
+均使用相同的默认配置规则；输入列表需覆盖选项时使用 AnalysisRequest。
+计时器从本次分析开始计时，缓存及其他执行状态仍由本次 AnalysisSession 独占。
+扩展实例会复用，其并发安全性由具体扩展保证。
+
+旧用法迁移：`analyze(source, null)` 改为 `analyze(source)`，
+`analyze(source, dependencies)` 改为 `analyze(source, dependencies, AnalysisOptions.defaults())`。
+不保留双 Path 重载，避免与 `analyze(source, options)` 产生 null 参数歧义。
+原 AnalysisOptions 构造器中的深度和缓存容量移至 AnalyzerConfig，单次选项推荐通过 with 方法设置。
 
 ## 进度、结果与长任务控制
 
@@ -92,8 +139,9 @@ var listener = new AnalysisListener() {
         System.err.println(code + ": " + message);
     }
 };
-var options = new AnalysisOptions(java.time.Duration.ofMinutes(5), 32, 128,
-                                  cancelled::get, listener);
+var options = AnalysisOptions.defaults()
+        .withCancelled(cancelled::get)
+        .withListener(listener);
 analyzer.analyze(project, dependencies, options);
 ```
 
@@ -110,13 +158,14 @@ JavaView 的内存上限；当前仍需要保存发现的起点和调用索引�
 
 ## 扩展协议
 
-`new Analyzer()` 用 ServiceLoader 发现两种 SPI：
+`new Analyzer()` 和 `new Analyzer(config)` 用 ServiceLoader 发现两种 SPI：
 
 - `org.u80dc.jsqlint.core.spi.AnalysisInputResolver`：可选输入准备能力。
 - `org.u80dc.jsqlint.core.spi.SqlAnalysisModule`：框架资源、起点及语义适配。
 
 服务声明放在对应模块的 `META-INF/services/<接口全名>` 文件中。
-也可以显式构造 `new Analyzer(modules, resolvers)`，只启用传入扩展；
+也可以显式构造 `new Analyzer(modules, resolvers)` 或
+`new Analyzer(config, modules, resolvers)`，只启用传入扩展；
 core 的字节码解析器始终存在。配置编译选项时，可显式传入
 `new AutoCompileInputResolver(inputLocationOptions)`，避免与默认 commons 实现重复注册。
 

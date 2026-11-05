@@ -26,18 +26,31 @@ import static org.u80dc.jsqlint.core.AnalysisResult.Status;
  */
 @SuppressWarnings("unused")
 public final class Analyzer {
+    private final AnalyzerConfig config;
     private final List<SqlAnalysisModule> modules;
     private final List<AnalysisInputResolver> resolvers;
 
     /** 从运行时类路径发现可选模块；扩展实例复用，每次分析的状态由独立会话管理。 */
     public Analyzer() {
-        this(ServiceLoader.load(SqlAnalysisModule.class).stream().map(ServiceLoader.Provider::get).toList(),
+        this(AnalyzerConfig.defaults());
+    }
+
+    /** 指定实例默认配置，模块和解析器仍通过 ServiceLoader 自动发现。 */
+    public Analyzer(AnalyzerConfig config) {
+        this(config, ServiceLoader.load(SqlAnalysisModule.class).stream().map(ServiceLoader.Provider::get).toList(),
                 ServiceLoader.load(AnalysisInputResolver.class).stream().map(ServiceLoader.Provider::get).toList());
     }
 
     /** 显式指定扩展，适合按需启用模块、配置编译参数或隔离测试环境。 */
     public Analyzer(List<? extends SqlAnalysisModule> modules,
                     List<? extends AnalysisInputResolver> resolvers) {
+        this(AnalyzerConfig.defaults(), modules, resolvers);
+    }
+
+    /** 同时指定实例配置和扩展；仅启用传入的扩展，始终保留 core 的字节码解析器。 */
+    public Analyzer(AnalyzerConfig config, List<? extends SqlAnalysisModule> modules,
+                    List<? extends AnalysisInputResolver> resolvers) {
+        this.config = Objects.requireNonNull(config, "config");
         this.modules = List.copyOf(modules);
         Set<String> ids = new HashSet<>();
         for (var module : this.modules) {
@@ -75,25 +88,33 @@ public final class Analyzer {
     }
 
     /**
-     * 使用默认选项分析路径输入，并自动加入当前 JDK 运行时。
+     * 使用实例默认配置分析路径输入，并自动加入当前 JDK 运行时。
      *
      * @param source 字节码文件、类目录或 JAR；引入 commons 后也支持源码及项目目录
-     * @param dependencies 额外依赖 JAR 或目录；null 表示不额外指定依赖
      */
-    public @NonNull AnalysisResult analyze(Path source, @Nullable Path dependencies) {
-        return analyze(source, dependencies, AnalysisOptions.defaults());
+    public @NonNull AnalysisResult analyze(Path source) {
+        return analyze(source, AnalysisOptions.defaults());
     }
 
-    /** 带进度、取消和时间预算的路径入口；管理编译输出目录，并负责关闭解析器转交的输入。 */
+    /** 指定本次调用的覆盖项；未指定的超时和清理策略继承实例配置。 */
+    public @NonNull AnalysisResult analyze(Path source, AnalysisOptions options) {
+        return analyze(source, null, options);
+    }
+
+    /**
+     * 同时指定额外分析依赖和本次选项；管理编译输出目录，并关闭解析器转交的输入。
+     * dependencies 可为依赖 JAR 或目录，null 表示不额外指定分析依赖，不参与源码编译配置。
+     */
     public @NonNull AnalysisResult analyze(Path source, @Nullable Path dependencies, AnalysisOptions options) {
         Objects.requireNonNull(source, "source");
         Objects.requireNonNull(options, "options");
+        AnalyzerConfig effectiveConfig = options.resolveAgainst(config);
         Path input = source.toAbsolutePath().normalize();
         Path library = dependencies == null ? null : dependencies.toAbsolutePath().normalize();
         if (!Files.exists(input)) throw new IllegalArgumentException("Input path does not exist: " + input);
         if (library != null && !Files.exists(library))
             throw new IllegalArgumentException("Dependency path does not exist: " + library);
-        AnalysisSession session = new AnalysisSession(options);
+        AnalysisSession session = new AnalysisSession(effectiveConfig, options);
         List<AnalysisInputLocation> owned = new ArrayList<>();
         ClassOutputDirectory classOutput = null;
         Status status;
@@ -118,7 +139,7 @@ public final class Analyzer {
                     .toAbsolutePath().normalize();
             if (selected.requiresCompilation(input)) {
                 classOutput = ClassOutputDirectory.prepare(output, input, library,
-                        options.classOutputId() != null, options.cleanupClassOutput());
+                        options.classOutputId() != null, effectiveConfig.cleanupClassOutput());
             }
             PreparedInput prepared = selected.resolve(input, output, session::checkpoint);
             // 先接管输入再检查取消，确保编译期间收到取消信号时也能释放新创建的输入。
@@ -159,7 +180,7 @@ public final class Analyzer {
     /** 统一请求入口；会话只使用请求中的输入，所有权仍由调用方持有。 */
     public AnalysisResult analyze(AnalysisRequest request) {
         Objects.requireNonNull(request, "request");
-        AnalysisSession session = new AnalysisSession(request.options());
+        AnalysisSession session = new AnalysisSession(request.options().resolveAgainst(config), request.options());
         Status status;
         try {
             session.checkpoint();

@@ -9,6 +9,7 @@ import org.junit.jupiter.api.parallel.Isolated;
 import org.u80dc.jsqlint.core.AnalysisListener;
 import org.u80dc.jsqlint.core.AnalysisOptions;
 import org.u80dc.jsqlint.core.Analyzer;
+import org.u80dc.jsqlint.core.AnalyzerConfig;
 import org.u80dc.jsqlint.core.spi.AnalysisInputResolver;
 import org.u80dc.jsqlint.core.spi.PreparedInput;
 import sootup.core.frontend.SootClassSource;
@@ -21,7 +22,6 @@ import sootup.core.views.View;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -63,14 +63,14 @@ class AutoCompileInputResolverTest {
         Files.writeString(source.resolve("Old.java"), "public class Old {}");
         // 使用真实 ServiceLoader 调用链，复用同一个 Analyzer 及其解析器。
         var analyzer = new Analyzer();
-        assertEquals(SUCCESS, analyzer.analyze(source, null).status());
+        assertEquals(SUCCESS, analyzer.analyze(source).status());
         Path first = outputs().getFirst();
         assertTrue(Files.isRegularFile(first.resolve("Sample.class")));
         assertTrue(Files.isRegularFile(first.resolve("Old.class")));
 
         Files.delete(source.resolve("Old.java"));
         Files.writeString(source.resolve("Sample.java"), "public class Sample { public int value() { return 2; } }");
-        assertEquals(SUCCESS, analyzer.analyze(source, null).status());
+        assertEquals(SUCCESS, analyzer.analyze(source).status());
         List<Path> outputs = outputs();
         assertEquals(2, outputs.size());
         Path second = outputs.stream().filter(path -> !path.equals(first)).findFirst().orElseThrow();
@@ -104,13 +104,13 @@ class AutoCompileInputResolverTest {
         var resolver = new AutoCompileInputResolver(InputLocationOptions.defaults().withClassOutputDirectory(configured));
         var analyzer = new Analyzer(List.of(), List.of(resolver));
         for (String id : List.of("first-classes", "第二次编译")) {
-            assertEquals(SUCCESS, analyzer.analyze(source, null,
+            assertEquals(SUCCESS, analyzer.analyze(source,
                     AnalysisOptions.defaults().withClassOutputId(id)).status());
             assertTrue(Files.isRegularFile(defaultRoot().resolve(id).resolve("Sample.class")));
             assertFalse(Files.exists(configured));
         }
         // 不指定标识时也必须由 Analyzer 生成路径，不能回退到解析器配置的完整路径。
-        assertEquals(SUCCESS, analyzer.analyze(source, null).status());
+        assertEquals(SUCCESS, analyzer.analyze(source).status());
         assertEquals(3, outputs().size());
         assertFalse(Files.exists(configured));
         // Analyzer 没有修改解析器的配置，直接调用解析器时仍能使用原路径。
@@ -128,13 +128,13 @@ class AutoCompileInputResolverTest {
         Path output = defaultRoot().resolve("caller-classes");
         var options = AnalysisOptions.defaults().withClassOutputId("caller-classes");
         var analyzer = new Analyzer();
-        assertEquals(SUCCESS, analyzer.analyze(source, null, options).status());
+        assertEquals(SUCCESS, analyzer.analyze(source, options).status());
         assertTrue(Files.isRegularFile(output.resolve("Sample.class")));
         assertTrue(Files.isRegularFile(output.resolve("Old.class")));
         Files.delete(obsolete);
         Files.writeString(Files.createDirectories(output.resolve("nested/deeper")).resolve("old.txt"), "old");
         Path sibling = Files.writeString(Files.createDirectories(defaultRoot().resolve("another-id")).resolve("keep.txt"), "keep");
-        assertEquals(SUCCESS, analyzer.analyze(source, null, options).status());
+        assertEquals(SUCCESS, analyzer.analyze(source, options).status());
         assertEquals(2, outputs().size());
         assertTrue(Files.isRegularFile(output.resolve("Sample.class")));
         assertFalse(Files.exists(output.resolve("Old.class")));
@@ -163,11 +163,32 @@ class AutoCompileInputResolverTest {
                     }
                 }
             };
-            var options = new AnalysisOptions(Duration.ZERO, 32, 128, () -> false, listener)
+            var options = AnalysisOptions.defaults().withListener(listener)
                     .withCleanupClassOutput(true).withClassOutputId(id);
-            assertEquals(SUCCESS, new Analyzer().analyze(source, null, options).status());
+            assertEquals(SUCCESS, new Analyzer().analyze(source, options).status());
             assertTrue(outputs().isEmpty());
         }
+        assertTrue(Files.isRegularFile(source));
+    }
+
+    @Test
+    void cleanupInheritsAnalyzerConfigAndFalseOverrideOnlyAffectsOneCall() throws Exception {
+        Path source = Files.writeString(temporary.resolve("Sample.java"), "public class Sample {}");
+        Path output = defaultRoot().resolve("configured-cleanup");
+        var analyzer = new Analyzer(AnalyzerConfig.defaults().withCleanupClassOutput(true));
+        var options = AnalysisOptions.defaults().withClassOutputId("configured-cleanup");
+        assertEquals(SUCCESS, analyzer.analyze(source, options).status());
+        assertFalse(Files.exists(output));
+
+        var retain = options.withCleanupClassOutput(false);
+        assertEquals(SUCCESS, analyzer.analyze(source, retain).status());
+        assertTrue(Files.isRegularFile(output.resolve("Sample.class")));
+
+        // 恢复继承后重新使用同一标识，结束清理再次生效。
+        assertEquals(SUCCESS, analyzer.analyze(source, retain.withCleanupClassOutput(null)).status());
+        assertFalse(Files.exists(output));
+        assertEquals(SUCCESS, analyzer.analyze(source).status());
+        assertTrue(outputs().isEmpty());
         assertTrue(Files.isRegularFile(source));
     }
 
@@ -179,7 +200,7 @@ class AutoCompileInputResolverTest {
             Path output = Files.createDirectories(defaultRoot().resolve(id));
             Files.writeString(output.resolve("Old.class"), "stale");
             var options = AnalysisOptions.defaults().withClassOutputId(id).withCleanupClassOutput(cleanup);
-            assertEquals(FAILED, new Analyzer().analyze(source, null, options).status());
+            assertEquals(FAILED, new Analyzer().analyze(source, options).status());
             assertEquals(!cleanup, Files.isDirectory(output));
             assertFalse(Files.exists(output.resolve("Old.class")));
         }
@@ -211,10 +232,10 @@ class AutoCompileInputResolverTest {
                     return new PreparedInput(List.of(location), List.of());
                 }
             };
-            var options = new AnalysisOptions(Duration.ZERO, 32, 128, cancelled::get, AnalysisListener.NONE)
+            var options = AnalysisOptions.defaults().withCancelled(cancelled::get)
                     .withClassOutputId(output.getFileName().toString()).withCleanupClassOutput(true);
             assertEquals(closeFails ? FAILED : CANCELLED,
-                    new Analyzer(List.of(), List.of(resolver)).analyze(source, null, options).status());
+                    new Analyzer(List.of(), List.of(resolver)).analyze(source, options).status());
             assertTrue(closed.get());
             assertFalse(Files.exists(output));
         }
@@ -232,9 +253,9 @@ class AutoCompileInputResolverTest {
                 }
             }
         };
-        var options = new AnalysisOptions(Duration.ZERO, 32, 128, () -> false, listener)
+        var options = AnalysisOptions.defaults().withListener(listener)
                 .withClassOutputId("listener-failed").withCleanupClassOutput(true);
-        assertEquals(FAILED, new Analyzer().analyze(source, null, options).status());
+        assertEquals(FAILED, new Analyzer().analyze(source, options).status());
         assertFalse(Files.exists(output));
     }
 
@@ -259,9 +280,9 @@ class AutoCompileInputResolverTest {
         AnalysisListener listener = new AnalysisListener() {
             @Override public void onDiagnostic(String code, String message) { diagnostics.add(message); }
         };
-        var options = new AnalysisOptions(Duration.ZERO, 32, 128, () -> false, listener)
+        var options = AnalysisOptions.defaults().withListener(listener)
                 .withClassOutputId("blocked").withCleanupClassOutput(true);
-        assertEquals(FAILED, new Analyzer(List.of(), List.of(resolver)).analyze(source, null, options).status());
+        assertEquals(FAILED, new Analyzer(List.of(), List.of(resolver)).analyze(source, options).status());
         assertTrue(diagnostics.stream().anyMatch(message -> message.contains("without redirection")));
         assertEquals("replacement", Files.readString(output));
     }
@@ -279,14 +300,14 @@ class AutoCompileInputResolverTest {
             assumeTrue(false, "当前环境无法创建符号链接：" + e.getMessage());
         }
         var options = AnalysisOptions.defaults().withClassOutputId("links").withCleanupClassOutput(true);
-        assertEquals(SUCCESS, new Analyzer().analyze(source, null, options).status());
+        assertEquals(SUCCESS, new Analyzer().analyze(source, options).status());
         assertFalse(Files.exists(output));
         assertEquals("keep", Files.readString(marker));
 
         // 输出目录本身被链接重定向时应拒绝清理，不能把链接目标当作输出目录。
         Files.createSymbolicLink(output, external);
         try {
-            assertEquals(FAILED, new Analyzer().analyze(source, null, options).status());
+            assertEquals(FAILED, new Analyzer().analyze(source, options).status());
             assertEquals("keep", Files.readString(marker));
         } finally {
             Files.delete(output);
@@ -301,7 +322,8 @@ class AutoCompileInputResolverTest {
                     () -> AnalysisOptions.defaults().withClassOutputId(id), id);
         }
         assertNull(AnalysisOptions.defaults().withClassOutputId("sample").withClassOutputId(null).classOutputId());
-        assertFalse(AnalysisOptions.defaults().cleanupClassOutput());
+        assertFalse(AnalyzerConfig.defaults().cleanupClassOutput());
+        assertNull(AnalysisOptions.defaults().cleanupClassOutput());
         assertFalse(AnalysisOptions.defaults().withCleanupClassOutput(true)
                 .withClassOutputId("sample").withCleanupClassOutput(false).cleanupClassOutput());
         assertFalse(Files.exists(defaultRoot()));
@@ -315,11 +337,11 @@ class AutoCompileInputResolverTest {
                 InputLocationOptions.defaults().withClassOutputDirectory(classes))) {
             assertEquals(classes, input.getClassOutputDirectory());
         }
-        assertEquals(SUCCESS, new Analyzer().analyze(classes, null,
+        assertEquals(SUCCESS, new Analyzer().analyze(classes,
                 AnalysisOptions.defaults().withClassOutputId("unused").withCleanupClassOutput(true)).status());
         assertFalse(Files.exists(defaultRoot()));
         Path existing = Files.writeString(Files.createDirectories(defaultRoot().resolve("unused")).resolve("keep.txt"), "keep");
-        assertEquals(SUCCESS, new Analyzer().analyze(classes, null,
+        assertEquals(SUCCESS, new Analyzer().analyze(classes,
                 AnalysisOptions.defaults().withClassOutputId("unused").withCleanupClassOutput(true)).status());
         assertEquals("keep", Files.readString(existing));
     }
@@ -329,7 +351,7 @@ class AutoCompileInputResolverTest {
         Path output = Files.createDirectories(defaultRoot().resolve("protected"));
         Path source = Files.writeString(output.resolve("Sample.java"), "public class Sample {}");
         var options = AnalysisOptions.defaults().withClassOutputId("protected").withCleanupClassOutput(true);
-        assertEquals(FAILED, new Analyzer().analyze(source, null, options).status());
+        assertEquals(FAILED, new Analyzer().analyze(source, options).status());
         assertEquals("public class Sample {}", Files.readString(source));
 
         Path externalSource = Files.writeString(temporary.resolve("External.java"), "public class External {}");
@@ -345,7 +367,7 @@ class AutoCompileInputResolverTest {
         Path source = Files.writeString(temporary.resolve("Sample.java"), "public class Sample {}");
         Files.createDirectories(defaultRoot().getParent());
         Files.writeString(defaultRoot(), "existing-file");
-        assertEquals(FAILED, new Analyzer().analyze(source, null).status());
+        assertEquals(FAILED, new Analyzer().analyze(source).status());
         assertEquals("existing-file", Files.readString(defaultRoot()));
         assertFalse(Files.exists(source.resolveSibling("Sample.class")));
     }

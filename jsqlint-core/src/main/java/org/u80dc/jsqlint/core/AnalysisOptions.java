@@ -8,24 +8,19 @@ import java.util.Objects;
 import java.util.function.BooleanSupplier;
 
 /**
- * 每次执行的配置。timeout 为零表示不限时；取消和超时均在工作边界协作检查。
- * 方法缓存有容量上限，追踪深度耗尽会报告 PARTIAL 并保留未知值。
+ * 单次调用的不可变选项。timeout 和 cleanupClassOutput 为 null 时继承 AnalyzerConfig，
+ * 显式的 Duration.ZERO 表示不限时，false 表示保留编译产物。
+ * 取消信号和监听器仅用于本次调用；取消和超时均在工作边界协作检查。
  * classOutputId 仅用于 Path 入口的源码编译，表示系统临时目录下 .jsqlint 中的单个目录名。
  * 为空时，Analyzer 为每次调用生成随机标识；复用指定标识时会先清空原输出目录。
- * cleanupClassOutput 控制分析结束后是否删除本次编译输出，默认保留。
  * @author u80dc
  */
-public record AnalysisOptions(Duration timeout, int maxTraceDepth, int methodCacheSize,
-                              BooleanSupplier cancelled, AnalysisListener listener,
-                              @Nullable String classOutputId, boolean cleanupClassOutput) {
+public record AnalysisOptions(@Nullable Duration timeout, BooleanSupplier cancelled, AnalysisListener listener,
+                              @Nullable String classOutputId, @Nullable Boolean cleanupClassOutput) {
     public AnalysisOptions {
-        Objects.requireNonNull(timeout, "timeout");
+        if (timeout != null) AnalyzerConfig.validateTimeout(timeout);
         Objects.requireNonNull(cancelled, "cancelled");
         Objects.requireNonNull(listener, "listener");
-        if (timeout.isNegative()) throw new IllegalArgumentException("timeout must not be negative");
-        timeout.toNanos(); // 在开始执行前校验纳秒换算，避免运行时才发现时间预算溢出。
-        if (maxTraceDepth < 1 || methodCacheSize < 1)
-            throw new IllegalArgumentException("Trace depth and cache size must be positive");
         if (classOutputId != null) {
             // 标识只能是单个目录名，不能通过绝对路径或父目录跳转改变输出根目录。
             if (classOutputId.isBlank() || classOutputId.equals(".") || classOutputId.equals("..")
@@ -37,29 +32,38 @@ public record AnalysisOptions(Duration timeout, int maxTraceDepth, int methodCac
         }
     }
 
-    /** 保留原有执行选项构造方式，未指定编译输出标识。 */
-    public AnalysisOptions(Duration timeout, int maxTraceDepth, int methodCacheSize,
-                           BooleanSupplier cancelled, AnalysisListener listener) {
-        this(timeout, maxTraceDepth, methodCacheSize, cancelled, listener, null, false);
+    /** 覆盖本次超时时间；传入 null 恢复继承实例默认值，零表示本次不限时。 */
+    public AnalysisOptions withTimeout(@Nullable Duration timeout) {
+        return new AnalysisOptions(timeout, cancelled, listener, classOutputId, cleanupClassOutput);
     }
 
-    /** 保留指定输出标识的构造方式，默认在分析结束后保留产物。 */
-    public AnalysisOptions(Duration timeout, int maxTraceDepth, int methodCacheSize,
-                           BooleanSupplier cancelled, AnalysisListener listener, @Nullable String classOutputId) {
-        this(timeout, maxTraceDepth, methodCacheSize, cancelled, listener, classOutputId, false);
+    public AnalysisOptions withCancelled(BooleanSupplier cancelled) {
+        return new AnalysisOptions(timeout, cancelled, listener, classOutputId, cleanupClassOutput);
+    }
+
+    public AnalysisOptions withListener(AnalysisListener listener) {
+        return new AnalysisOptions(timeout, cancelled, listener, classOutputId, cleanupClassOutput);
     }
 
     /** 指定本次编译输出标识；传入 null 恢复每次调用生成随机标识的行为。 */
     public AnalysisOptions withClassOutputId(@Nullable String id) {
-        return new AnalysisOptions(timeout, maxTraceDepth, methodCacheSize, cancelled, listener, id, cleanupClassOutput);
+        return new AnalysisOptions(timeout, cancelled, listener, id, cleanupClassOutput);
     }
 
-    /** 指定是否在分析结束后清理编译输出；失败、取消或超时也执行清理。 */
-    public AnalysisOptions withCleanupClassOutput(boolean cleanup) {
-        return new AnalysisOptions(timeout, maxTraceDepth, methodCacheSize, cancelled, listener, classOutputId, cleanup);
+    /** 覆盖本次结束清理策略；传入 null 恢复继承实例默认值，失败、取消或超时也按此策略清理。 */
+    public AnalysisOptions withCleanupClassOutput(@Nullable Boolean cleanup) {
+        return new AnalysisOptions(timeout, cancelled, listener, classOutputId, cleanup);
     }
 
+    /** 未指定覆盖项；实际的超时和清理策略在调用时从 AnalyzerConfig 获取。 */
     public static AnalysisOptions defaults() {
-        return new AnalysisOptions(Duration.ZERO, 32, 128, () -> false, AnalysisListener.NONE);
+        return new AnalysisOptions(null, () -> false, AnalysisListener.NONE, null, null);
+    }
+
+    /** 合并为本次调用独有的配置快照，保持 Analyzer 上的默认配置不变。 */
+    AnalyzerConfig resolveAgainst(AnalyzerConfig config) {
+        return new AnalyzerConfig(timeout == null ? config.timeout() : timeout,
+                config.maxTraceDepth(), config.methodCacheSize(),
+                cleanupClassOutput == null ? config.cleanupClassOutput() : cleanupClassOutput);
     }
 }
