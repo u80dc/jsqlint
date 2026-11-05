@@ -1,5 +1,7 @@
 package org.u80dc.jsqlint.commons.location;
 
+import org.u80dc.jsqlint.commons.compiler.MavenRepositoryOptions;
+
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Objects;
@@ -11,14 +13,16 @@ import java.util.Objects;
  * gradleInstallation 为空时使用目标项目的 Wrapper，或 Tooling API 的默认发行版。
  * classOutputDirectory 为可选的 class 输出目录；为空时，自动编译输入在系统临时目录下分配随机子目录。
  * 多模块项目会在该目录下隔离各模块产物。相对路径以调用进程的工作目录为基准。
+ * mavenRepositories 仅用于 Maven 的依赖与插件解析，默认使用官方中央仓库。
  *
  * @author u80dc
  */
 public record InputLocationOptions(InputMode inputMode, List<Path> classpath,
                                    List<String> buildArguments, Path gradleInstallation,
-                                   Path classOutputDirectory) {
+                                   Path classOutputDirectory, MavenRepositoryOptions mavenRepositories) {
     public InputLocationOptions {
         Objects.requireNonNull(inputMode, "inputMode");
+        Objects.requireNonNull(mavenRepositories, "mavenRepositories");
         classpath = classpath.stream().map(path -> path.toAbsolutePath().normalize()).toList();
         buildArguments = List.copyOf(buildArguments);
         if (gradleInstallation != null) {
@@ -35,9 +39,19 @@ public record InputLocationOptions(InputMode inputMode, List<Path> classpath,
         this(inputMode, classpath, buildArguments, gradleInstallation, null);
     }
 
+    /** 保留指定输出目录的构造方式，使用默认 Maven 仓库配置。 */
+    public InputLocationOptions(InputMode inputMode, List<Path> classpath,
+                                List<String> buildArguments, Path gradleInstallation, Path classOutputDirectory) {
+        this(inputMode, classpath, buildArguments, gradleInstallation, classOutputDirectory, MavenRepositoryOptions.defaults());
+    }
+
     /** 返回使用指定输出目录的新选项；传入 null 恢复默认输出方式。 */
     public InputLocationOptions withClassOutputDirectory(Path directory) {
-        return new InputLocationOptions(inputMode, classpath, buildArguments, gradleInstallation, directory);
+        return new InputLocationOptions(inputMode, classpath, buildArguments, gradleInstallation, directory, mavenRepositories);
+    }
+
+    public InputLocationOptions withMavenRepositories(MavenRepositoryOptions repositories) {
+        return new InputLocationOptions(inputMode, classpath, buildArguments, gradleInstallation, classOutputDirectory, repositories);
     }
 
     public static InputLocationOptions defaults() {

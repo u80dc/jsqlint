@@ -46,29 +46,39 @@ public final class MavenProjectCompiler {
         if (!isProject(root)) {
             throw new AnalysisInputException("Maven pom.xml does not exist: " + root);
         }
-        var arguments = new ArrayList<>(List.of("-B", "-ntp"));
-        arguments.addAll(options.buildArguments());
-        arguments.addAll(List.of("-f", root.resolve("pom.xml").toString(), "-DskipTests=true", "compile"));
+        validateRepositoryArguments(options.buildArguments());
         var cli = new CapturingMavenCli(options.classOutputDirectory());
         var output = new ByteArrayOutputStream();
         int status;
-        synchronized (CLI_LOCK) {
-            String property = MavenCli.MULTIMODULE_PROJECT_DIRECTORY;
-            String previous = System.getProperty(property);
-            ClassLoader previousLoader = Thread.currentThread().getContextClassLoader();
-            try (var stream = new PrintStream(output, true, StandardCharsets.UTF_8)) {
-                System.setProperty(property, root.toString());
-                status = cli.doMain(arguments.toArray(String[]::new), root.toString(), stream, stream);
-            } finally {
-                if (previous == null) System.clearProperty(property);
-                else System.setProperty(property, previous);
-                Thread.currentThread().setContextClassLoader(previousLoader);
+        try (var settings = MavenBuildSettings.create(options.mavenRepositories())) {
+            var arguments = new ArrayList<>(List.of("-B", "-ntp"));
+            arguments.addAll(options.buildArguments());
+            arguments.addAll(settings.arguments());
+            arguments.addAll(List.of("-f", root.resolve("pom.xml").toString(), "-DskipTests=true", "compile"));
+            synchronized (CLI_LOCK) {
+                String property = MavenCli.MULTIMODULE_PROJECT_DIRECTORY;
+                String previous = System.getProperty(property);
+                ClassLoader previousLoader = Thread.currentThread().getContextClassLoader();
+                try (var stream = new PrintStream(output, true, StandardCharsets.UTF_8)) {
+                    System.setProperty(property, root.toString());
+                    status = cli.doMain(arguments.toArray(String[]::new), root.toString(), stream, stream);
+                } finally {
+                    if (previous == null) System.clearProperty(property);
+                    else System.setProperty(property, previous);
+                    Thread.currentThread().setContextClassLoader(previousLoader);
+                }
             }
         }
         if (status != 0 || cli.result == null || cli.result.hasExceptions()) {
             String details = cli.result == null ? "" : cli.result.getExceptions().toString();
-            throw new AnalysisInputException("Maven compilation failed for " + root + " (exit " + status + ")\n"
-                    + details + "\n" + output.toString(StandardCharsets.UTF_8));
+            String message = "Maven compilation failed for " + root + " (exit " + status + ")\n"
+                    + details + "\n" + output.toString(StandardCharsets.UTF_8);
+            for (var repository : options.mavenRepositories().remoteRepositories()) {
+                if (repository.password() != null && !repository.password().isEmpty()) {
+                    message = message.replace(repository.password(), "***");
+                }
+            }
+            throw new AnalysisInputException(message);
         }
         var projects = cli.result.getTopologicallySortedProjects();
         if (projects == null || projects.isEmpty()) {
@@ -96,6 +106,18 @@ public final class MavenProjectCompiler {
             }
         }
         return CompiledProject.fromOutputs(root, InputMode.MAVEN_PROJECT, outputs, dependencies);
+    }
+
+    private static void validateRepositoryArguments(List<String> arguments) {
+        for (String argument : arguments) {
+            // 仓库配置只有一个入口，避免原始参数与结构化配置互相覆盖。
+            if (argument.startsWith("-s") || argument.startsWith("-gs")
+                    || argument.equals("--settings") || argument.startsWith("--settings=")
+                    || argument.equals("--global-settings") || argument.startsWith("--global-settings=")
+                    || argument.matches("(?:-D|--define=)?maven\\.repo\\.local(?:=.*)?")) {
+                throw new IllegalArgumentException("Configure Maven repositories through InputLocationOptions.withMavenRepositories(), not buildArguments");
+            }
+        }
     }
 
     private static final class CapturingMavenCli extends MavenCli {
@@ -153,7 +175,7 @@ public final class MavenProjectCompiler {
                 });
                 dispatcher.setEventSpies(spies);
             } catch (ComponentLookupException e) {
-                throw new AnalysisInputException("Cannot collect Maven reactor outputs", e);
+                throw new AnalysisInputException("Cannot c ollect Maven reactor outputs", e);
             }
         }
     }

@@ -30,9 +30,7 @@ import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
-import static org.u80dc.jsqlint.core.AnalysisResult.Status.CANCELLED;
-import static org.u80dc.jsqlint.core.AnalysisResult.Status.FAILED;
-import static org.u80dc.jsqlint.core.AnalysisResult.Status.SUCCESS;
+import static org.u80dc.jsqlint.core.AnalysisResult.Status.*;
 
 /**
  * 验证 Analyzer 的输出标识、目录清理及完整路径传递。

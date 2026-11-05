@@ -81,6 +81,63 @@ Maven/Gradle 构建参数及显式 Gradle 安装目录。`classpath` **仅用于
 与原 OTF 方式保持一致，不提供自定义 `javacOptions`。
 需要额外编译依赖或编译选项时，应使用 Maven/Gradle 项目，或传入已编译的字节码。
 
+### Maven 远程仓库与本地仓库
+
+默认使用官方 Maven Central（`https://repo.maven.apache.org/maven2`），启用 release、禁用 snapshot；
+本地仓库默认为 `${user.home}/.m2/repository`。Maven 专用配置位于 `compiler` 包，
+通过 `InputLocationOptions.withMavenRepositories(...)` 传给编译器：
+
+```java
+import java.net.URI;
+import java.nio.file.Path;
+import java.util.List;
+import org.u80dc.jsqlint.commons.compiler.MavenRemoteRepository;
+import org.u80dc.jsqlint.commons.compiler.MavenRepositoryOptions;
+import org.u80dc.jsqlint.commons.location.InputLocationOptions;
+import org.u80dc.jsqlint.commons.location.AutoCompileAnalysisInputLocation;
+
+var privateRepository = new MavenRemoteRepository(
+        "company", URI.create("https://repo.example.com/repository/maven-public/"))
+        .withCredentials(System.getenv("MAVEN_REPO_USER"), System.getenv("MAVEN_REPO_PASSWORD"))
+        .withSnapshotsEnabled(true);
+var repositories = MavenRepositoryOptions.defaults()
+        .withRemoteRepositories(List.of(privateRepository))
+        .withLocalRepository(Path.of("D:/maven/repository"));
+var options = InputLocationOptions.defaults().withMavenRepositories(repositories);
+
+try (var input = new AutoCompileAnalysisInputLocation(Path.of("D:/projects/demo"), options)) {
+    var view = input.createView();
+}
+```
+
+- 私有仓库按传入顺序添加，同时用于父 POM、项目依赖和构建插件解析；保留 Central 作为后备，
+  目标项目 POM 中声明的仓库仍参与 Maven 的标准解析流程。
+- 如需全部通过公司私服代理，使用 `privateRepository.withMirrorOf("*")`；仅代理中央仓库可用
+  `withMirrorOf("central")`。支持 Maven 的 mirrorOf 表达式，此时被匹配仓库通过私服访问。
+- 仓库 ID 必须唯一，`central` 保留给官方仓库，`local` 为 Maven 保留 ID。
+  账号密码按仓库 ID 关联，password 也可以是私服访问令牌；匿名仓库省略 `withCredentials`。
+  支持 HTTP(S) 和 file URL，认证信息须通过独立字段提供。
+- `withLocalRepository(null)` 恢复默认本地仓库。相对路径按调用进程工作目录解析，目录不存在时创建；
+  本地仓库作为持久依赖缓存保留，与 class 输出目录分别配置，不随编译输出清理。
+- 每次构建生成独立的临时 settings 文件，成功、失败时均删除；不会修改项目 POM 或宿主 settings。
+  默认不读取用户或 Maven 安装目录的 settings.xml，以保证仓库选择不受宿主镜像配置影响。
+  仓库认证信息暂存于本次 settings 文件中，配置对象的 toString 隐藏认证信息。
+- 仓库配置统一通过上述选项传入，buildArguments 中的 `-s`、`-gs`、对应长参数以及
+  `-Dmaven.repo.local` 会报错；其他构建参数（例如 `-o`、`-Pprofile`）仍可使用。
+  Maven 专用仓库选项不影响 Gradle 或普通 Java 源码编译。
+
+使用 Analyzer 时，将配置传给编译解析器，SQL 模块按需显式注册：
+
+```java
+var resolver = new AutoCompileInputResolver(options);
+var analyzer = new Analyzer(AnalyzerConfig.defaults(),
+        List.of(new JdbcAnalysisModule(), new MybatisAnalysisModule()), List.of(resolver));
+var result = analyzer.analyze(Path.of("D:/projects/demo"));
+```
+
+Analyzer 传递本次 class 输出路径时会保留解析器上的 Maven 仓库配置。
+原有 InputLocationOptions 四参数、五参数构造器继续可用，使用默认 Maven 仓库配置。
+
 ### 调用时指定 class 输出目录
 
 通过 Analyzer 的 Path 入口指定输出标识：
