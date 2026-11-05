@@ -1,5 +1,7 @@
 package org.u80dc.jsqlint.core.spi;
 
+import org.jspecify.annotations.Nullable;
+
 import java.nio.file.Path;
 
 /**
@@ -18,4 +20,13 @@ public interface AnalysisInputResolver {
      * 返回前失败时，由实现清理已经创建的输入。
      */
     PreparedInput resolve(Path source, Runnable checkpoint) throws Exception;
+
+    /**
+     * 传递调用方为本次分析指定的编译输出目录，null 表示未指定。
+     * 编译解析器应重写此方法；默认实现兼容已有解析器，不编译的字节码入口无需处理输出目录。
+     */
+    default PreparedInput resolve(Path source, @Nullable Path classOutputDirectory,
+                                  Runnable checkpoint) throws Exception {
+        return resolve(source, checkpoint);
+    }
 }

@@ -4,6 +4,11 @@
 `AutoCompileInputResolver`，在 Path 入口按需编译源码及 Maven/Gradle 项目。
 编译产物交回 core 分析，core 无需反向依赖 commons。配置构建参数时可显式注册
 `new AutoCompileInputResolver(inputLocationOptions)`。
+通过 `AnalysisOptions.withClassOutputId(...)` 为本次 Analyzer 分析指定输出标识。
+Analyzer 生成 `${java.io.tmpdir}/.jsqlint/<指定标识>/`，未指定时生成
+`${java.io.tmpdir}/.jsqlint/<随机标识>/`，并通过解析器将完整路径传给 `AutoCompileAnalysisInputLocation`。
+直接构造自动编译输入时，仍可传入完整路径，未传入则使用 `${java.io.tmpdir}/<随机标识>/`。
+目录在关闭输入后保留，可由调用方或系统统一清理。
 统一入口、输入所有权及取消机制见 [分析器说明](../jsqlint-core/ANALYSIS.md)。
 
 公共基础模块，包路径为 `org.u80dc.jsqlint.commons`。`location` 包提供统一输入入口
@@ -12,7 +17,7 @@
 包职责划分：
 
 - `compiler`：Maven、Gradle、普通 Java 源码的编译实现，以及构建方式识别、源码收集、
-  编译分派和产物与依赖校验。普通源码的 OTF 调用和指定输出目录的 JDK 编译均由此包负责。
+  编译分派和产物与依赖校验。普通源码使用 JDK 编译器写入统一输出目录，另提供 OTF 便捷入口。
 - `location`：统一输入适配、输入选项与参数校验，将编译产物接入 SootUp。
 
 ## 输入识别与处理
@@ -20,7 +25,7 @@
 | 输入类型 | 识别条件 | 处理方式 |
 | --- | --- | --- |
 | 已编译字节码 | JAR 文件，或包含 `.class` 的 classpath 根目录 | `JavaClassPathAnalysisInputLocation`，不执行编译 |
-| 普通 Java 源码 | 单个 `.java`、多个 `.java` 或源码目录 | 默认由 `OTFCompileAnalysisInputLocation` 编译；指定 class 输出目录时使用 JDK 编译器 |
+| 普通 Java 源码 | 单个 `.java`、多个 `.java` 或源码目录 | JDK 编译器输出到指定目录或随机临时目录，再交给 SootUp 字节码前端 |
 | Maven | `pom.xml` | Maven Embedder 执行 `compile`，通过有效 reactor 模型读取各模块输出目录及依赖 |
 | Gradle | `build.gradle(.kts)` 或 `settings.gradle(.kts)` | Tooling API 执行 main source set 的 classes 任务，通过临时 init script 收集输出目录和 classpath |
 
@@ -35,7 +40,7 @@
 同时存在 Maven、Gradle 标志时会报错，可通过 `InputLocationOptions.inputMode()` 明确选择。
 `InputMode` 表示调用方选择的处理方式，可选 `AUTO`、`JAVA_SOURCE`、`MAVEN_PROJECT`、`GRADLE_PROJECT`；
 其中 `JAVA_SOURCE` 强制按普通 Java 源码处理。输入不合法时抛出 `IllegalArgumentException`；
-输入扫描、构建或 OTF 编译失败时抛出 `AnalysisInputException`，保留诊断信息，不回退到已有字节码。
+输入扫描、构建或源码编译失败时抛出 `AnalysisInputException`，保留诊断信息，不回退到已有字节码。
 
 ## 使用
 
@@ -66,14 +71,26 @@ try (var input = new AutoCompileAnalysisInputLocation(
 JDK 的运行时类。完整构造器可自定义目标 `SourceType` 与 body interceptors。
 `getInputType()` 返回实际识别的 `InputType`：`BYTECODE`、`JAVA_SOURCE`、`MAVEN_PROJECT` 或 `GRADLE_PROJECT`，
 不包含 `AUTO`。`getDependencies()` 返回接入的依赖路径。
+`getClassOutputDirectory()` 返回实际使用的编译输出根目录；已有字节码输入返回 `null`。
 
 `InputLocationOptions(inputMode, classpath, buildArguments, gradleInstallation)` 可设置额外分析依赖、
 Maven/Gradle 构建参数及显式 Gradle 安装目录。`classpath` **仅用于分析**；Maven/Gradle 的编译依赖
-由目标项目配置决定。SootUp 3.0.1 的 OTF 没有编译 classpath 或 javac 参数配置接口，沿用当前 JVM
-的编译 classpath 和默认编译参数，因此不再提供自定义 `javacOptions`。
+由目标项目配置决定。普通源码沿用当前 JVM 的编译 classpath 和默认编译参数，
+与原 OTF 方式保持一致，不提供自定义 `javacOptions`。
 需要额外编译依赖或编译选项时，应使用 Maven/Gradle 项目，或传入已编译的字节码。
 
 ### 调用时指定 class 输出目录
+
+通过 Analyzer 的 Path 入口指定输出标识：
+
+```java
+var options = AnalysisOptions.defaults()
+        .withClassOutputId("my-project");
+var result = new Analyzer().analyze(Path.of("/path/to/project"), null, options);
+// 编译输出路径：${java.io.tmpdir}/.jsqlint/my-project/
+```
+
+直接使用自动编译输入时，通过其输入选项传入：
 
 ```java
 var options = InputLocationOptions.defaults()
@@ -85,15 +102,18 @@ try (var input = new AutoCompileAnalysisInputLocation(Path.of("/path/to/project"
 
 也可以使用五参数构造器
 `InputLocationOptions(inputMode, classpath, buildArguments, gradleInstallation, classOutputDirectory)`。
-原四参数构造器继续可用；输出目录为 `null` 时保留原有行为。
-通过 `new AutoCompileInputResolver(options)` 注册解析器时，Analyzer 的 Path 入口也会使用该目录。
+原四参数构造器继续可用。Analyzer 的输出标识必须是单个非空目录名，不能是路径、`.` 或 `..`；
+同一标识复用同一路径，未指定标识时每次调用生成随机标识。
+Analyzer 始终传入自己生成的完整路径，覆盖本次调用中解析器的输出配置，但不修改解析器实例。
+直接使用解析器或自动编译输入时，`InputLocationOptions.classOutputDirectory` 仍接受完整路径。
 
 该路径是**编译输出目录**，不是单个 `.class` 文件路径，也不是额外的分析 classpath。
 相对路径以调用进程的工作目录为基准，目录不存在时自动创建。
 输出目录不能是已有文件、输入路径本身或输入路径的祖先目录；允许项目内的输出子目录。
-字节码目录和 JAR 不执行编译，若同时指定此选项会报错。
+直接构造 `AutoCompileAnalysisInputLocation` 时，字节码目录和 JAR 不执行编译，同时指定输出选项会报错。
+Analyzer 的字节码入口由 core 解析器处理，会忽略编译输出选项。
 
-- 普通源码：包路径直接位于指定目录下。OTF 3.0.1 未提供输出目录接口，因此此时使用
+- 普通源码：包路径直接位于输出目录下。OTF 3.0.1 未提供输出目录接口，因此使用
   JDK `JavaCompiler` 设置 `CLASS_OUTPUT`，编译 classpath 和默认参数与 OTF 保持一致。
 - Maven：只有一个参与编译的非 `pom` 模块时直接输出到指定目录；多个模块分别输出到
   `group-<groupId>/module-<artifactId>` 子目录，标识使用 URL 编码。
@@ -112,7 +132,6 @@ Maven、Gradle 后端支持自定义输出目录，分析范围为主代码。
 Gradle 后端要求项目提供标准 main source set，Android 等不同构建模型需要额外适配。
 Maven 调用会串行执行，并恢复宿主的 Maven 多模块目录属性、上下文类加载器与标准流。
 `close()` 转发 SootUp 输入的关闭操作，不删除调用方或项目的字节码产物。
-SootUp 3.0.1 的 OTF 未暴露临时输出目录，也未实现清理操作，其临时产物目前会保留；
 Gradle 构建过程中由本模块创建的临时脚本和元数据目录会自动删除。
 
 ## 构建调用依赖

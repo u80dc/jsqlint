@@ -14,7 +14,8 @@ import java.nio.file.Path;
 import java.util.List;
 
 /**
- * 普通 Java 源码编译：默认使用 OTF，调用方指定输出目录时使用 JDK 编译器。
+ * 普通 Java 源码编译：提供指定目录的 JDK 编译及 OTF 便捷入口。
+ * 自动编译输入使用 JDK 编译方式，以统一控制临时目录和调用方指定的输出目录。
  * 编译 classpath 和参数与 OTF 默认行为一致，额外分析依赖不参与编译。
  *
  * @author u80dc

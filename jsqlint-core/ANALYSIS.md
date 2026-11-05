@@ -15,6 +15,11 @@ var analyzer = new Analyzer();
 AnalysisResult result = analyzer.analyze(Path.of("target/classes"), null);
 // 引入 commons 后，同一入口可以接收 .java 文件、源码目录、Maven/Gradle 项目：
 AnalysisResult projectResult = analyzer.analyze(Path.of("project"), Path.of("libraries"));
+
+// 指定本次编译的输出标识，实际路径为 ${java.io.tmpdir}/.jsqlint/my-project/。
+var options = org.u80dc.jsqlint.core.AnalysisOptions.defaults()
+        .withClassOutputId("my-project");
+AnalysisResult compiledResult = analyzer.analyze(Path.of("project"), null, options);
 ```
 
 - Path 入口自动加入当前 JDK 运行时；第二个参数可以为 null、依赖 JAR、类目录或包含依赖 JAR 的目录。
@@ -22,6 +27,11 @@ AnalysisResult projectResult = analyzer.analyze(Path.of("project"), Path.of("lib
 - core 内置字节码目录、JAR、单个 class 文件支持。单个 class 从字节码读取实际类名。
 - commons 提供 `AnalysisInputResolver`，使用已有的 `AutoCompileAnalysisInputLocation`。
   高优先级解析器优先，同级冲突明确报错；编译失败不回退到陈旧字节码。
+  可通过 `AnalysisOptions.withClassOutputId(...)` 指定输出标识，Analyzer 生成
+  `${java.io.tmpdir}/.jsqlint/<指定标识>/`；未指定时生成 `${java.io.tmpdir}/.jsqlint/<随机标识>/`。
+  Analyzer 始终将完整路径传给解析器，再传入 `AutoCompileAnalysisInputLocation`，不回退到解析器配置的路径。
+  标识必须是单个非空目录名；同一标识复用同一路径，关闭输入后产物仍保留。
+  已编译字节码无需输出目录；列表和 AnalysisRequest 入口直接使用调用方提供的输入，不再次编译。
 - Path 入口关闭自身创建的输入，包括取消和失败的情况。
 - `analyze(List<? extends AnalysisInputLocation>)` 保留调用方输入顺序和 SourceType，
   不自动添加运行时，不关闭调用方输入，也不猜测其资源路径。

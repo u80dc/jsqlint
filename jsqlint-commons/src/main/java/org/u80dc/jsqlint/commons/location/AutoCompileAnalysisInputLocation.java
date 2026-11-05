@@ -2,6 +2,7 @@ package org.u80dc.jsqlint.commons.location;
 
 import lombok.Getter;
 import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 import org.u80dc.jsqlint.commons.compiler.CompiledProject;
 import org.u80dc.jsqlint.commons.compiler.JavaSourceCompiler;
 import org.u80dc.jsqlint.commons.compiler.JavaSourceFiles;
@@ -35,11 +36,11 @@ import java.util.stream.Stream;
  * <p>目标代码默认为 Application，构建工具解析的依赖及额外 classpath 为 Library。
  * {@code new JavaView(input)} 即可解析目标代码及这些依赖；{@link #createView()} 还会加入当前 JDK。
  *
- * <p>普通源码默认委托给 OTF，沿用其当前 JVM 编译 classpath 和默认编译参数。
- * 指定 {@link InputLocationOptions#classOutputDirectory()} 时使用 JDK 编译器写入该目录；
- * Maven/Gradle 则调整本次构建的输出配置，多模块产物分目录保存。
- * SootUp 3.0.1 的 OTF 未提供临时输出目录的清理接口，{@link #close()} 仅转发上游关闭操作，
- * 不会删除 OTF 临时产物、调用方字节码或项目构建产物。
+ * <p>编译输出目录由 {@link InputLocationOptions#classOutputDirectory()} 指定；未指定时，
+ * 在 {@code java.io.tmpdir} 下为本次编译分配随机子目录。
+ * 普通源码使用 JDK 编译器写入该目录，沿用 OTF 的当前 JVM 编译 classpath 和默认参数；
+ * Maven/Gradle 调整本次构建的输出配置，多模块产物分目录保存。
+ * {@link #close()} 仅转发上游关闭操作，不删除临时产物、调用方字节码或项目构建产物。
  *
  * @author u80dc
  */
@@ -56,6 +57,10 @@ public final class AutoCompileAnalysisInputLocation implements AnalysisInputLoca
      */
     @Getter
     private final List<Path> dependencies;
+
+    /** 实际使用的编译输出根目录；已有字节码输入不执行编译，返回 null。 */
+    @Getter
+    private final @Nullable Path classOutputDirectory;
 
     private final List<AnalysisInputLocation> locations;
 
@@ -104,6 +109,10 @@ public final class AutoCompileAnalysisInputLocation implements AnalysisInputLoca
                 throw new IllegalArgumentException("Gradle installation does not apply to a Maven project");
             }
             Path output = options.classOutputDirectory();
+            if (inputType != InputType.BYTECODE && output == null) {
+                output = createTemporaryOutputDirectory();
+            }
+            classOutputDirectory = output;
             if (output != null) {
                 if (inputType == InputType.BYTECODE) {
                     throw new IllegalArgumentException("Class output directory applies only to source compilation");
@@ -114,24 +123,29 @@ public final class AutoCompileAnalysisInputLocation implements AnalysisInputLoca
             List<Path> paths = resolved.stream().flatMap(input -> input.paths().stream()).distinct().toList();
             List<Path> libraries = options.classpath();
             if (isProject(inputType)) {
-                CompiledProject compiled = ProjectCompiler.compile(this.inputs.getFirst(), options);
+                CompiledProject compiled = ProjectCompiler.compile(this.inputs.getFirst(), options.withClassOutputDirectory(output));
                 paths = compiled.classDirectories();
                 libraries = compiled.dependencies();
-            } else if (inputType == InputType.JAVA_SOURCE && output != null) {
+            } else if (inputType == InputType.JAVA_SOURCE) {
                 JavaSourceCompiler.compile(paths, output);
                 paths = List.of(output);
             }
             List<Path> applicationPaths = paths;
             dependencies = libraries.stream().filter(path -> !applicationPaths.contains(path)).distinct().toList();
-            // Validate library locations before OTF creates its upstream-owned temporary outputs.
             AnalysisInputLocation library = dependencies.isEmpty() ? null
                     : bytecode(dependencies, SourceType.Library, interceptors);
-            AnalysisInputLocation application = inputType == InputType.JAVA_SOURCE && output == null
-                    ? JavaSourceCompiler.compileOnTheFly(paths, sourceType, interceptors) : bytecode(paths, sourceType, interceptors);
+            AnalysisInputLocation application = bytecode(paths, sourceType, interceptors);
             locations = library == null ? List.of(application) : List.of(application, library);
         } catch (IOException e) {
             throw new AnalysisInputException("Cannot inspect input paths: " + this.inputs, e);
         }
+    }
+
+    private static Path createTemporaryOutputDirectory() throws IOException {
+        Path root = Path.of(System.getProperty("java.io.tmpdir")).toAbsolutePath().normalize();
+        Files.createDirectories(root);
+        // 显式使用 java.io.tmpdir，且不加固定目录层；每次构造独占一个随机目录。
+        return Files.createTempDirectory(root, null);
     }
 
     private static void prepareOutputDirectory(Path output, List<Path> inputs) throws IOException {

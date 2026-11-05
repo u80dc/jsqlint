@@ -33,13 +33,16 @@ class AutoCompileAnalysisInputLocationTest {
     @TempDir Path temporary;
 
     @Test
-    void sourceDirectoryCompilesMainSourcesViaOtf() throws Exception {
+    void sourceDirectoryCompilesMainSourcesIntoTemporaryOutput() throws Exception {
         Path root = temporary.resolve("Java 项目 with spaces");
         write(root, "src/main/java/build/Example.java", "package build; public class Example { public int value() { return 7; } }");
         write(root, "src/test/java/Invalid.java", "not Java");
         write(root, "target/Ignore.java", "not Java");
         try (var input = new AutoCompileAnalysisInputLocation(root)) {
             assertEquals(JAVA_SOURCE, input.getInputType());
+            assertEquals(Path.of(System.getProperty("java.io.tmpdir")).toAbsolutePath().normalize(),
+                    input.getClassOutputDirectory().getParent());
+            assertTrue(Files.isRegularFile(input.getClassOutputDirectory().resolve("build/Example.class")));
             assertTrue(body(input, "build.Example").contains("return 7"));
             var view = input.createView();
             assertTrue(view.getClass(view.getIdentifierFactory().getClassType("java.lang.Object")).orElseThrow().isLibraryClass());
@@ -106,6 +109,7 @@ class AutoCompileAnalysisInputLocationTest {
         }
         try (var input = new AutoCompileAnalysisInputLocation(output)) {
             assertEquals(BYTECODE, input.getInputType());
+            assertNull(input.getClassOutputDirectory());
             assertTrue(body(input, "pkg.Example$Nested").contains("return 37"));
         }
         assertEquals("caller-owned", Files.readString(output.resolve("keep.txt")));
@@ -170,7 +174,7 @@ class AutoCompileAnalysisInputLocationTest {
     }
 
     @Test
-    void otfClasspathIsForAnalysisAndDoesNotChangeCompilation() throws Exception {
+    void sourceClasspathIsForAnalysisAndDoesNotChangeCompilation() throws Exception {
         Path library = fixture("dep", "Helper.java", "package dep; public class Helper {}");
         Path source = temporary.resolve("source");
         write(source, "Example.java", "public class Example { public int value() { return 29; } }");
@@ -181,7 +185,7 @@ class AutoCompileAnalysisInputLocationTest {
         }
         write(source, "Example.java", "public class Example { dep.Helper field; }");
         assertTrue(assertThrows(AnalysisInputException.class,
-                () -> new AutoCompileAnalysisInputLocation(source, options)).getMessage().contains("OTF compilation failed"));
+                () -> new AutoCompileAnalysisInputLocation(source, options)).getMessage().contains("Java compilation failed"));
     }
 
     @Test
@@ -228,7 +232,7 @@ class AutoCompileAnalysisInputLocationTest {
 
     @Test
     @Tag("integration")
-    void mavenReactorRespectsCustomOutputsDependenciesAndRestoresGlobalState() throws Exception {
+    void mavenReactorUsesTemporaryOutputsAndRestoresGlobalState() throws Exception {
         Path root = temporary.resolve("maven project");
         write(root, "pom.xml", mavenRoot("<modules><module>lib</module><module>app</module></modules>"));
         write(root, "lib/pom.xml", mavenChild("lib", ""));
@@ -236,17 +240,21 @@ class AutoCompileAnalysisInputLocationTest {
         write(root, "lib/src/main/java/dep/Helper.java", "package dep; public class Helper { public static int value() { return 3; } }");
         write(root, "app/src/main/java/Example.java", "public class Example { public int value() { return dep.Helper.value(); } }");
         String previous = System.getProperty(MavenCli.MULTIMODULE_PROJECT_DIRECTORY);
+        Path output;
         try (var compiled = new AutoCompileAnalysisInputLocation(root, mavenOptions())) {
+            output = compiled.getClassOutputDirectory();
+            assertEquals(Path.of(System.getProperty("java.io.tmpdir")).toAbsolutePath().normalize(), output.getParent());
             assertEquals(MAVEN_PROJECT, compiled.getInputType());
             assertEquals(2, new JavaView(compiled).getClasses().count());
-            assertTrue(Files.isRegularFile(root.resolve("lib/custom/classes/dep/Helper.class")));
-            assertTrue(Files.isRegularFile(root.resolve("app/custom/classes/Example.class")));
+            assertTrue(Files.isRegularFile(output.resolve("group-sample/module-lib/dep/Helper.class")));
+            assertTrue(Files.isRegularFile(output.resolve("group-sample/module-app/Example.class")));
+            assertFalse(Files.exists(root.resolve("app/custom/classes/Example.class")));
             assertTrue(body(compiled, "Example").contains("dep.Helper"));
             assertTrue(body(compiled, "dep.Helper").contains("return 3"));
             assertTrue(compiled.getDependencies().isEmpty());
         }
         assertEquals(previous, System.getProperty(MavenCli.MULTIMODULE_PROJECT_DIRECTORY));
-        assertTrue(Files.isRegularFile(root.resolve("app/custom/classes/Example.class")));
+        assertTrue(Files.isRegularFile(output.resolve("group-sample/module-app/Example.class")));
         write(root, "app/src/main/java/Example.java", "invalid Java");
         assertThrows(AnalysisInputException.class, () -> new AutoCompileAnalysisInputLocation(root, mavenOptions()));
         assertEquals(previous, System.getProperty(MavenCli.MULTIMODULE_PROJECT_DIRECTORY));
@@ -340,10 +348,13 @@ class AutoCompileAnalysisInputLocationTest {
         write(root, "lib/sources/dep/Helper.java", "package dep; public class Helper { public static int value() { return 5; } }");
         write(root, "app/sources/Example.java", "public class Example { public int value() { return dep.Helper.value(); } }");
         try (var compiled = new AutoCompileAnalysisInputLocation(root, gradleOptions())) {
+            Path output = compiled.getClassOutputDirectory();
+            assertEquals(Path.of(System.getProperty("java.io.tmpdir")).toAbsolutePath().normalize(), output.getParent());
             assertEquals(GRADLE_PROJECT, compiled.getInputType());
             assertEquals(2, new JavaView(compiled).getClasses().count());
-            assertTrue(Files.isRegularFile(root.resolve("lib/custom-build/classes/java/main/dep/Helper.class")));
-            assertTrue(Files.isRegularFile(root.resolve("app/custom-build/classes/java/main/Example.class")));
+            assertTrue(Files.isRegularFile(output.resolve("project-%3Alib/dep/Helper.class")));
+            assertTrue(Files.isRegularFile(output.resolve("project-%3Aapp/Example.class")));
+            assertFalse(Files.exists(root.resolve("app/custom-build/classes/java/main/Example.class")));
             assertTrue(body(compiled, "Example").contains("dep.Helper"));
             assertTrue(body(compiled, "dep.Helper").contains("return 5"));
             assertTrue(compiled.getDependencies().isEmpty());

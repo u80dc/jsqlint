@@ -84,7 +84,7 @@ public final class Analyzer {
         return analyze(source, dependencies, AnalysisOptions.defaults());
     }
 
-    /** 带进度、取消和时间预算的路径入口；本入口负责关闭解析器转交的输入。 */
+    /** 带进度、取消和时间预算的路径入口；同时传递本次编译输出目录，并负责关闭解析器转交的输入。 */
     public @NonNull AnalysisResult analyze(Path source, @Nullable Path dependencies, AnalysisOptions options) {
         Objects.requireNonNull(source, "source");
         Objects.requireNonNull(options, "options");
@@ -111,7 +111,11 @@ public final class Analyzer {
             }
             if (selected == null) throw new IllegalArgumentException(
                     "No input resolver supports " + input + "; add jsqlint-commons for source/project compilation");
-            PreparedInput prepared = selected.resolve(input, session::checkpoint);
+            // Analyzer 统一决定输出路径，解析器只负责将完整路径传递给编译输入。
+            String outputId = options.classOutputId() == null ? UUID.randomUUID().toString() : options.classOutputId();
+            Path output = Path.of(System.getProperty("java.io.tmpdir"), ".jsqlint", outputId)
+                    .toAbsolutePath().normalize();
+            PreparedInput prepared = selected.resolve(input, output, session::checkpoint);
             // 先接管输入再检查取消，确保编译期间收到取消信号时也能释放新创建的输入。
             owned.addAll(prepared.locations());
             session.checkpoint();
