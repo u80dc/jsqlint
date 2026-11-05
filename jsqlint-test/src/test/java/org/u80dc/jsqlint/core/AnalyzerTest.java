@@ -304,6 +304,53 @@ class AnalyzerTest {
     }
 
     @Test
+    void inputConfigurationReachesResolverAfterPerCallOverridesAndStaysInstanceScoped() throws Exception {
+        record InputOptions(String name) implements AnalysisInputOptions {}
+        var first = new InputOptions("first");
+        var second = new InputOptions("second");
+        List<AnalysisInputOptions> received = new ArrayList<>();
+        List<Path> outputs = new ArrayList<>();
+        var resolver = new AnalysisInputResolver() {
+            public boolean supports(Path source) { return true; }
+            public boolean requiresCompilation(Path source) { return true; }
+            public PreparedInput resolve(Path source, Runnable checkpoint) { throw new AssertionError("Options were not forwarded"); }
+            public PreparedInput resolve(Path source, Path output, AnalysisInputOptions inputOptions, Runnable checkpoint) {
+                received.add(inputOptions);
+                outputs.add(output);
+                assertTrue(Files.isDirectory(output));
+                return new PreparedInput(List.of(new TrackingLocation(null)), List.of());
+            }
+        };
+        Path source = Files.writeString(temporary.resolve("fixture.input"), "input");
+        var config = AnalyzerConfig.defaults().withInputOptions(first)
+                .withTimeout(Duration.ofNanos(1)).withMaxTraceDepth(8).withMethodCacheSize(4);
+        var analyzer = new Analyzer(config, List.of(), List.of(resolver));
+        var options = AnalysisOptions.defaults().withTimeout(Duration.ZERO).withCleanupClassOutput(true);
+        assertEquals(SUCCESS, analyzer.analyze(source, options).status());
+        assertEquals(SUCCESS, new Analyzer(config.withInputOptions(second), List.of(), List.of(resolver))
+                .analyze(source, options).status());
+        assertEquals(SUCCESS, analyzer.analyze(source, options).status());
+        assertEquals(List.of(first, second, first), received);
+        assertEquals(3, new HashSet<>(outputs).size());
+        assertTrue(outputs.stream().noneMatch(Files::exists));
+    }
+
+    @Test
+    void bytecodeIgnoresPreparationOptionsButUnawareCompilerRejectsThem() throws Exception {
+        AnalysisInputOptions inputOptions = new AnalysisInputOptions() {};
+        Path classes = compile("Sample", "public class Sample {}");
+        var analyzer = new Analyzer(AnalyzerConfig.defaults().withInputOptions(inputOptions), List.of(), List.of());
+        assertEquals(SUCCESS, analyzer.analyze(classes).status());
+        var oldCompiler = new AnalysisInputResolver() {
+            public boolean supports(Path source) { return true; }
+            public boolean requiresCompilation(Path source) { return true; }
+            public PreparedInput resolve(Path source, Runnable checkpoint) { throw new AssertionError("Must reject unsupported configuration"); }
+        };
+        assertThrows(IllegalArgumentException.class,
+                () -> oldCompiler.resolve(classes, null, inputOptions, () -> {}));
+    }
+
+    @Test
     void locationAndResourceRequestsInheritTheSameAnalyzerDefaults() throws Exception {
         var analyzer = new Analyzer(AnalyzerConfig.defaults().withTimeout(Duration.ofNanos(1)),
                 List.of(sqlFiles("sql")), List.of());

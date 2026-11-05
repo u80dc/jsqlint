@@ -5,6 +5,7 @@ import org.u80dc.jsqlint.commons.compiler.GradleProjectCompiler;
 import org.u80dc.jsqlint.commons.compiler.JavaSourceFiles;
 import org.u80dc.jsqlint.commons.compiler.MavenProjectCompiler;
 import org.u80dc.jsqlint.core.resource.PathResourceSource;
+import org.u80dc.jsqlint.core.spi.AnalysisInputOptions;
 import org.u80dc.jsqlint.core.spi.AnalysisInputResolver;
 import org.u80dc.jsqlint.core.spi.PreparedInput;
 
@@ -52,10 +53,22 @@ public final class AutoCompileInputResolver implements AnalysisInputResolver {
 
     @Override
     public PreparedInput resolve(Path source, @Nullable Path classOutputDirectory, Runnable checkpoint) {
+        return resolve(source, classOutputDirectory, null, checkpoint);
+    }
+
+    /** Analyzer 传入的完整输入选项优先于解析器默认值，每次只创建新选项，不修改解析器实例。 */
+    @Override
+    public PreparedInput resolve(Path source, @Nullable Path classOutputDirectory,
+                                 @Nullable AnalysisInputOptions inputOptions, Runnable checkpoint) {
         checkpoint.run();
-        // 本次调用优先于解析器配置；只创建新选项，不修改复用实例上的默认值。
+        if (inputOptions != null && !(inputOptions instanceof InputLocationOptions)) {
+            throw new IllegalArgumentException("AutoCompileInputResolver requires InputLocationOptions, got "
+                    + inputOptions.getClass().getName());
+        }
+        InputLocationOptions configured = inputOptions == null ? options : (InputLocationOptions) inputOptions;
+        // Analyzer 生成的输出路径优先，仓库、构建参数等输入配置随新选项完整保留。
         InputLocationOptions effectiveOptions = classOutputDirectory == null
-                ? options : options.withClassOutputDirectory(classOutputDirectory);
+                ? configured : configured.withClassOutputDirectory(classOutputDirectory);
         // 构造输入位置时完成必要编译，后续类和方法读取才按需转换为 Jimple。
         var location = new AutoCompileAnalysisInputLocation(source, effectiveOptions);
         // 创建后立即转交所有权；统一入口再次检查取消，并负责关闭已经创建的输入。

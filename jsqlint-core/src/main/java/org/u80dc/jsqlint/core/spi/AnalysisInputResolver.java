@@ -34,4 +34,17 @@ public interface AnalysisInputResolver {
                                   Runnable checkpoint) throws Exception {
         return resolve(source, checkpoint);
     }
+
+    /**
+     * 接收 Analyzer 实例的输入扩展配置，编译解析器应识别其支持的具体选项类型。
+     * 未指定配置时兼容原有入口；不编译的字节码入口忽略编译配置。
+     * 编译解析器未实现配置传递时明确报错，避免静默使用错误的仓库或构建参数。
+     */
+    default PreparedInput resolve(Path source, @Nullable Path classOutputDirectory,
+                                  @Nullable AnalysisInputOptions options, Runnable checkpoint) throws Exception {
+        if (options != null && requiresCompilation(source)) {
+            throw new IllegalArgumentException("Input resolver does not support options: " + options.getClass().getName());
+        }
+        return resolve(source, classOutputDirectory, checkpoint);
+    }
 }

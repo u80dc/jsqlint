@@ -10,6 +10,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.api.parallel.Isolated;
 import org.u80dc.jsqlint.commons.location.*;
+import org.u80dc.jsqlint.core.*;
+import org.u80dc.jsqlint.core.node.SqlNode;
+import org.u80dc.jsqlint.core.node.SqlNodeRenderer;
+import org.u80dc.jsqlint.core.spi.AnalysisSeed;
 
 import javax.tools.ToolProvider;
 import java.io.IOException;
@@ -165,18 +169,31 @@ class MavenProjectCompilerTest {
                 </project>
                 """);
         Path source = Files.createDirectories(project.resolve("src/main/java"));
-        Files.writeString(source.resolve("Example.java"), "public class Example { public int value() { return fixture.Library.value(); } }");
+        Files.writeString(source.resolve("Example.java"), """
+                public class Example {
+                    public int value() { return fixture.Library.value(); }
+                    public void query(java.sql.Connection connection) throws Exception { connection.prepareStatement("SELECT 1"); }
+                }
+                """);
         var options = InputLocationOptions.defaults().withMavenRepositories(repositories)
                 .withClassOutputDirectory(temporary.resolve("compiled"));
         try {
-            try (var input = new AutoCompileAnalysisInputLocation(project, options)) {
-                assertTrue(Files.isRegularFile(options.classOutputDirectory().resolve("Example.class")));
-                assertEquals(List.of(local.resolve("org/u80dc/fixture/repo/library/1/library-1.jar")), input.getDependencies());
-                var view = input.createView();
-                var type = view.getClass(view.getIdentifierFactory().getClassType("Example")).orElseThrow();
-                assertTrue(type.getMethods().stream().filter(method -> method.getName().equals("value"))
-                        .findFirst().orElseThrow().getBody().toString().contains("fixture.Library"));
-            }
+            List<String> sql = new ArrayList<>();
+            List<String> diagnostics = new ArrayList<>();
+            var listener = new AnalysisListener() {
+                public void onSql(String module, AnalysisSeed seed, SqlNode template, SqlNodeRenderer.RenderedSql result) {
+                    result.sql().ifPresent(sql::add);
+                }
+                public void onDiagnostic(String code, String message) { diagnostics.add(code + ": " + message); }
+            };
+            // 用户只构造配置并交给 Analyzer，真实 ServiceLoader 链路完成仓库传递、编译和 SQL 分析。
+            var analyzer = new Analyzer(AnalyzerConfig.defaults().withInputOptions(options));
+            var result = analyzer.analyze(project, AnalysisOptions.defaults().withClassOutputId("maven-project").withListener(listener));
+            assertEquals(AnalysisResult.Status.SUCCESS, result.status(), () -> String.join("\n", diagnostics));
+            assertEquals(List.of("SELECT 1"), sql);
+            assertTrue(Files.isRegularFile(temporary.resolve("tmp/.jsqlint/maven-project/Example.class")));
+            assertFalse(Files.exists(options.classOutputDirectory()));
+            assertTrue(Files.isRegularFile(local.resolve("org/u80dc/fixture/repo/library/1/library-1.jar")));
             assertTrue(requests.contains("org/u80dc/fixture/repo/parent/1/parent-1.pom"));
             assertTrue(requests.contains("org/u80dc/fixture/repo/library/1/library-1.jar"));
             assertTrue(requests.contains("org/apache/maven/plugins/maven-compiler-plugin/3.15.0/maven-compiler-plugin-3.15.0.jar"));
@@ -187,7 +204,11 @@ class MavenProjectCompilerTest {
                 .withMavenRepositories(repositories).withClassOutputDirectory(temporary.resolve("offline-classes"));
         try (var input = new AutoCompileAnalysisInputLocation(project, offline)) {
             assertTrue(Files.isRegularFile(offline.classOutputDirectory().resolve("Example.class")));
-            assertEquals(1, input.getDependencies().size());
+            assertEquals(List.of(local.resolve("org/u80dc/fixture/repo/library/1/library-1.jar")), input.getDependencies());
+            var view = input.createView();
+            var type = view.getClass(view.getIdentifierFactory().getClassType("Example")).orElseThrow();
+            assertTrue(type.getMethods().stream().filter(method -> method.getName().equals("value"))
+                    .findFirst().orElseThrow().getBody().toString().contains("fixture.Library"));
         }
         // 下一次调用指定其他本地仓库，不能泄漏上一次调用的缓存配置。
         var missingCache = offline.withMavenRepositories(repositories.withLocalRepository(temporary.resolve("empty-cache")));

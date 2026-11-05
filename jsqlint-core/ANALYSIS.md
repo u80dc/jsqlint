@@ -85,7 +85,7 @@ analyzer.analyze(Path.of("project-c")); // 仍使用五分钟超时和结束清�
 
 | 配置归属 | 内容 |
 |---|---|
-| `AnalyzerConfig` | 默认超时、最大追踪深度、方法缓存容量、默认结束清理策略 |
+| `AnalyzerConfig` | 默认超时、最大追踪深度、方法缓存容量、默认结束清理策略、输入扩展配置 |
 | `AnalysisOptions` | 本次超时覆盖、取消信号、监听器、输出标识、结束清理覆盖 |
 
 配置优先级为：单次显式覆盖 → Analyzer 实例默认值；`AnalyzerConfig.defaults()` 提供系统默认值：
@@ -99,6 +99,21 @@ analyzer.analyze(Path.of("project-c")); // 仍使用五分钟超时和结束清�
 均使用相同的默认配置规则；输入列表需覆盖选项时使用 AnalysisRequest。
 计时器从本次分析开始计时，缓存及其他执行状态仍由本次 AnalysisSession 独占。
 扩展实例会复用，其并发安全性由具体扩展保证。
+
+用户在调用前构造编译配置时，通过 `AnalyzerConfig.withInputOptions(...)` 交给 Analyzer。
+core 仅声明通用 SPI `AnalysisInputOptions`，由输入模块实现具体配置，不引入 Maven/Gradle 的类型或依赖。
+例如引入 commons 后：
+
+```java
+var inputOptions = InputLocationOptions.defaults().withMavenRepositories(repositories);
+var analyzer = new Analyzer(AnalyzerConfig.defaults().withInputOptions(inputOptions));
+analyzer.analyze(project);
+```
+
+Path 入口将配置和本次输出路径一起交给选中的解析器；commons 再传给 AutoCompileAnalysisInputLocation，
+最终由 MavenProjectCompiler 使用仓库配置。该配置不会因单次超时或清理覆盖而丢失。
+未指定 inputOptions 时使用解析器自身选项；已编译字节码会忽略编译配置，列表和 AnalysisRequest 入口不准备输入。
+构建配置示例见 [commons 使用说明](../jsqlint-commons/README.md#maven-远程仓库与本地仓库)。
 
 旧用法迁移：`analyze(source, null)` 改为 `analyze(source)`，
 `analyze(source, dependencies)` 改为 `analyze(source, dependencies, AnalysisOptions.defaults())`。
@@ -166,8 +181,10 @@ JavaView 的内存上限；当前仍需要保存发现的起点和调用索引�
 服务声明放在对应模块的 `META-INF/services/<接口全名>` 文件中。
 也可以显式构造 `new Analyzer(modules, resolvers)` 或
 `new Analyzer(config, modules, resolvers)`，只启用传入扩展；
-core 的字节码解析器始终存在。配置编译选项时，可显式传入
-`new AutoCompileInputResolver(inputLocationOptions)`，避免与默认 commons 实现重复注册。
+core 的字节码解析器始终存在。通过 `config.withInputOptions(...)` 可以保留自动发现行为；
+原有显式传入 `new AutoCompileInputResolver(inputLocationOptions)` 的方式仍可使用。
+输入解析器在 `resolve(source, classOutputDirectory, inputOptions, checkpoint)` 中读取支持的配置类型。
+未指定配置时默认实现兼容旧的 resolve 重载；编译解析器不支持传入配置时应报错，避免静默忽略配置。
 
 模块在 `register(DiscoveryRegistry)` 中注册资源、方法元数据和调用点规则。
 同一资源可以被多个模块处理。每个模块实例应无执行状态，每次 register 内部创建会话专属状态。

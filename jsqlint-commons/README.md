@@ -2,8 +2,8 @@
 
 引入本模块后，`core.Analyzer` 可通过 ServiceLoader 自动发现
 `AutoCompileInputResolver`，在 Path 入口按需编译源码及 Maven/Gradle 项目。
-编译产物交回 core 分析，core 无需反向依赖 commons。配置构建参数时可显式注册
-`new AutoCompileInputResolver(inputLocationOptions)`。
+编译产物交回 core 分析，core 无需反向依赖 commons。用户可在调用前构造 InputLocationOptions，
+通过 `AnalyzerConfig.withInputOptions(inputLocationOptions)` 交给 Analyzer，继续使用自动发现的解析器和 SQL 模块。
 通过 `AnalysisOptions.withClassOutputId(...)` 为本次 Analyzer 分析指定输出标识。
 Analyzer 生成 `${java.io.tmpdir}/.jsqlint/<指定标识>/`，未指定时生成
 `${java.io.tmpdir}/.jsqlint/<随机标识>/`，并通过解析器将完整路径传给 `AutoCompileAnalysisInputLocation`。
@@ -85,7 +85,7 @@ Maven/Gradle 构建参数及显式 Gradle 安装目录。`classpath` **仅用于
 
 默认使用官方 Maven Central（`https://repo.maven.apache.org/maven2`），启用 release、禁用 snapshot；
 本地仓库默认为 `${user.home}/.m2/repository`。Maven 专用配置位于 `compiler` 包，
-通过 `InputLocationOptions.withMavenRepositories(...)` 传给编译器：
+先通过 `InputLocationOptions.withMavenRepositories(...)` 组装输入配置，再传给 Analyzer：
 
 ```java
 import java.net.URI;
@@ -94,7 +94,8 @@ import java.util.List;
 import org.u80dc.jsqlint.commons.compiler.MavenRemoteRepository;
 import org.u80dc.jsqlint.commons.compiler.MavenRepositoryOptions;
 import org.u80dc.jsqlint.commons.location.InputLocationOptions;
-import org.u80dc.jsqlint.commons.location.AutoCompileAnalysisInputLocation;
+import org.u80dc.jsqlint.core.Analyzer;
+import org.u80dc.jsqlint.core.AnalyzerConfig;
 
 var privateRepository = new MavenRemoteRepository(
         "company", URI.create("https://repo.example.com/repository/maven-public/"))
@@ -103,11 +104,10 @@ var privateRepository = new MavenRemoteRepository(
 var repositories = MavenRepositoryOptions.defaults()
         .withRemoteRepositories(List.of(privateRepository))
         .withLocalRepository(Path.of("D:/maven/repository"));
-var options = InputLocationOptions.defaults().withMavenRepositories(repositories);
-
-try (var input = new AutoCompileAnalysisInputLocation(Path.of("D:/projects/demo"), options)) {
-    var view = input.createView();
-}
+var inputOptions = InputLocationOptions.defaults().withMavenRepositories(repositories);
+var config = AnalyzerConfig.defaults().withInputOptions(inputOptions);
+var analyzer = new Analyzer(config);
+var result = analyzer.analyze(Path.of("D:/projects/demo"));
 ```
 
 - 私有仓库按传入顺序添加，同时用于父 POM、项目依赖和构建插件解析；保留 Central 作为后备，
@@ -126,16 +126,26 @@ try (var input = new AutoCompileAnalysisInputLocation(Path.of("D:/projects/demo"
   `-Dmaven.repo.local` 会报错；其他构建参数（例如 `-o`、`-Pprofile`）仍可使用。
   Maven 专用仓库选项不影响 Gradle 或普通 Java 源码编译。
 
-使用 Analyzer 时，将配置传给编译解析器，SQL 模块按需显式注册：
+配置的实际传递顺序为：
+
+`用户构造配置 → AnalyzerConfig → Analyzer → AutoCompileInputResolver → AutoCompileAnalysisInputLocation → MavenProjectCompiler`。
+
+core 只依赖 `AnalysisInputOptions` 接口并传递配置，commons 的 InputLocationOptions 实现该接口，
+MavenProjectCompiler 最终读取其中的 MavenRepositoryOptions；仓库类型和 Maven 依赖仍留在 commons。
+Analyzer 传递本次 class 输出路径时保留仓库及构建参数；它生成的路径优先于 inputOptions 中的输出目录。
+
+如需显式选择 SQL 模块或解析器，也可以传入配置：
 
 ```java
-var resolver = new AutoCompileInputResolver(options);
-var analyzer = new Analyzer(AnalyzerConfig.defaults(),
-        List.of(new JdbcAnalysisModule(), new MybatisAnalysisModule()), List.of(resolver));
+var analyzer = new Analyzer(config,
+        List.of(new JdbcAnalysisModule(), new MybatisAnalysisModule()), List.of(new AutoCompileInputResolver()));
 var result = analyzer.analyze(Path.of("D:/projects/demo"));
 ```
 
-Analyzer 传递本次 class 输出路径时会保留解析器上的 Maven 仓库配置。
+Analyzer 的 inputOptions 非空时完整替换解析器自身的选项，不逐字段合并；
+`withInputOptions(null)` 恢复使用解析器自身选项。原有 `new AutoCompileInputResolver(inputOptions)`
+及 `new AutoCompileAnalysisInputLocation(project, inputOptions)` 直接调用方式仍可使用。
+编译配置仅用于 Path 入口，已有字节码、输入列表和 AnalysisRequest 不会因此重新编译。
 原有 InputLocationOptions 四参数、五参数构造器继续可用，使用默认 Maven 仓库配置。
 
 ### 调用时指定 class 输出目录

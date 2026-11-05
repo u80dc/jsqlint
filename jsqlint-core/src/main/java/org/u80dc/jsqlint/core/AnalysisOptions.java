@@ -64,6 +64,6 @@ public record AnalysisOptions(@Nullable Duration timeout, BooleanSupplier cancel
     AnalyzerConfig resolveAgainst(AnalyzerConfig config) {
         return new AnalyzerConfig(timeout == null ? config.timeout() : timeout,
                 config.maxTraceDepth(), config.methodCacheSize(),
-                cleanupClassOutput == null ? config.cleanupClassOutput() : cleanupClassOutput);
+                cleanupClassOutput == null ? config.cleanupClassOutput() : cleanupClassOutput, config.inputOptions());
     }
 }

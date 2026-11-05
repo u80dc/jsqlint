@@ -141,7 +141,7 @@ public final class Analyzer {
                 classOutput = ClassOutputDirectory.prepare(output, input, library,
                         options.classOutputId() != null, effectiveConfig.cleanupClassOutput());
             }
-            PreparedInput prepared = selected.resolve(input, output, session::checkpoint);
+            PreparedInput prepared = selected.resolve(input, output, effectiveConfig.inputOptions(), session::checkpoint);
             // 先接管输入再检查取消，确保编译期间收到取消信号时也能释放新创建的输入。
             owned.addAll(prepared.locations());
             session.checkpoint();

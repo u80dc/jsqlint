@@ -1,6 +1,7 @@
 package org.u80dc.jsqlint.commons.location;
 
 import org.u80dc.jsqlint.commons.compiler.MavenRepositoryOptions;
+import org.u80dc.jsqlint.core.spi.AnalysisInputOptions;
 
 import java.nio.file.Path;
 import java.util.List;
@@ -14,12 +15,13 @@ import java.util.Objects;
  * classOutputDirectory 为可选的 class 输出目录；为空时，自动编译输入在系统临时目录下分配随机子目录。
  * 多模块项目会在该目录下隔离各模块产物。相对路径以调用进程的工作目录为基准。
  * mavenRepositories 仅用于 Maven 的依赖与插件解析，默认使用官方中央仓库。
+ * 可通过 AnalyzerConfig.withInputOptions 交给 Analyzer，再由输入解析器传入自动编译位置。
  *
  * @author u80dc
  */
 public record InputLocationOptions(InputMode inputMode, List<Path> classpath,
                                    List<String> buildArguments, Path gradleInstallation,
-                                   Path classOutputDirectory, MavenRepositoryOptions mavenRepositories) {
+                                   Path classOutputDirectory, MavenRepositoryOptions mavenRepositories) implements AnalysisInputOptions {
     public InputLocationOptions {
         Objects.requireNonNull(inputMode, "inputMode");
         Objects.requireNonNull(mavenRepositories, "mavenRepositories");
