@@ -33,6 +33,10 @@ public final class AutoCompileInputResolver implements AnalysisInputResolver {
     @Override
     public int priority() { return 100; }
 
+    /** 本解析器只接收源码或构建项目，输出目录生命周期交由 Analyzer 管理。 */
+    @Override
+    public boolean requiresCompilation(Path source) { return true; }
+
     @Override
     public boolean supports(Path source) throws Exception {
         if (Files.isRegularFile(source)) return source.toString().endsWith(".java");

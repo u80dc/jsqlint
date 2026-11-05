@@ -8,7 +8,8 @@
 Analyzer 生成 `${java.io.tmpdir}/.jsqlint/<指定标识>/`，未指定时生成
 `${java.io.tmpdir}/.jsqlint/<随机标识>/`，并通过解析器将完整路径传给 `AutoCompileAnalysisInputLocation`。
 直接构造自动编译输入时，仍可传入完整路径，未传入则使用 `${java.io.tmpdir}/<随机标识>/`。
-目录在关闭输入后保留，可由调用方或系统统一清理。
+Analyzer 默认在分析结束后保留目录；可用 `withCleanupClassOutput(true)` 开启结束清理。
+复用指定标识时，无论是否开启结束清理，Analyzer 都会先清空对应输出目录。
 统一入口、输入所有权及取消机制见 [分析器说明](../jsqlint-core/ANALYSIS.md)。
 
 公共基础模块，包路径为 `org.u80dc.jsqlint.commons`。`location` 包提供统一输入入口
@@ -85,7 +86,8 @@ Maven/Gradle 构建参数及显式 Gradle 安装目录。`classpath` **仅用于
 
 ```java
 var options = AnalysisOptions.defaults()
-        .withClassOutputId("my-project");
+        .withClassOutputId("my-project")
+        .withCleanupClassOutput(true); // 可选，默认保留编译产物。
 var result = new Analyzer().analyze(Path.of("/path/to/project"), null, options);
 // 编译输出路径：${java.io.tmpdir}/.jsqlint/my-project/
 ```
@@ -103,8 +105,13 @@ try (var input = new AutoCompileAnalysisInputLocation(Path.of("/path/to/project"
 也可以使用五参数构造器
 `InputLocationOptions(inputMode, classpath, buildArguments, gradleInstallation, classOutputDirectory)`。
 原四参数构造器继续可用。Analyzer 的输出标识必须是单个非空目录名，不能是路径、`.` 或 `..`；
-同一标识复用同一路径，未指定标识时每次调用生成随机标识。
+同一标识复用同一路径，每次编译前先递归清空目录内容，避免保留已删除源码对应的旧 class。
+未指定标识时每次调用生成随机标识。并发调用应使用不同标识或默认随机标识。
 Analyzer 始终传入自己生成的完整路径，覆盖本次调用中解析器的输出配置，但不修改解析器实例。
+`withCleanupClassOutput(true)` 在分析结束、关闭输入后删除本次输出目录，失败、取消及超时也执行；
+默认值为 false。清理失败会报告诊断并返回 FAILED。
+扩展解析器通过 `AnalysisInputResolver.requiresCompilation(source)` 声明是否需要编译，
+只有返回 true 时 Analyzer 才管理编译输出的预清理及结束清理。
 直接使用解析器或自动编译输入时，`InputLocationOptions.classOutputDirectory` 仍接受完整路径。
 
 该路径是**编译输出目录**，不是单个 `.class` 文件路径，也不是额外的分析 classpath。
@@ -124,9 +131,9 @@ Analyzer 的字节码入口由 core 解析器处理，会忽略编译输出选�
 
 Maven/Gradle 的配置调整仅在本次构建内生效，不修改目标项目的构建文件。
 此选项仅指定 class 产物位置，不迁移整个 `target`/`build` 目录或构建缓存。
-输出可复用，但不会自动清空，删除源码后遗留的旧 class 需要调用方自行清理。
-编译失败会抛出异常，不使用已有 class 继续分析；失败时可能留下部分产物。
-`close()` 不删除指定目录及其内容，生命周期由调用方管理。
+直接使用解析器或 `AutoCompileAnalysisInputLocation` 时，输出目录不会自动清空，
+`close()` 也不删除目录；调用方自行管理其生命周期。通过 Analyzer 使用时执行上述预清理和可选结束清理。
+编译失败会抛出异常，不使用已有 class 继续分析；未开启结束清理时可能留下部分产物。
 
 Maven、Gradle 后端支持自定义输出目录，分析范围为主代码。
 Gradle 后端要求项目提供标准 main source set，Android 等不同构建模型需要额外适配。

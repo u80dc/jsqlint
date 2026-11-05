@@ -84,7 +84,7 @@ public final class Analyzer {
         return analyze(source, dependencies, AnalysisOptions.defaults());
     }
 
-    /** 带进度、取消和时间预算的路径入口；同时传递本次编译输出目录，并负责关闭解析器转交的输入。 */
+    /** 带进度、取消和时间预算的路径入口；管理编译输出目录，并负责关闭解析器转交的输入。 */
     public @NonNull AnalysisResult analyze(Path source, @Nullable Path dependencies, AnalysisOptions options) {
         Objects.requireNonNull(source, "source");
         Objects.requireNonNull(options, "options");
@@ -95,7 +95,8 @@ public final class Analyzer {
             throw new IllegalArgumentException("Dependency path does not exist: " + library);
         AnalysisSession session = new AnalysisSession(options);
         List<AnalysisInputLocation> owned = new ArrayList<>();
-        Status status = Status.FAILED;
+        ClassOutputDirectory classOutput = null;
+        Status status;
         try {
             session.checkpoint();
             session.progress(AnalysisListener.Stage.PREPARING);
@@ -115,6 +116,10 @@ public final class Analyzer {
             String outputId = options.classOutputId() == null ? UUID.randomUUID().toString() : options.classOutputId();
             Path output = Path.of(System.getProperty("java.io.tmpdir"), ".jsqlint", outputId)
                     .toAbsolutePath().normalize();
+            if (selected.requiresCompilation(input)) {
+                classOutput = ClassOutputDirectory.prepare(output, input, library,
+                        options.classOutputId() != null, options.cleanupClassOutput());
+            }
             PreparedInput prepared = selected.resolve(input, output, session::checkpoint);
             // 先接管输入再检查取消，确保编译期间收到取消信号时也能释放新创建的输入。
             owned.addAll(prepared.locations());
@@ -130,6 +135,14 @@ public final class Analyzer {
                 new PreparedInput(owned, List.of()).close();
             } catch (Exception e) {
                 status = fail(session, e);
+            }
+            // 先释放 SootUp 输入，再删除编译产物；输入关闭失败也继续尝试清理。
+            if (classOutput != null) {
+                try {
+                    classOutput.close();
+                } catch (Exception e) {
+                    status = fail(session, e);
+                }
             }
         }
         return session.finish(status);

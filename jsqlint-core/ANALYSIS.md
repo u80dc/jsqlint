@@ -18,7 +18,8 @@ AnalysisResult projectResult = analyzer.analyze(Path.of("project"), Path.of("lib
 
 // 指定本次编译的输出标识，实际路径为 ${java.io.tmpdir}/.jsqlint/my-project/。
 var options = org.u80dc.jsqlint.core.AnalysisOptions.defaults()
-        .withClassOutputId("my-project");
+        .withClassOutputId("my-project")
+        .withCleanupClassOutput(true); // 可选：结束后清理输出，默认 false。
 AnalysisResult compiledResult = analyzer.analyze(Path.of("project"), null, options);
 ```
 
@@ -30,8 +31,13 @@ AnalysisResult compiledResult = analyzer.analyze(Path.of("project"), null, optio
   可通过 `AnalysisOptions.withClassOutputId(...)` 指定输出标识，Analyzer 生成
   `${java.io.tmpdir}/.jsqlint/<指定标识>/`；未指定时生成 `${java.io.tmpdir}/.jsqlint/<随机标识>/`。
   Analyzer 始终将完整路径传给解析器，再传入 `AutoCompileAnalysisInputLocation`，不回退到解析器配置的路径。
-  标识必须是单个非空目录名；同一标识复用同一路径，关闭输入后产物仍保留。
+  标识必须是单个非空目录名；同一标识复用同一路径，每次编译前递归清空该目录中的原有内容。
+  默认在分析结束后保留产物；`withCleanupClassOutput(true)` 在关闭输入后删除本次输出目录，
+  成功、失败、取消或超时均执行。清理失败会报告诊断并返回 FAILED。
+  同一标识用于顺序复用；并发分析应使用不同标识或默认的随机标识。
+  清理不越过输出目录，不允许输出目录包含源码或依赖，也不允许输出根目录通过链接重定向。
   已编译字节码无需输出目录；列表和 AnalysisRequest 入口直接使用调用方提供的输入，不再次编译。
+  这些入口不清理编译输出目录，即使指定的标识已有对应目录。
 - Path 入口关闭自身创建的输入，包括取消和失败的情况。
 - `analyze(List<? extends AnalysisInputLocation>)` 保留调用方输入顺序和 SourceType，
   不自动添加运行时，不关闭调用方输入，也不猜测其资源路径。

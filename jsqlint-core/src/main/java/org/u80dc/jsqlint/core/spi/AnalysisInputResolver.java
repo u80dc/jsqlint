@@ -15,6 +15,11 @@ public interface AnalysisInputResolver {
     /** 只做输入识别；统一入口传入已经归一化的绝对路径。 */
     boolean supports(Path source) throws Exception;
     /**
+     * 当前输入是否需要编译。编译扩展返回 true，由 Analyzer 管理输出目录的预清理及结束清理。
+     * 默认不编译，避免已有字节码或其他只读输入触发输出目录删除；本方法不应修改文件。
+     */
+    default boolean requiresCompilation(Path source) throws Exception { return false; }
+    /**
      * 准备代码及资源输入，并通过返回值转交所有权。
      * 耗时步骤之间应调用 checkpoint；其抛出的停止信号应向上传播，不应被吞掉。
      * 返回前失败时，由实现清理已经创建的输入。
