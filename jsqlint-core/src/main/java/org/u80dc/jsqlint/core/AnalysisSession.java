@@ -9,10 +9,13 @@ import org.u80dc.jsqlint.core.resource.AnalysisResource;
 import sootup.core.model.SourceType;
 import sootup.core.signatures.MethodSignature;
 import sootup.java.core.views.JavaView;
+import sootup.java.core.JavaSootMethod;
 
 import java.net.URI;
 import java.util.*;
 import java.util.function.Consumer;
+import java.util.function.BiPredicate;
+import java.util.function.Predicate;
 
 import static org.u80dc.jsqlint.core.AnalysisListener.Stage;
 import static org.u80dc.jsqlint.core.AnalysisResult.Status;
@@ -77,7 +80,7 @@ final class AnalysisSession {
             DiscoveryRegistry registry = new DiscoveryRegistry();
             module.register(registry);
             modules.add(new Registered(module.id(), registry.resources(), registry.methods(), registry.invocations(),
-                    registry.isCallIndexRequired()));
+                    registry.sqlMethods(), registry.sqlInvocations(), registry.isCallIndexRequired()));
         }
         JavaView view = new JavaView(new ArrayList<>(request.locations()));
         progress(Stage.RESOURCES);
@@ -101,8 +104,11 @@ final class AnalysisSession {
         }
         progress(Stage.CODE);
         boolean codeRequested = modules.stream().anyMatch(module ->
-                !module.methods().isEmpty() || module.callIndexRequired());
-        boolean invocationsRequested = modules.stream().anyMatch(Registered::callIndexRequired);
+                !module.methods().isEmpty() || !module.sqlMethods().isEmpty()
+                        || !module.sqlInvocations().isEmpty() || module.callIndexRequired());
+        boolean callIndexRequired = modules.stream().anyMatch(Registered::callIndexRequired);
+        boolean invocationsRequested = callIndexRequired
+                || modules.stream().anyMatch(module -> !module.sqlInvocations().isEmpty());
         Set<Object> visitedClasses = new HashSet<>();
         if (codeRequested) for (var location : request.locations()) {
             checkpoint();
@@ -122,6 +128,10 @@ final class AnalysisSession {
                         for (var method : clazz.getMethods()) {
                             checkpoint();
                             methods++;
+                            for (Registered module : modules) {
+                                if (matches(module.id(), module.sqlMethods(), rule -> rule.test(method, view)))
+                                    reportCallSite(module.id(), SqlCallSite.declaration(method));
+                            }
                             for (Registered module : modules) dispatch(module.id(), module.methods(), method);
                             // 仅检查注解的模块不必加载方法体；调用点处理器共享同一次 Jimple 扫描。
                             if (invocationsRequested && method.hasBody()) {
@@ -135,7 +145,12 @@ final class AnalysisSession {
                                         if (invocation.isEmpty()) continue;
                                         var site = new InvocationSite(method, statement, i, invocation.get(), view);
                                         // 普通辅助方法的调用也要入索引，否则无法沿调用链追踪 SQL 参数。
-                                        callers.computeIfAbsent(invocation.get().getMethodSignature(), key -> new ArrayList<>()).add(site);
+                                        if (callIndexRequired)
+                                            callers.computeIfAbsent(invocation.get().getMethodSignature(), key -> new ArrayList<>()).add(site);
+                                        for (Registered module : modules) {
+                                            if (matches(module.id(), module.sqlInvocations(), rule -> rule.test(site)))
+                                                reportCallSite(module.id(), SqlCallSite.invocation(site));
+                                        }
                                         for (Registered module : modules) dispatch(module.id(), module.invocations(), site);
                                     }
                                 } catch (Exception e) { recover("METHOD_BODY", method.getSignature().toString(), e); }
@@ -175,6 +190,23 @@ final class AnalysisSession {
             progress(stage);
         }
         return partial ? Status.PARTIAL : Status.SUCCESS;
+    }
+
+    /** 规则取并集，避免同一模块的重叠规则重复报告；单条规则失败不阻止其他规则。 */
+    private <T> boolean matches(String moduleId, List<T> rules, Predicate<T> test) {
+        for (T rule : rules) {
+            checkpoint();
+            try { if (test.test(rule)) return true; }
+            catch (Exception e) { recover("SQL_CALL_SITE_DISCOVERY", moduleId, e); }
+        }
+        return false;
+    }
+
+    private void reportCallSite(String moduleId, SqlCallSite site) {
+        LOG.info("SQL 调用点: module={}, kind={}, class={}, method={}, caller={}, location={}",
+                moduleId, site.kind(), site.target().getDeclClassType(), site.target(),
+                site.caller().map(Object::toString).orElse("<声明>"), site.location());
+        notifyListener(listener -> listener.onSqlCallSite(moduleId, site));
     }
 
     private <T> void dispatch(String moduleId, List<DiscoveryRegistry.Rule<T>> rules, T input) {
@@ -229,8 +261,10 @@ final class AnalysisSession {
 
     private record Pending(String moduleId, AnalysisSeed seed) {}
     private record Registered(String id, List<DiscoveryRegistry.Rule<AnalysisResource>> resources,
-                              List<DiscoveryRegistry.Rule<sootup.java.core.JavaSootMethod>> methods,
-                              List<DiscoveryRegistry.Rule<InvocationSite>> invocations, boolean callIndexRequired) {}
+                              List<DiscoveryRegistry.Rule<JavaSootMethod>> methods,
+                              List<DiscoveryRegistry.Rule<InvocationSite>> invocations,
+                              List<BiPredicate<JavaSootMethod, JavaView>> sqlMethods,
+                              List<Predicate<InvocationSite>> sqlInvocations, boolean callIndexRequired) {}
     private static final class ListenerFailure extends RuntimeException {
         ListenerFailure(Throwable cause) { super(cause); }
     }

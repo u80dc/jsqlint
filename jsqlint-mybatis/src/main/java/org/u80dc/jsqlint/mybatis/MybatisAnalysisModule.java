@@ -25,7 +25,6 @@ import java.util.*;
  */
 public final class MybatisAnalysisModule implements SqlAnalysisModule {
     private static final Set<String> STATEMENTS = Set.of("select", "insert", "update", "delete");
-    private static final Set<String> ANNOTATIONS = Set.of("Select", "Insert", "Update", "Delete");
 
     @Override
     public String id() { return "mybatis"; }
@@ -34,6 +33,9 @@ public final class MybatisAnalysisModule implements SqlAnalysisModule {
     public void register(DiscoveryRegistry registry) {
         // 索引属于本次注册，复用模块实例也不会把上个项目的 SQL 片段带入当前分析。
         Map<String, List<Element>> fragments = new HashMap<>();
+        MapperMethodMatcher methods = new MapperMethodMatcher();
+        registry.sqlMethod(methods::isSqlMethod);
+        registry.sqlInvocation(methods::isSqlInvocation);
         registry.resource(resource -> resource.name().toLowerCase(Locale.ROOT).endsWith(".xml"), (resource, seeds) -> {
             Document document = parse(resource);
             Element mapper = document.getDocumentElement();
@@ -46,19 +48,19 @@ public final class MybatisAnalysisModule implements SqlAnalysisModule {
                 // 同名片段全部保留，留到引用解析时判断歧义，不能静默覆盖其中一个。
                 if (element.getTagName().equals("sql"))
                     fragments.computeIfAbsent(id, ignored -> new ArrayList<>()).add(element);
-                else if (STATEMENTS.contains(element.getTagName()))
+                else if (STATEMENTS.contains(element.getTagName())) {
+                    methods.addStatement(namespace, element.getAttribute("id"));
                     seeds.accept(new MapperSeed(new SourceLocation(resource.uri(),
                             id + (element.hasAttribute("databaseId") ? ":" + element.getAttribute("databaseId") : "")),
                             element, namespace, fragments));
+                }
             }
         });
         // 注解发现只读取方法元数据，接口中的抽象 Mapper 方法也能作为分析起点。
         registry.method(method -> true, (method, seeds) -> {
-            for (var annotation : method.getAnnotations()) {
+            for (var annotation : MapperMethodMatcher.sqlAnnotations(method)) {
                 String type = annotation.getAnnotation().toString();
-                if (!type.startsWith("org.apache.ibatis.annotations.")) continue;
                 String name = type.substring(type.lastIndexOf('.') + 1);
-                if (!ANNOTATIONS.contains(name) && !name.endsWith("Provider")) continue;
                 Object value = annotation.getValues().get("value");
                 var location = new SourceLocation(new URI("java", method.getDeclClassType().toString(), null),
                         method.getSignature().toString() + " @" + name);

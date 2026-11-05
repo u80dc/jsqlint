@@ -12,6 +12,7 @@
 | `jsqlint-jdbc` | 可选 JDBC 调用点与 SQL 参数适配 |
 | `jsqlint-mybatis` | 可选 MyBatis XML、include 和 SQL 注解适配 |
 | `jsqlint-test` | 集中存放所有模块的测试代码与测试资源（[使用说明](jsqlint-test/README.md)） |
+| `shared-test-resources` | 可独立构建和运行的分析目标样例（[样例列表](shared-test-resources/README.md)） |
 
 ## 构建
 

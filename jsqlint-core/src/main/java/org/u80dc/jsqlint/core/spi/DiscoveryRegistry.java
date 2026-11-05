@@ -3,11 +3,13 @@ package org.u80dc.jsqlint.core.spi;
 import org.u80dc.jsqlint.core.resource.AnalysisResource;
 import sootup.core.signatures.MethodSignature;
 import sootup.java.core.JavaSootMethod;
+import sootup.java.core.views.JavaView;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.Consumer;
+import java.util.function.BiPredicate;
 import java.util.function.Predicate;
 
 /**
@@ -20,6 +22,8 @@ public final class DiscoveryRegistry {
     private final List<Rule<AnalysisResource>> resources = new ArrayList<>();
     private final List<Rule<JavaSootMethod>> methods = new ArrayList<>();
     private final List<Rule<InvocationSite>> invocations = new ArrayList<>();
+    private final List<BiPredicate<JavaSootMethod, JavaView>> sqlMethods = new ArrayList<>();
+    private final List<Predicate<InvocationSite>> sqlInvocations = new ArrayList<>();
     private boolean callIndexRequired;
 
     /**
@@ -54,6 +58,27 @@ public final class DiscoveryRegistry {
         Objects.requireNonNull(selector, "selector");
         invocations.add(new Rule<>(site -> selector.test(site.invocation().getMethodSignature()), handler));
     }
+
+    /**
+     * 声明哪些方法属于 SQL 入口；包括无方法体、尚未被调用的接口方法。
+     * view 用于按需解析接口继承关系。规则应只读代码模型，不修改它或重新遍历所有方法体。
+     * 此规则独立于 SQL 提取起点；命中后由 core 统一记录、打印并通知监听器。
+     */
+    public void sqlMethod(BiPredicate<JavaSootMethod, JavaView> selector) {
+        sqlMethods.add(Objects.requireNonNull(selector, "selector"));
+    }
+
+    /**
+     * 声明哪些实际调用属于 SQL 调用点，所有模块共享一次方法体扫描。
+     * 同一模块多个规则命中同一位置仅报告一次，不合并不同位置对同一方法的调用。
+     */
+    public void sqlInvocation(Predicate<InvocationSite> selector) {
+        sqlInvocations.add(Objects.requireNonNull(selector, "selector"));
+    }
+
+    public List<BiPredicate<JavaSootMethod, JavaView>> sqlMethods() { return List.copyOf(sqlMethods); }
+
+    public List<Predicate<InvocationSite>> sqlInvocations() { return List.copyOf(sqlInvocations); }
 
     public List<Rule<AnalysisResource>> resources() {
         return List.copyOf(resources);

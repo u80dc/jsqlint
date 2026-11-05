@@ -3,6 +3,7 @@ package org.u80dc.jsqlint.core;
 import org.u80dc.jsqlint.core.node.SqlNode;
 import org.u80dc.jsqlint.core.node.SqlNodeRenderer;
 import org.u80dc.jsqlint.core.spi.AnalysisSeed;
+import org.u80dc.jsqlint.core.spi.SqlCallSite;
 
 /**
  * 在调用分析器的线程中接收事件；不应阻塞。不同分析请求可使用不同监听器。
@@ -16,6 +17,11 @@ public interface AnalysisListener {
     default void onProgress(Progress progress) {}
     /** 接收错误、能力限制及其他分析说明；并非每条诊断都会改变最终状态。 */
     default void onDiagnostic(String code, String message) {}
+    /**
+     * 在发现阶段接收 SQL 入口方法/调用位置，早于 SQL 提取；SQL 无法求值时仍会发出。
+     * 方法声明与实际调用分别报告，core 同时输出 INFO 日志。
+     */
+    default void onSqlCallSite(String moduleId, SqlCallSite site) {}
     /**
      * 逐个接收分析结果。template 是提取的通用节点，sql 包含样例或尚未求值的残留节点；
      * 未知参数不会被填成空串，因此 sql.sql() 可能为空。

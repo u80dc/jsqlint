@@ -173,6 +173,36 @@ JavaView 的内存上限；当前仍需要保存发现的起点和调用索引�
 
 ## 扩展协议
 
+### SQL 调用点
+
+分析时 core 通过 `org.u80dc.jsqlint.core.AnalysisSession` 的 INFO 日志打印已确认的 SQL 调用点，
+并调用 `AnalysisListener.onSqlCallSite(moduleId, site)`。不设置监听器也会输出日志，例如：
+
+```text
+SQL 调用点: module=jdbc, kind=INVOCATION, class=java.sql.Statement, method=<java.sql.Statement: boolean execute(java.lang.String)>, caller=<example.Repository: void query(java.sql.Statement)>, location=SourceLocation[resource=java:example.Repository, element=<example.Repository: void query(java.sql.Statement)> @3]
+```
+
+`SqlCallSite` 保存目标方法签名、可选调用者签名及位置：
+
+- `target()`：目标所属类全路径、返回类型、方法名和参数类型。
+- `caller()`：实际调用所在方法的完整签名；方法声明没有调用者。
+- `kind()`：`DECLARATION` 表示 SQL 入口方法声明，`INVOCATION` 表示实际调用。
+- `location()`：类 URI、方法签名及实际调用的 Jimple 语句索引；索引不是源码行号。
+
+方法声明与调用分别报告，未使用的 Mapper 方法也能被发现。同一位置被同一模块的多条规则命中时
+只报告一次，不同位置调用同一方法分别保留；不同模块的识别结果分别报告。
+调用点在发现阶段输出，即使后续 SQL/Provider 无法解析也不会被吞掉。
+调用点数与 SQL 提取起点数不相等，例如无参 `PreparedStatement.execute()` 可以是调用点，
+但 SQL 字符串来自先前的 `prepareStatement(sql)`；现阶段尚未建立二者的对象关联。
+`Progress.discovered/analyzed` 继续统计 SQL 提取起点和结果，不统计调用点。
+
+调用者代码只扫描 Application 输入，不以 main/Controller 可达性过滤；Library 输入用于类型解析。
+目标签名来自字节码的静态类型，尚未推断运行时多态分派、反射或动态代理的实际实现。
+只有 XML 没有 Mapper 字节码时仍提取 XML SQL，但不伪造方法签名。
+通过输入列表提供 Mapper 代码时，需要在 `AnalysisRequest.resources` 中同时提供 XML 资源。
+
+### 注册规则
+
 `new Analyzer()` 和 `new Analyzer(config)` 用 ServiceLoader 发现两种 SPI：
 
 - `org.u80dc.jsqlint.core.spi.AnalysisInputResolver`：可选输入准备能力。
@@ -188,13 +218,25 @@ core 的字节码解析器始终存在。通过 `config.withInputOptions(...)` �
 
 模块在 `register(DiscoveryRegistry)` 中注册资源、方法元数据和调用点规则。
 同一资源可以被多个模块处理。每个模块实例应无执行状态，每次 register 内部创建会话专属状态。
+SQL 入口识别通过以下规则单独声明，不要求产生 SQL 提取起点：
+
+```java
+registry.sqlMethod((method, view) -> /* 框架方法声明判断 */ false);
+registry.sqlInvocation(site -> /* 框架实际调用判断 */ false);
+```
+
+`sqlMethod` 可读取方法注解及 view 中的继承关系；`sqlInvocation` 共享 core 的方法体扫描。
+只有声明规则时不触发方法体扫描；只有调用点规则时不会为值追踪额外保存调用者索引。
+框架识别逻辑放在具体模块，core 统一构造 `SqlCallSite`、打印并分发事件。
+原有 `resource/method/invocation` 规则继续用于提取 SQL：
+
 处理器同步发出 AnalysisSeed，core 在发现阶段结束后读取其 SqlInput：
 
 - Template：模块已经转换好的通用 SQL 节点。
 - ValueAt：某个方法及语句位置上的值，由 core 追踪。
 
 方法级处理器产生 ValueAt 起点时应调用 `registry.requireCallIndex()`，
-使 core 建立共享调用者索引。调用点规则自动启用此能力。
+使 core 建立共享调用者索引。`invocation` 提取规则自动启用此能力，`sqlInvocation` 识别规则则不启用。
 参数、来源及框架专属元数据可以由模块自己的 AnalysisSeed 实现保存。
 
 core 负责通用 SQL 提取、值与参数溯源、保守推断和节点渲染。
@@ -204,9 +246,14 @@ core 负责通用 SQL 提取、值与参数溯源、保守推断和节点渲染�
 
 - JDBC：Connection 的 prepareStatement、prepareCall、nativeSQL，以及 Statement 的
   execute、executeQuery、executeUpdate、executeLargeUpdate、addBatch 的字符串参数。
+  额外报告 PreparedStatement/CallableStatement 的无参 execute/executeQuery/executeUpdate/
+  executeLargeUpdate/addBatch 和 Statement 的 executeBatch/executeLargeBatch 调用。
   支持已解析的实现类/子类型，不以 Controller 或 main 可达性限制发现范围。
 - MyBatis：Mapper XML 语句、可唯一确定的跨文件 include、Select/Insert/Update/Delete SQL 注解；
-  动态标签转换为现有通用节点。
+  动态标签转换为现有通用节点。通过 namespace/id 和 SQL/Provider 注解识别接口方法声明与调用，
+  支持继承方法、重复注解及重载签名；XML 按方法名绑定，无法区分重载，因此保留全部候选签名。
+  default/static 辅助方法不作为映射 SQL 入口，其内部调用仍正常扫描。Provider 可以作为调用点被发现，
+  但 Provider SQL 内容仍需后续适配。直接调用 SqlSession 的字符串 statementId 入口尚未适配。
 - core 值追踪：常量、控制流到达定义、已索引的参数调用来源、静态/特殊调用返回值、
   Java StringConcatFactory 连接和 String.concat。不同调用的参数上下文分别处理；
   分支保留为符号选择，不取第一个结果。

@@ -1,6 +1,8 @@
 package org.u80dc.jsqlint.jdbc;
 
 import org.u80dc.jsqlint.core.spi.*;
+import sootup.core.signatures.MethodSignature;
+import java.util.List;
 import java.util.Set;
 
 /**
@@ -18,16 +20,42 @@ public final class JdbcAnalysisModule implements SqlAnalysisModule {
 
     @Override
     public void register(DiscoveryRegistry registry) {
-        // 先按方法名和首参类型初筛；无 SQL 字符串参数的 PreparedStatement 执行方法不在此处理。
-        registry.invocation(signature -> !signature.getParameterTypes().isEmpty()
-                && signature.getParameterTypes().getFirst().toString().equals("java.lang.String")
-                && (CONNECTION.contains(signature.getName()) || STATEMENT.contains(signature.getName())),
+        registry.sqlInvocation(JdbcAnalysisModule::isSqlCall);
+        // 提取起点仍要求 SQL 字符串实参；无参执行调用独立报告，不伪造 SQL 参数。
+        registry.invocation(JdbcAnalysisModule::hasSqlArgument,
                 (site, seeds) -> {
-                    // 再确认 JDBC 类型关系，排除仅名称相同的方法，同时支持已解析的实现类。
-                    String name = site.invocation().getMethodSignature().getName();
-                    if ((CONNECTION.contains(name) && site.isDeclaredOnSubtypeOf("java.sql.Connection"))
-                            || (STATEMENT.contains(name) && site.isDeclaredOnSubtypeOf("java.sql.Statement")))
-                        seeds.accept(new JdbcSqlSeed(site));
+                    if (isSqlCall(site)) seeds.accept(new JdbcSqlSeed(site));
                 });
+    }
+
+    private static boolean isSqlCall(InvocationSite site) {
+        MethodSignature signature = site.invocation().getMethodSignature();
+        String name = signature.getName();
+        if (hasSqlArgument(signature)) {
+            // 类型检查同时覆盖 JDBC 接口、子接口和依赖可解析的驱动实现类。
+            return site.isDeclaredOnSubtypeOf(CONNECTION.contains(name)
+                    ? "java.sql.Connection" : "java.sql.Statement");
+        }
+        if (!signature.getParameterTypes().isEmpty()) return false;
+        if (name.equals("executeBatch") || name.equals("executeLargeBatch"))
+            return site.isDeclaredOnSubtypeOf("java.sql.Statement");
+        return STATEMENT.contains(name) && site.isDeclaredOnSubtypeOf("java.sql.PreparedStatement");
+    }
+
+    /** 只接受 JDBC 标准重载，避免驱动扩展中碰巧同名的方法被识别为 SQL 入口。 */
+    private static boolean hasSqlArgument(MethodSignature signature) {
+        String name = signature.getName();
+        if (!CONNECTION.contains(name) && !STATEMENT.contains(name)) return false;
+        List<String> parameters = signature.getParameterTypes().stream().map(Object::toString).toList();
+        if (parameters.isEmpty() || !parameters.getFirst().equals("java.lang.String")) return false;
+        if (parameters.size() == 1) return true;
+        if (name.equals("nativeSQL") || name.equals("executeQuery") || name.equals("addBatch")) return false;
+        if (name.equals("prepareStatement") || name.equals("prepareCall")) {
+            if (parameters.equals(List.of("java.lang.String", "int", "int"))
+                    || parameters.equals(List.of("java.lang.String", "int", "int", "int"))) return true;
+            if (name.equals("prepareCall")) return false;
+        }
+        return parameters.size() == 2
+                && Set.of("int", "int[]", "java.lang.String[]").contains(parameters.get(1));
     }
 }

@@ -32,6 +32,21 @@ Linux / macOS 将命令替换为 `./mvnw`，参数相同。
 项目 `.mvn/maven.config` 默认设置 `maven.test.skip=true`，因此需显式覆盖。
 测试报告位于 `jsqlint-test/target/surefire-reports`。
 
+## JDBC 共享样例分析
+
+`JdbcUserQueryAnalysisTest` 直接将 `shared-test-resources/jdbc-user-query` 项目目录交给 Analyzer，
+由自动发现的 commons 编译器执行 Maven 构建，随后检查 5 个增删改查入口及 1 个建表入口。
+测试验证关键 SQL 文本、未知参数和动态条件的保留，以及分析结束后编译输出的清理；不运行样例主程序。
+尚未支持的表达式允许产生 PARTIAL，编译失败、解析异常、超时及追踪预算耗尽不能通过测试。
+
+仅运行该用例：
+
+```powershell
+.\mvnw.cmd -pl jsqlint-test -am '-Dmaven.test.skip=false' '-DskipTests=false' '-Dtest=JdbcUserQueryAnalysisTest' '-Dsurefire.failIfNoSpecifiedTests=false' test
+```
+
+该测试无需预编译样例或启动数据库；首次运行可通过 Maven Central 下载样例的 H2 依赖。
+
 Gradle 集成测试可以通过 `'-Djsqlint.test.gradle.home=C:\path\to\gradle'` 指定已有 Gradle 安装，
-否则使用 Tooling API 的默认发行版，首次运行可能下载。Maven 集成测试使用离线模式，
+否则使用 Tooling API 的默认发行版，首次运行可能下载。其余基于临时项目的 Maven 输出目录测试使用离线模式，
 依赖当前构建已解析的编译插件。详细输入行为见 [commons 使用说明](../jsqlint-commons/README.md)。
