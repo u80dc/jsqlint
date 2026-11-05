@@ -2,6 +2,10 @@ package org.u80dc.jsqlint.commons.location;
 
 import lombok.Getter;
 import org.jspecify.annotations.NonNull;
+import org.u80dc.jsqlint.commons.compiler.CompiledProject;
+import org.u80dc.jsqlint.commons.compiler.JavaSourceCompiler;
+import org.u80dc.jsqlint.commons.compiler.JavaSourceFiles;
+import org.u80dc.jsqlint.commons.compiler.ProjectCompiler;
 import sootup.core.frontend.SootClassSource;
 import sootup.core.inputlocation.AnalysisInputLocation;
 import sootup.core.interceptor.BodyInterceptor;
@@ -11,10 +15,8 @@ import sootup.core.views.View;
 import sootup.interceptors.BytecodeBodyInterceptors;
 import sootup.java.bytecode.frontend.inputlocation.DefaultRuntimeAnalysisInputLocation;
 import sootup.java.bytecode.frontend.inputlocation.JavaClassPathAnalysisInputLocation;
-import sootup.java.bytecode.frontend.inputlocation.OTFCompileAnalysisInputLocation;
 import sootup.java.core.views.JavaView;
 
-import javax.tools.ToolProvider;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -33,7 +35,9 @@ import java.util.stream.Stream;
  * <p>目标代码默认为 Application，构建工具解析的依赖及额外 classpath 为 Library。
  * {@code new JavaView(input)} 即可解析目标代码及这些依赖；{@link #createView()} 还会加入当前 JDK。
  *
- * <p>普通源码完全委托给 OTF，沿用其当前 JVM 编译 classpath 和默认编译参数。
+ * <p>普通源码默认委托给 OTF，沿用其当前 JVM 编译 classpath 和默认编译参数。
+ * 指定 {@link InputLocationOptions#classOutputDirectory()} 时使用 JDK 编译器写入该目录；
+ * Maven/Gradle 则调整本次构建的输出配置，多模块产物分目录保存。
  * SootUp 3.0.1 的 OTF 未提供临时输出目录的清理接口，{@link #close()} 仅转发上游关闭操作，
  * 不会删除 OTF 临时产物、调用方字节码或项目构建产物。
  *
@@ -99,6 +103,13 @@ public final class AutoCompileAnalysisInputLocation implements AnalysisInputLoca
             if (inputType == InputType.MAVEN_PROJECT && options.gradleInstallation() != null) {
                 throw new IllegalArgumentException("Gradle installation does not apply to a Maven project");
             }
+            Path output = options.classOutputDirectory();
+            if (output != null) {
+                if (inputType == InputType.BYTECODE) {
+                    throw new IllegalArgumentException("Class output directory applies only to source compilation");
+                }
+                prepareOutputDirectory(output, this.inputs);
+            }
 
             List<Path> paths = resolved.stream().flatMap(input -> input.paths().stream()).distinct().toList();
             List<Path> libraries = options.classpath();
@@ -106,29 +117,39 @@ public final class AutoCompileAnalysisInputLocation implements AnalysisInputLoca
                 CompiledProject compiled = ProjectCompiler.compile(this.inputs.getFirst(), options);
                 paths = compiled.classDirectories();
                 libraries = compiled.dependencies();
+            } else if (inputType == InputType.JAVA_SOURCE && output != null) {
+                JavaSourceCompiler.compile(paths, output);
+                paths = List.of(output);
             }
             List<Path> applicationPaths = paths;
             dependencies = libraries.stream().filter(path -> !applicationPaths.contains(path)).distinct().toList();
             // Validate library locations before OTF creates its upstream-owned temporary outputs.
             AnalysisInputLocation library = dependencies.isEmpty() ? null
                     : bytecode(dependencies, SourceType.Library, interceptors);
-            AnalysisInputLocation application = inputType == InputType.JAVA_SOURCE
-                    ? compileSources(paths, sourceType, interceptors) : bytecode(paths, sourceType, interceptors);
+            AnalysisInputLocation application = inputType == InputType.JAVA_SOURCE && output == null
+                    ? JavaSourceCompiler.compileOnTheFly(paths, sourceType, interceptors) : bytecode(paths, sourceType, interceptors);
             locations = library == null ? List.of(application) : List.of(application, library);
         } catch (IOException e) {
             throw new AnalysisInputException("Cannot inspect input paths: " + this.inputs, e);
         }
     }
 
-    private static AnalysisInputLocation compileSources(List<Path> paths, SourceType sourceType,
-                                                        List<BodyInterceptor> interceptors) {
-        if (ToolProvider.getSystemJavaCompiler() == null) {
-            throw new AnalysisInputException("OTF compilation requires a JDK with JavaCompiler");
+    private static void prepareOutputDirectory(Path output, List<Path> inputs) throws IOException {
+        if (Files.exists(output) && !Files.isDirectory(output)) {
+            throw new IllegalArgumentException("Class output path must be a directory: " + output);
         }
-        try {
-            return new OTFCompileAnalysisInputLocation(paths, sourceType, interceptors);
-        } catch (RuntimeException e) {
-            throw new AnalysisInputException("OTF compilation failed for " + paths + "\n" + e.getMessage(), e);
+        // 允许项目内的输出子目录，但不能把项目根目录或源码所在目录直接作为输出根目录。
+        for (Path input : inputs) {
+            if (input.startsWith(output)) {
+                throw new IllegalArgumentException("Class output directory must not contain an input path: " + output);
+            }
+        }
+        Files.createDirectories(output);
+        Path realOutput = output.toRealPath();
+        for (Path input : inputs) {
+            if (input.toRealPath().startsWith(realOutput)) {
+                throw new IllegalArgumentException("Class output directory must not contain an input path: " + output);
+            }
         }
     }
 

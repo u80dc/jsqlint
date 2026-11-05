@@ -3,7 +3,10 @@ package org.u80dc.jsqlint.core.spi;
 import org.u80dc.jsqlint.core.resource.AnalysisResourceSource;
 import sootup.core.inputlocation.AnalysisInputLocation;
 
-import java.util.*;
+import java.util.Collections;
+import java.util.IdentityHashMap;
+import java.util.List;
+import java.util.Set;
 
 /**
  * 解析器转交分析器所有权的输入。资源枚举流单独关闭，locations 在执行结束时关闭。

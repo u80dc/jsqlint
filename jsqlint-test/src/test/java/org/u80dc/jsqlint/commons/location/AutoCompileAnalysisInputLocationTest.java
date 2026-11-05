@@ -4,6 +4,9 @@ import org.apache.maven.cli.MavenCli;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.u80dc.jsqlint.commons.compiler.ProjectCompiler;
 import sootup.core.interceptor.BodyInterceptor;
 import sootup.core.model.SourceType;
 import sootup.java.core.views.JavaView;
@@ -69,6 +72,60 @@ class AutoCompileAnalysisInputLocationTest {
                 assertTrue(body(input, "test.Helper").contains("return 11"));
             }
         }
+    }
+
+    @Test
+    void explicitOutputCompilesSourcesTogetherAndPreservesGeneratedClassesAfterClose() throws Exception {
+        Path first = temporary.resolve("first/pkg/Example.java");
+        Path second = temporary.resolve("second");
+        write(first.getParent(), "Example.java", """
+                package pkg;
+                public class Example {
+                    public int value() { return new Helper().value(); }
+                    public static class Nested { public int value() { return 37; } }
+                }
+                """);
+        write(second, "pkg/Helper.java", "package pkg; public class Helper { public int value() { return 41; } }");
+        Path output = temporary.resolve("输出 classes with spaces");
+        var options = InputLocationOptions.defaults().withClassOutputDirectory(output.resolve("unused/.."));
+        assertEquals(output, options.classOutputDirectory());
+        try (var input = new AutoCompileAnalysisInputLocation(List.of(first, second), options)) {
+            assertEquals(JAVA_SOURCE, input.getInputType());
+            assertTrue(body(input, "pkg.Example").contains("pkg.Helper"));
+            assertTrue(body(input, "pkg.Example$Nested").contains("return 37"));
+            assertTrue(body(input, "pkg.Helper").contains("return 41"));
+        }
+        assertTrue(Files.isRegularFile(output.resolve("pkg/Example.class")));
+        assertTrue(Files.isRegularFile(output.resolve("pkg/Example$Nested.class")));
+        assertFalse(Files.exists(first.resolveSibling("Example.class")));
+        // 输出归调用方所有；后续构建可以复用，关闭分析输入不能删除它。
+        write(output, "keep.txt", "caller-owned");
+        write(second, "pkg/Helper.java", "package pkg; public class Helper { public int value() { return 43; } }");
+        try (var input = new AutoCompileAnalysisInputLocation(List.of(first, second), options)) {
+            assertTrue(body(input, "pkg.Helper").contains("return 43"));
+        }
+        try (var input = new AutoCompileAnalysisInputLocation(output)) {
+            assertEquals(BYTECODE, input.getInputType());
+            assertTrue(body(input, "pkg.Example$Nested").contains("return 37"));
+        }
+        assertEquals("caller-owned", Files.readString(output.resolve("keep.txt")));
+    }
+
+    @Test
+    void explicitOutputValidatesPathsAndReportsCompilationErrors() throws Exception {
+        Path root = temporary.resolve("source");
+        write(root, "Example.java", "public class Example { syntax error }");
+        var options = InputLocationOptions.defaults().withClassOutputDirectory(temporary.resolve("classes"));
+        var error = assertThrows(AnalysisInputException.class, () -> new AutoCompileAnalysisInputLocation(root, options));
+        assertTrue(error.getMessage().contains("Example.java"));
+        write(temporary, "not-directory", "caller-owned");
+        assertThrows(IllegalArgumentException.class, () -> new AutoCompileAnalysisInputLocation(root,
+                options.withClassOutputDirectory(temporary.resolve("not-directory"))));
+        assertThrows(IllegalArgumentException.class, () -> new AutoCompileAnalysisInputLocation(root,
+                options.withClassOutputDirectory(root)));
+        Path classes = fixture("bytecode-output", "Example.java", "public class Example {}");
+        assertThrows(IllegalArgumentException.class, () -> new AutoCompileAnalysisInputLocation(classes, options));
+        assertEquals("caller-owned", Files.readString(temporary.resolve("not-directory")));
     }
 
     @Test
@@ -193,6 +250,78 @@ class AutoCompileAnalysisInputLocationTest {
         write(root, "app/src/main/java/Example.java", "invalid Java");
         assertThrows(AnalysisInputException.class, () -> new AutoCompileAnalysisInputLocation(root, mavenOptions()));
         assertEquals(previous, System.getProperty(MavenCli.MULTIMODULE_PROJECT_DIRECTORY));
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    @Tag("integration")
+    void mavenWritesClassesToCallerDirectory(boolean multiModule) throws Exception {
+        Path root = temporary.resolve("maven");
+        if (multiModule) {
+            write(root, "pom.xml", mavenRoot("<modules><module>lib</module><module>app</module></modules>"));
+            write(root, "lib/pom.xml", mavenChild("lib", ""));
+            write(root, "app/pom.xml", mavenChild("app", "<dependencies><dependency><groupId>sample</groupId><artifactId>lib</artifactId><version>1</version></dependency></dependencies>"));
+            write(root, "lib/src/main/java/dep/Helper.java", "package dep; public class Helper { public static int value() { return 47; } }");
+        } else {
+            write(root, "pom.xml", mavenRoot("").replace("<packaging>pom</packaging>", "<packaging>jar</packaging>"));
+            write(root, "src/main/java/dep/Helper.java", "package dep; public class Helper { public static int value() { return 47; } }");
+        }
+        Path application = multiModule ? root.resolve("app") : root;
+        // 显式插件参数也必须被覆盖，不能仅修改 MavenProject 的 build.outputDirectory。
+        Path pom = root.resolve("pom.xml");
+        String originalPom = Files.readString(pom).replace("<version>3.15.0</version>", """
+                <version>3.15.0</version><configuration>
+                <outputDirectory>${project.basedir}/plugin-output</outputDirectory>
+                </configuration>
+                """);
+        Files.writeString(pom, originalPom);
+        write(application, "src/main/java/Example.java", "public class Example { public int value() { return dep.Helper.value(); } }");
+        write(application, "src/main/resources/mapper.xml", "<mapper/>");
+        Path output = temporary.resolve("Maven 输出 classes");
+        Path appOutput = multiModule ? output.resolve("group-sample/module-app") : output;
+        Path libOutput = multiModule ? output.resolve("group-sample/module-lib") : output;
+        try (var input = new AutoCompileAnalysisInputLocation(root, mavenOptions().withClassOutputDirectory(output))) {
+            assertTrue(body(input, "Example").contains("dep.Helper"));
+            assertTrue(body(input, "dep.Helper").contains("return 47"));
+            assertTrue(input.getDependencies().isEmpty());
+            assertEquals(2, new JavaView(input).getClasses().count());
+        }
+        assertTrue(Files.isRegularFile(appOutput.resolve("Example.class")));
+        assertTrue(Files.isRegularFile(libOutput.resolve("dep/Helper.class")));
+        assertEquals("<mapper/>", Files.readString(appOutput.resolve("mapper.xml")));
+        assertFalse(Files.exists(application.resolve("custom/classes/Example.class")));
+        assertFalse(Files.exists(application.resolve("plugin-output/Example.class")));
+        assertEquals(originalPom, Files.readString(pom));
+    }
+
+    @ParameterizedTest
+    @ValueSource(booleans = {false, true})
+    @Tag("integration")
+    void gradleWritesClassesToCallerDirectory(boolean multiModule) throws Exception {
+        Path root = temporary.resolve("gradle");
+        write(root, "settings.gradle", "rootProject.name = 'sample'\n" + (multiModule ? "include 'lib', 'app'\n" : ""));
+        String script = multiModule ? """
+                subprojects { apply plugin: 'java-library' }
+                project(':app') { dependencies { implementation project(':lib') } }
+                """ : "plugins { id 'java' }";
+        write(root, "build.gradle", script);
+        Path application = multiModule ? root.resolve("app") : root;
+        Path library = multiModule ? root.resolve("lib") : root;
+        write(application, "src/main/java/Example.java", "public class Example { public int value() { return dep.Helper.value(); } }");
+        write(library, "src/main/java/dep/Helper.java", "package dep; public class Helper { public static int value() { return 53; } }");
+        Path output = temporary.resolve("Gradle 输出 ' classes");
+        Path appOutput = multiModule ? output.resolve("project-%3Aapp") : output;
+        Path libOutput = multiModule ? output.resolve("project-%3Alib") : output;
+        try (var input = new AutoCompileAnalysisInputLocation(root, gradleOptions().withClassOutputDirectory(output))) {
+            assertTrue(body(input, "Example").contains("dep.Helper"));
+            assertTrue(body(input, "dep.Helper").contains("return 53"));
+            assertTrue(input.getDependencies().isEmpty());
+            assertEquals(2, new JavaView(input).getClasses().count());
+        }
+        assertTrue(Files.isRegularFile(appOutput.resolve("Example.class")));
+        assertTrue(Files.isRegularFile(libOutput.resolve("dep/Helper.class")));
+        assertFalse(Files.exists(application.resolve("build/classes/java/main/Example.class")));
+        assertEquals(script, Files.readString(root.resolve("build.gradle")));
     }
 
     @Test

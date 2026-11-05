@@ -1,5 +1,6 @@
 package org.u80dc.jsqlint.core;
 
+import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
 import org.u80dc.jsqlint.core.input.BytecodeInputResolver;
 import org.u80dc.jsqlint.core.spi.AnalysisInputResolver;
@@ -23,6 +24,7 @@ import static org.u80dc.jsqlint.core.AnalysisResult.Status;
  *
  * @author u80dc
  */
+@SuppressWarnings("unused")
 public final class Analyzer {
     private final List<SqlAnalysisModule> modules;
     private final List<AnalysisInputResolver> resolvers;
@@ -78,12 +80,12 @@ public final class Analyzer {
      * @param source 字节码文件、类目录或 JAR；引入 commons 后也支持源码及项目目录
      * @param dependencies 额外依赖 JAR 或目录；null 表示不额外指定依赖
      */
-    public AnalysisResult analyze(Path source, @Nullable Path dependencies) {
+    public @NonNull AnalysisResult analyze(Path source, @Nullable Path dependencies) {
         return analyze(source, dependencies, AnalysisOptions.defaults());
     }
 
     /** 带进度、取消和时间预算的路径入口；本入口负责关闭解析器转交的输入。 */
-    public AnalysisResult analyze(Path source, @Nullable Path dependencies, AnalysisOptions options) {
+    public @NonNull AnalysisResult analyze(Path source, @Nullable Path dependencies, AnalysisOptions options) {
         Objects.requireNonNull(source, "source");
         Objects.requireNonNull(options, "options");
         Path input = source.toAbsolutePath().normalize();

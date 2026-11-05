@@ -1,10 +1,14 @@
 package org.u80dc.jsqlint.commons.location;
 
+import org.u80dc.jsqlint.commons.compiler.GradleProjectCompiler;
+import org.u80dc.jsqlint.commons.compiler.JavaSourceFiles;
+import org.u80dc.jsqlint.commons.compiler.MavenProjectCompiler;
 import org.u80dc.jsqlint.core.resource.PathResourceSource;
 import org.u80dc.jsqlint.core.spi.AnalysisInputResolver;
 import org.u80dc.jsqlint.core.spi.PreparedInput;
 
-import java.nio.file.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Objects;
 
@@ -30,8 +34,7 @@ public final class AutoCompileInputResolver implements AnalysisInputResolver {
     public boolean supports(Path source) throws Exception {
         if (Files.isRegularFile(source)) return source.toString().endsWith(".java");
         if (!Files.isDirectory(source)) return false;
-        for (String marker : List.of("pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"))
-            if (Files.exists(source.resolve(marker))) return true;
+        if (MavenProjectCompiler.isProject(source) || GradleProjectCompiler.isProject(source)) return true;
         return !JavaSourceFiles.collect(source).isEmpty();
     }
 

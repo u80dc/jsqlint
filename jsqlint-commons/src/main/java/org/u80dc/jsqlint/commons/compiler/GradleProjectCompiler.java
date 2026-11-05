@@ -1,7 +1,10 @@
-package org.u80dc.jsqlint.commons.location;
+package org.u80dc.jsqlint.commons.compiler;
 
 import org.gradle.tooling.GradleConnectionException;
 import org.gradle.tooling.GradleConnector;
+import org.u80dc.jsqlint.commons.location.AnalysisInputException;
+import org.u80dc.jsqlint.commons.location.InputLocationOptions;
+import org.u80dc.jsqlint.commons.location.InputMode;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -21,13 +24,18 @@ import java.util.UUID;
  *
  * @author u80dc
  */
-final class GradleProjectCompiler {
+public final class GradleProjectCompiler {
     private GradleProjectCompiler() {}
 
-    static CompiledProject compile(Path root, InputLocationOptions options) throws IOException {
-        boolean buildFile = List.of("build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts")
+    /** 判断目录是否包含 Gradle 构建文件，支持 Groovy 和 Kotlin DSL。 */
+    public static boolean isProject(Path root) {
+        return List.of("build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts")
                 .stream().anyMatch(name -> Files.isRegularFile(root.resolve(name)));
-        if (!buildFile) throw new AnalysisInputException("No Gradle build files: " + root);
+    }
+
+    /** 编译 Gradle 主代码，并返回校验后的 class 目录和分析依赖。 */
+    public static CompiledProject compile(Path root, InputLocationOptions options) throws IOException {
+        if (!isProject(root)) throw new AnalysisInputException("No Gradle build files: " + root);
         Path temporary = Files.createTempDirectory("jsqlint-gradle-");
         GradleConnector connector = GradleConnector.newConnector().forProjectDirectory(root.toFile());
         try {
@@ -39,7 +47,7 @@ final class GradleProjectCompiler {
             Path metadata = temporary.resolve("outputs.properties");
             Path script = temporary.resolve("compile.gradle");
             String taskName = "jsqlintCompile_" + UUID.randomUUID().toString().replace("-", "");
-            Files.writeString(script, initScript(taskName, metadata), StandardCharsets.UTF_8);
+            Files.writeString(script, initScript(taskName, metadata, options.classOutputDirectory()), StandardCharsets.UTF_8);
             var arguments = new ArrayList<>(options.buildArguments());
             arguments.addAll(List.of("--init-script", script.toString(), "--console=plain", "--no-configuration-cache"));
             var output = new ByteArrayOutputStream();
@@ -59,7 +67,7 @@ final class GradleProjectCompiler {
             }
             var dependencies = new ArrayList<>(options.classpath());
             dependencies.addAll(paths(properties, "dependency"));
-            return ProjectCompiler.result(root, InputMode.GRADLE_PROJECT, paths(properties, "classes"), dependencies);
+            return CompiledProject.fromOutputs(root, InputMode.GRADLE_PROJECT, paths(properties, "classes"), dependencies);
         } finally {
             connector.disconnect();
             deleteTemporaryDirectory(temporary);
@@ -96,8 +104,12 @@ final class GradleProjectCompiler {
         return paths;
     }
 
-    private static String initScript(String taskName, Path metadata) {
-        String destination = metadata.toString().replace("\\", "\\\\").replace("'", "\\'");
+    private static String groovyString(Path path) {
+        return "'" + path.toString().replace("\\", "\\\\").replace("'", "\\'")
+                .replace("\r", "\\r").replace("\n", "\\n") + "'";
+    }
+
+    private static String initScript(String taskName, Path metadata, Path classOutputDirectory) {
         return """
                 gradle.projectsEvaluated {
                     def mainSets = gradle.rootProject.allprojects.collect { p ->
@@ -105,6 +117,26 @@ final class GradleProjectCompiler {
                         def main = sets == null ? null : sets.findByName('main')
                         main == null ? null : [project: p, sourceSet: main]
                     }.findAll { it != null }
+                    def outputRoot = %s
+                    if (outputRoot != null) {
+                        mainSets.each { entry ->
+                            // 按 source set 的产物任务修改编译输出，保留任务依赖及项目间 classpath 关联。
+                            def producers = entry.sourceSet.output.classesDirs.buildDependencies.getDependencies(null)
+                            def compilers = producers.findAll { it.hasProperty('destinationDirectory') }
+                            if (compilers.empty || compilers.size() != producers.size()) {
+                                throw new GradleException('Cannot configure class output directory for ' + entry.project.path)
+                            }
+                            def moduleOutput = mainSets.size() == 1 ? new File(outputRoot)
+                                : new File(outputRoot, 'project-' + java.net.URLEncoder.encode(entry.project.path, 'UTF-8'))
+                            compilers.each { compiler ->
+                                def destination = compilers.size() == 1 ? moduleOutput : new File(moduleOutput, compiler.name)
+                                compiler.destinationDirectory.set(destination)
+                            }
+                            // 更新 source set 元数据，避免继续收集旧输出目录。
+                            entry.sourceSet.output.classesDirs.setFrom(compilers.collect { it.destinationDirectory })
+                            entry.sourceSet.output.classesDirs.builtBy(compilers)
+                        }
+                    }
                     gradle.rootProject.tasks.register('%s') {
                         dependsOn mainSets.collect { it.project.tasks.named(it.sourceSet.classesTaskName) }
                         dependsOn mainSets.collect { it.sourceSet.compileClasspath }
@@ -127,10 +159,11 @@ final class GradleProjectCompiler {
                             properties.setProperty('dependency.count', dependencies.size().toString())
                             classes.eachWithIndex { file, i -> properties.setProperty('classes.' + i, file.absolutePath) }
                             dependencies.eachWithIndex { file, i -> properties.setProperty('dependency.' + i, file.absolutePath) }
-                            new File('%s').withWriter('UTF-8') { writer -> properties.store(writer, 'JSQLint main outputs') }
+                            new File(%s).withWriter('UTF-8') { writer -> properties.store(writer, 'JSQLint main outputs') }
                         }
                     }
                 }
-                """.formatted(taskName, destination);
+                """.formatted(classOutputDirectory == null ? "null" : groovyString(classOutputDirectory),
+                        taskName, groovyString(metadata));
     }
 }
