@@ -1,5 +1,11 @@
 # jsqlint-commons
 
+引入本模块后，`core.Analyzer` 可通过 ServiceLoader 自动发现
+`AutoCompileInputResolver`，在 Path 入口按需编译源码及 Maven/Gradle 项目。
+编译产物交回 core 分析，core 无需反向依赖 commons。配置构建参数时可显式注册
+`new AutoCompileInputResolver(inputLocationOptions)`。
+统一入口、输入所有权及取消机制见 [分析器说明](../jsqlint-core/ANALYSIS.md)。
+
 公共基础模块，包路径为 `org.u80dc.jsqlint.commons`。`location` 包提供统一输入入口
 `AutoCompileAnalysisInputLocation implements AnalysisInputLocation`，可直接传给 SootUp 的 `JavaView`。
 

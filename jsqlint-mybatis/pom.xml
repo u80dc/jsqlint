@@ -11,4 +11,11 @@
     <artifactId>jsqlint-mybatis</artifactId>
     <packaging>jar</packaging>
     <description>MyBatis SQL 分析模块</description>
+    <dependencies>
+        <dependency>
+            <groupId>org.u80dc.jsqlint</groupId>
+            <artifactId>jsqlint-core</artifactId>
+            <version>${revision}</version>
+        </dependency>
+    </dependencies>
 </project>

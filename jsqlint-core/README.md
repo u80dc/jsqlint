@@ -1,5 +1,8 @@
 # jsqlint-core
 
+统一分析入口、可选模块 SPI、资源输入及长任务控制见 [分析器使用说明](ANALYSIS.md)。
+core 独立提供核心分析能力；commons、jdbc、mybatis 按需引入。
+
 核心节点位于 `org.u80dc.jsqlint.core.node`，作为通用动态 SQL 中间表示，
 独立于 JDBC、MyBatis、旧 analysis 模块和 SootUp。两种来源共用同一套节点：
 
@@ -9,8 +12,8 @@ MyBatis 动态语句 ──适配/展开──┐
 JDBC 字符串拼接 ──转换───────┘
 ```
 
-`jsqlint-jdbc` 后续负责把拼接逻辑转换成模板；`jsqlint-mybatis` 后续负责
-mapper、include、参数名等框架上下文。`core` 接收转换结果，也允许直接构造节点。
+`jsqlint-jdbc` 识别 SQL 参数位置，通用拼接值追踪与节点构造由 core 执行；
+`jsqlint-mybatis` 适配 mapper、include 等框架上下文。`core` 接收转换结果，也允许直接构造节点。
 节点采用密封接口、不可变列表及构造校验，不需要为不同来源建立平行的节点继承体系。
 
 ## 节点数据模型

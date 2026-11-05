@@ -6,11 +6,11 @@
 
 | 模块 | 说明 |
 |---|---|
-| `jsqlint-analysis` | SQL 静态分析引擎（SootUp 字节码分析、参数追踪、值推断） |
+| `jsqlint-analysis` | 旧 SQL 静态分析引擎，保留参考，不参与新 core 流程 |
 | `jsqlint-commons` | 统一 SootUp 输入，支持字节码、Java 源码及 Maven/Gradle 项目自动编译（[使用说明](jsqlint-commons/README.md)） |
-| `jsqlint-core` | 核心节点模型、脚本解析及支持未知值的 SQL 渲染（[使用说明](jsqlint-core/README.md)） |
-| `jsqlint-jdbc` | JDBC SQL 分析模块（已建立骨架，待迁移逻辑） |
-| `jsqlint-mybatis` | MyBatis SQL 分析模块（已建立骨架，待迁移逻辑） |
+| `jsqlint-core` | 统一分析入口、资源与模块 SPI、SQL 值追踪及动态节点渲染（[分析器说明](jsqlint-core/ANALYSIS.md)） |
+| `jsqlint-jdbc` | 可选 JDBC 调用点与 SQL 参数适配 |
+| `jsqlint-mybatis` | 可选 MyBatis XML、include 和 SQL 注解适配 |
 | `jsqlint-test` | 集中存放所有模块的测试代码与测试资源（[使用说明](jsqlint-test/README.md)） |
 
 ## 构建

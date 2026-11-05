@@ -35,6 +35,11 @@
     </repositories>
 
     <dependencies>
+        <dependency>
+            <groupId>org.u80dc.jsqlint</groupId>
+            <artifactId>jsqlint-core</artifactId>
+            <version>${revision}</version>
+        </dependency>
         <!-- 编译产物通过 SootUp 字节码前端转换为 Jimple，版本继承父 POM。 -->
         <dependency>
             <groupId>org.soot-oss</groupId>

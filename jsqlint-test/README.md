@@ -11,6 +11,8 @@
 JUnit 依赖由本模块声明，版本由父 POM 的 JUnit BOM 管理。
 本模块以 `test` scope 依赖被测模块，目前为 `jsqlint-core`、`jsqlint-commons`；新增其他模块的测试时，
 在本模块添加对应的测试范围依赖。业务模块无需反向依赖本模块。
+当前还以 test scope 引入 jdbc、mybatis，验证统一分析入口、SPI、字节码与源码输入、
+资源筛选、框架起点、值传播、取消、超时和输入关闭约定。
 
 ## 运行
 
