@@ -2,6 +2,8 @@ package org.u80dc.jsqlint.commons.compiler;
 
 import org.gradle.tooling.GradleConnectionException;
 import org.gradle.tooling.GradleConnector;
+import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 import org.u80dc.jsqlint.commons.location.AnalysisInputException;
 import org.u80dc.jsqlint.commons.location.InputLocationOptions;
 import org.u80dc.jsqlint.commons.location.InputMode;
@@ -18,6 +20,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Properties;
 import java.util.UUID;
+import java.util.stream.Stream;
 
 /**
  * 用临时 init script 读取 Gradle 实际 main source set 产物，不修改项目构建文件。
@@ -29,8 +32,8 @@ public final class GradleProjectCompiler {
 
     /** 判断目录是否包含 Gradle 构建文件，支持 Groovy 和 Kotlin DSL。 */
     public static boolean isProject(Path root) {
-        return List.of("build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts")
-                .stream().anyMatch(name -> Files.isRegularFile(root.resolve(name)));
+        return Stream.of("build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts")
+                .anyMatch(name -> Files.isRegularFile(root.resolve(name)));
     }
 
     /** 编译 Gradle 主代码，并返回校验后的 class 目录和分析依赖。 */
@@ -78,13 +81,13 @@ public final class GradleProjectCompiler {
         // This directory was created by this invocation. Do not follow symlinks or remove project outputs.
         Files.walkFileTree(directory, new SimpleFileVisitor<>() {
             @Override
-            public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) throws IOException {
+            public @NonNull FileVisitResult visitFile(@NonNull Path file, @NonNull BasicFileAttributes attributes) throws IOException {
                 Files.delete(file);
                 return FileVisitResult.CONTINUE;
             }
 
             @Override
-            public FileVisitResult postVisitDirectory(Path dir, IOException failure) throws IOException {
+            public @NonNull FileVisitResult postVisitDirectory(@NonNull Path dir, @Nullable IOException failure) throws IOException {
                 if (failure != null) throw failure;
                 Files.delete(dir);
                 return FileVisitResult.CONTINUE;

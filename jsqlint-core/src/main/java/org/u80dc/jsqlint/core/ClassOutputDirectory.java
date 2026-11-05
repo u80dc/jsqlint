@@ -1,11 +1,12 @@
 package org.u80dc.jsqlint.core;
 
+import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
 
 import java.io.IOException;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.FileVisitResult;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 
@@ -69,19 +70,19 @@ final class ClassOutputDirectory implements AutoCloseable {
         // 不跟随符号链接；链接作为目录项删除，不遍历其目标。额外校验 Windows 目录联接。
         Files.walkFileTree(path, new SimpleFileVisitor<>() {
             @Override
-            public FileVisitResult preVisitDirectory(Path directory, BasicFileAttributes attributes) throws IOException {
+            public @NonNull FileVisitResult preVisitDirectory(@NonNull Path directory, @NonNull BasicFileAttributes attributes) throws IOException {
                 verifyDirectory(directory, realOutput.resolve(path.relativize(directory)));
                 return FileVisitResult.CONTINUE;
             }
 
             @Override
-            public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) throws IOException {
+            public @NonNull FileVisitResult visitFile(@NonNull Path file, @NonNull BasicFileAttributes attributes) throws IOException {
                 Files.delete(file);
                 return FileVisitResult.CONTINUE;
             }
 
             @Override
-            public FileVisitResult postVisitDirectory(Path directory, @Nullable IOException error) throws IOException {
+            public @NonNull FileVisitResult postVisitDirectory(@NonNull Path directory, @Nullable IOException error) throws IOException {
                 if (error != null) throw error;
                 if (removeDirectory || !directory.equals(path)) Files.delete(directory);
                 return FileVisitResult.CONTINUE;

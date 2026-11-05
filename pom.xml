@@ -7,7 +7,6 @@
     <version>${revision}</version>
     <packaging>pom</packaging>
     <modules>
-        <module>jsqlint-analysis</module>
         <module>jsqlint-commons</module>
         <module>jsqlint-core</module>
         <module>jsqlint-jdbc</module>
@@ -29,6 +28,8 @@
         <junit.version>6.0.3</junit.version>
         <jspecify.version>1.0.0</jspecify.version>
         <lombok.version>1.18.46</lombok.version>
+        <asm.version>9.11.1</asm.version>
+        <plexus-utils.version>3.6.1</plexus-utils.version>
     </properties>
 
     <dependencyManagement>
@@ -46,6 +47,14 @@
                 <groupId>org.slf4j</groupId>
                 <artifactId>slf4j-bom</artifactId>
                 <version>${slf4j.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+            <!-- Source: https://mvnrepository.com/artifact/org.ow2.asm/asm-bom -->
+            <dependency>
+                <groupId>org.ow2.asm</groupId>
+                <artifactId>asm-bom</artifactId>
+                <version>${asm.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
@@ -72,6 +81,13 @@
                 <version>${logback.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
+            </dependency>
+
+            <!-- 统一 Maven/Plexus 的传递依赖，3.6.1 已修复 CVE-2025-67030。 -->
+            <dependency>
+                <groupId>org.codehaus.plexus</groupId>
+                <artifactId>plexus-utils</artifactId>
+                <version>${plexus-utils.version}</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

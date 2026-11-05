@@ -16,7 +16,6 @@
         <maven-embedder.version>3.9.16</maven-embedder.version>
         <maven-resolver.version>1.9.27</maven-resolver.version>
         <wagon.version>3.5.3</wagon.version>
-        <plexus-utils.version>3.6.1</plexus-utils.version>
         <gradle-tooling-api.version>9.8.2</gradle-tooling-api.version>
     </properties>
 
@@ -99,7 +98,6 @@
         <dependency>
             <groupId>org.codehaus.plexus</groupId>
             <artifactId>plexus-utils</artifactId>
-            <version>${plexus-utils.version}</version>
         </dependency>
 
         <!-- 通过 GradleConnector 调用目标工程的 Gradle 构建。 -->

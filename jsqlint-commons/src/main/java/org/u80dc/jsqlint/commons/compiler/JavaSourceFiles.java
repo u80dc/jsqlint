@@ -1,5 +1,7 @@
 package org.u80dc.jsqlint.commons.compiler;
 
+import org.jspecify.annotations.NonNull;
+
 import java.io.IOException;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
@@ -26,7 +28,7 @@ public final class JavaSourceFiles {
         Set<String> excluded = Set.of(".git", ".gradle", ".idea", ".jsqlint");
         Files.walkFileTree(sourceRoot, new SimpleFileVisitor<>() {
             @Override
-            public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attributes) {
+            public @NonNull FileVisitResult preVisitDirectory(@NonNull Path dir, @NonNull BasicFileAttributes attributes) {
                 // An explicitly supplied source directory can contain packages named build, out or test.
                 if (!dir.equals(sourceRoot) && (excluded.contains(dir.getFileName().toString())
                         || (!sourceRoot.equals(root) && dir.equals(root.resolve("src/test"))))) {
@@ -36,7 +38,7 @@ public final class JavaSourceFiles {
             }
 
             @Override
-            public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) {
+            public @NonNull FileVisitResult visitFile(@NonNull Path file, @NonNull BasicFileAttributes attributes) {
                 if (attributes.isRegularFile() && file.toString().endsWith(".java")) sources.add(file);
                 return FileVisitResult.CONTINUE;
             }

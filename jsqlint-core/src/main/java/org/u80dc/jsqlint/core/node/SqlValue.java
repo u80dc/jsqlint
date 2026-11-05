@@ -15,22 +15,14 @@ public sealed interface SqlValue permits SqlValue.Known, SqlValue.Unknown {
             return Truth.UNKNOWN;
         }
         Object value = ((Known) this).value();
-        if (value == null) {
-            return Truth.FALSE;
-        }
-        if (value instanceof Boolean bool) {
-            return bool ? Truth.TRUE : Truth.FALSE;
-        }
-        if (value instanceof BigDecimal decimal) {
-            return decimal.signum() == 0 ? Truth.FALSE : Truth.TRUE;
-        }
-        if (value instanceof BigInteger integer) {
-            return integer.signum() == 0 ? Truth.FALSE : Truth.TRUE;
-        }
-        if (value instanceof Number number) {
-            return number.doubleValue() == 0 ? Truth.FALSE : Truth.TRUE;
-        }
-        return Truth.TRUE;
+        return switch (value) {
+            case null -> Truth.FALSE;
+            case Boolean bool -> bool ? Truth.TRUE : Truth.FALSE;
+            case BigDecimal decimal -> decimal.signum() == 0 ? Truth.FALSE : Truth.TRUE;
+            case BigInteger integer -> integer.signum() == 0 ? Truth.FALSE : Truth.TRUE;
+            case Number number -> number.doubleValue() == 0 ? Truth.FALSE : Truth.TRUE;
+            default -> Truth.TRUE;
+        };
     }
 
     enum Truth {TRUE, FALSE, UNKNOWN}

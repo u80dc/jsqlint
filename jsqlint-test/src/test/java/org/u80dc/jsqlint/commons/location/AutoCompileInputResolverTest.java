@@ -1,5 +1,6 @@
 package org.u80dc.jsqlint.commons.location;
 
+import org.jspecify.annotations.NonNull;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -360,10 +361,10 @@ class AutoCompileInputResolverTest {
     }
 
     private static class EmptyLocation implements AnalysisInputLocation {
-        public SourceType getSourceType() { return SourceType.Application; }
-        public List<BodyInterceptor> getBodyInterceptors() { return List.of(); }
-        public Optional<? extends SootClassSource> getClassSource(ClassType type, View view) { return Optional.empty(); }
-        public Stream<? extends SootClassSource> getClassSources(View view) { return Stream.empty(); }
+        public @NonNull SourceType getSourceType() { return SourceType.Application; }
+        public @NonNull List<BodyInterceptor> getBodyInterceptors() { return List.of(); }
+        public @NonNull Optional<? extends SootClassSource> getClassSource(@NonNull ClassType type, @NonNull View view) { return Optional.empty(); }
+        public @NonNull Stream<? extends SootClassSource> getClassSources(@NonNull View view) { return Stream.empty(); }
         public void close() throws IOException {}
     }
 }

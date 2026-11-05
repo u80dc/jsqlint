@@ -1,5 +1,6 @@
 package org.u80dc.jsqlint.core.input;
 
+import org.jspecify.annotations.NonNull;
 import org.u80dc.jsqlint.core.resource.PathResourceSource;
 import org.u80dc.jsqlint.core.spi.AnalysisInputResolver;
 import org.u80dc.jsqlint.core.spi.PreparedInput;
@@ -62,10 +63,10 @@ public final class BytecodeInputResolver implements AnalysisInputResolver {
         String packageName = name.contains(".") ? name.substring(0, name.lastIndexOf('.')) : "";
         return new ClassFileBasedAnalysisInputLocation(source, packageName, SourceType.Application) {
             @Override
-            protected String fromPath(Path base, Path path) { return name; }
+            protected @NonNull String fromPath(@NonNull Path base, Path path) { return name; }
 
             @Override
-            public Optional<JavaSootClassSource> getClassSource(ClassType type, View view) {
+            public @NonNull Optional<JavaSootClassSource> getClassSource(@NonNull ClassType type, @NonNull View view) {
                 // 单文件输入只响应自身类名，防止同包中的其他类被错误解析为当前文件。
                 return type.toString().equals(name) ? super.getClassSource(type, view) : Optional.empty();
             }

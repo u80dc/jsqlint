@@ -1,5 +1,6 @@
 package org.u80dc.jsqlint.core;
 
+import org.jspecify.annotations.NonNull;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.u80dc.jsqlint.core.node.*;
@@ -510,12 +511,12 @@ class AnalyzerTest {
         boolean closed;
         int closeCount;
         TrackingLocation(AnalysisInputLocation delegate) { this.delegate = delegate; }
-        public SourceType getSourceType() { return delegate == null ? SourceType.Application : delegate.getSourceType(); }
-        public List<BodyInterceptor> getBodyInterceptors() { return delegate == null ? List.of() : delegate.getBodyInterceptors(); }
-        public Optional<? extends SootClassSource> getClassSource(ClassType type, View view) {
+        public @NonNull SourceType getSourceType() { return delegate == null ? SourceType.Application : delegate.getSourceType(); }
+        public @NonNull List<BodyInterceptor> getBodyInterceptors() { return delegate == null ? List.of() : delegate.getBodyInterceptors(); }
+        public @NonNull Optional<? extends SootClassSource> getClassSource(@NonNull ClassType type, @NonNull View view) {
             return delegate == null ? Optional.empty() : delegate.getClassSource(type, view);
         }
-        public Stream<? extends SootClassSource> getClassSources(View view) {
+        public @NonNull Stream<? extends SootClassSource> getClassSources(@NonNull View view) {
             return delegate == null ? Stream.empty() : delegate.getClassSources(view);
         }
         public void close() throws Exception { closed = true; closeCount++; if (delegate != null) delegate.close(); }
