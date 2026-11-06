@@ -1,0 +1,28 @@
+@baseUrl = http://127.0.0.1:8080
+
+### 数值拼接查询，返回 alice
+GET {{baseUrl}}/api/users/1
+
+### 默认搜索：两个绑定参数，返回全部五个用户
+GET {{baseUrl}}/api/users
+
+### 动态启用状态条件：三个绑定参数，按年龄排序，返回 alice 和 O'Neil
+GET {{baseUrl}}/api/users?minimumAge=18&activeOnly=true&sort=age&limit=2
+
+### 单引号经过参数绑定，返回 O'Neil
+GET {{baseUrl}}/api/users?keyword=O%27Neil
+
+### _ 和 % 作为普通字符匹配，返回 team_100%
+GET {{baseUrl}}/api/users?keyword=_100%25
+
+### 业务入口固定 minimumAge=18、activeOnly=true、sort=age、limit=10
+GET {{baseUrl}}/api/users/active-adults
+
+### 数值分支修正：limit 小于 1 时按 1 处理
+GET {{baseUrl}}/api/users?limit=0
+
+### 返回 404
+GET {{baseUrl}}/api/users/999
+
+### 返回 400
+GET {{baseUrl}}/api/users?sort=unsupported
