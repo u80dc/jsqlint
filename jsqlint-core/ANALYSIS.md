@@ -69,7 +69,9 @@ commons 的项目资源默认扫描项目目录，排除 src/test、target、bui
 ```java
 var config = AnalyzerConfig.defaults()
         .withTimeout(Duration.ofMinutes(5))
-        .withMaxTraceDepth(32)
+        .withMaxCallDepth(32)
+        .withMaxTraceDepth(256)
+        .withMaxTraceNodes(10000)
         .withMethodCacheSize(128)
         .withCleanupClassOutput(true);
 var analyzer = new Analyzer(config);
@@ -85,11 +87,13 @@ analyzer.analyze(Path.of("project-c")); // 仍使用五分钟超时和结束清�
 
 | 配置归属 | 内容 |
 |---|---|
-| `AnalyzerConfig` | 默认超时、最大追踪深度、方法缓存容量、默认结束清理策略、输入扩展配置 |
+| `AnalyzerConfig` | 默认超时、调用深度、数据依赖深度与节点预算、方法缓存容量、默认结束清理策略、输入扩展配置 |
 | `AnalysisOptions` | 本次超时覆盖、取消信号、监听器、输出标识、结束清理覆盖 |
 
 配置优先级为：单次显式覆盖 → Analyzer 实例默认值；`AnalyzerConfig.defaults()` 提供系统默认值：
-不限时、追踪深度 32、方法缓存容量 128、保留编译产物。
+不限时、调用深度 32、数据依赖深度 256、单次溯源访问节点数 10000、方法缓存容量 128、保留编译产物。
+`withMaxTraceDepth` 现在只调整数据依赖展开深度，不再改变调用栈预算；调用深度使用 `withMaxCallDepth`。
+旧的四参数、五参数构造器仍将显式传入的共享深度同时用于调用和数据依赖，保持原构造方式的含义。
 `AnalysisOptions.defaults()` 的 timeout 和 cleanupClassOutput 为 null，表示继承实例配置；
 显式传入 `Duration.ZERO` 表示本次不限时，显式传入 false 表示本次保留产物。
 `withTimeout(null)`、`withCleanupClassOutput(null)` 可恢复继承。
@@ -334,9 +338,12 @@ for (var sql : result.rawSqls()) {
 - 从入口向使用点重演赋值、参数传递、方法返回、分支、数组元素、字符串拼接/替换、
   trim/strip、大小写转换、substring/charAt/repeat、长度判断、基本类型包装/拆箱/解析、
   算术运算、取负和类型转换。整数运算保留 Java 的溢出、整数除法及移位语义。
-- 同一语句内复用同一外部输入的样例；重复引用同一分支节点时保留一致的选择。
-  多个独立操作数的分支会组合成多个候选。当前不求解业务路径条件，因此随机样例与候选路径
-  不保证在实际运行中可行；大小写转换使用分析器 JVM 的默认 Locale。
+- 同一语句内复用同一外部输入的样例。`ValueTrace.Variable.callContext()` 保存该变量所在的调用上下文，
+  因此同一辅助方法的两次调用分别保留内部变量和返回分支，不会错误地合并选择。
+  同一局部值按“调用上下文、变量、到达定义集合”关联分支，跨读取位置及原样传参仍保持选择一致；
+  重新赋值改变定义集合后，不再沿用原选择。来源标识保留在链中，输入关闭后仍可读取。
+  多个独立操作数的分支会组合成多个候选。这里是单参数候选列表，不保证多个参数任意组合后可行；
+  联合约束另见 `jointInference()`。大小写转换使用分析器 JVM 的默认 Locale。
 - 未建模的方法、复杂对象/字段操作、格式解析失败、空指针或越界等重演异常保留为
   `SqlValue.Unknown(reason)`，不吞掉该路径或冒充 `Known(null)`。一个分支失败不丢弃其他分支。
   `complete()` 只说明重演是否完整，`sampled()` 用于区分推测样例与已知字面量推导结果。
@@ -346,12 +353,89 @@ for (var sql : result.rawSqls()) {
 例如入口传入 `"O'Neil"`，经过 `replace("'", "''")` 后候选值为 `"O''Neil"`，
 初始值列表仍保存原字符串；入口 `int id` 的 `id * 2` 会先生成整数样例，再计算乘积。
 `binding.inference()` 表示传给 JDBC setter 的 Java 值，raw 槽位推断表示源码转换之后的值；
+经 `String.valueOf` 或 Java 字符串拼接转换的槽位，其推断 `type()` 为 `java.lang.String`，
+原始数值/布尔/字符类型继续保留在转换前的节点和 `initialValues()` 中，JDBC 绑定值的类型保持不变。
+例如 `id=12` 时，`("SELECT " + id).replace("1", "X")` 的槽位推断为 `"X2"`；
+`name=null` 拼接为文本后再 `.replace("l", "L")` 得到 `"nuLL"`，与直接对 null 调用 replace 的异常区分。
 本阶段只保存结果，不自动执行 SQL，也不将 JDBC `?` 与拼接槽位混合替换。
 
 需要可复现或自定义输入时，可以直接对保存的链使用
 `new ParameterValueInferencer(new RandomExternalValueGenerator(42)).infer(binding.value())`，
 或实现 `ExternalValueGenerator`。推断器实例缓存入口样例，适合单条语句/调用上下文使用，
 不应作为跨项目的共享全局对象。
+
+### SQL 与多个参数的联合路径约束
+
+Analyzer 会为每个 raw SQL 候选填充 `sql.jointInference()`。原有 `parameters()`、`bindings()`
+继续提供独立候选列表；需要成组模拟 SQL 时使用 `combinations()`，不能再对独立列表做笛卡尔积：
+
+```java
+for (var sql : result.rawSqls()) {
+    sql.jointInference().ifPresent(joint -> {
+        System.out.println(joint.status());
+        for (var combination : joint.combinations()) {
+            System.out.println(combination.status());
+            combination.parameters().forEach((name, value) -> System.out.println(name + "=" + value.value()));
+            for (var binding : combination.bindings()) {
+                System.out.println(binding.keyValue().value() + "=" + binding.value().value());
+            }
+            System.out.println(combination.conditions()); // 选定到达定义后的条件传播链及期望真假
+            System.out.println(combination.inputs());     // 共同用于重演的入口模型
+        }
+    });
+}
+```
+
+一组 `Combination` 同时保存 SQL 拼接槽位、JDBC 绑定下标/名称及绑定值，每个值仍带有传播链和初始值。
+求解器先检查它们的定义/使用位置是否能在同一调用帧的控制流路径上共存，再合并各调用帧的条件；
+同一 helper 的不同调用按上下文区分。随后生成满足条件的入口模型，用同一模型重新重演所有参数，
+不会把先前随机生成但不满足分支的样例当作可行解。
+同一次调用按“调用者帧＋调用位置”共享实际分派目标，SQL、绑定参数和条件不能各自选择不同实现。
+约束覆盖调用栈的每一层；两个实现通过同一辅助方法返回，也不能绕过上层目标的一致性检查。
+外部/未解析分派与项目实现互斥，但不同调用位置或不同调用上下文仍可独立选择。
+框架快照通过 `SqlTraceSource.controlFlowPaths()` 提供路径析取：JDBC 把通用逆向遍历得到的边传给 core，
+使 setter 覆盖、clearParameters 和 addBatch 快照的选择也参与条件求解。
+同一状态来自多条路径时保留析取，不要求这些路径同时成立；来源或别名诊断仍会令联合结果为 UNKNOWN。
+
+条件表达式中调用项目辅助方法时，按需补全被调用帧的控制路径，并继续追踪嵌套条件方法，直到依赖闭合。
+同一个方法的多个返回位置按“任取一个返回”处理；虚调用的不同项目实现分别求解，不把互斥目标合取。
+例如 `if (valid(id))`、`valid(id) { return id > 0; }` 会将 `id > 0` 纳入共同入口模型，
+后续绑定值也使用该模型重演。外部实现、递归截断和无法建模的返回值仍保留未知分支。
+
+外部数组元素在选定传播链中使用 `ARRAY_INPUT`，同时保留下标和入口数组的依赖。
+再次重演会重新计算下标，使用对应元素的输入模型；数组模型为 null、未知或类型不符时，不再生成已知元素。
+调用方直接提供具体 Java 数组模型时，读取其实际元素并检查越界及数组/元素模型冲突，真实 null 元素仍为已知 null。
+没有具体数组模型时继续生成元素样例；这不表示已经推断数组长度。联合模型要求数组为 null 却又读取元素时，
+该组合保留诊断并标为 UNKNOWN，不能声称 SATISFIABLE。
+
+为减少无效枚举，联合分析采用以下保守优化：
+
+- 同一框架快照的历史先去重，只有其他条件相同且覆盖某个分支的全部正常后继时才消去该分支条件。
+  未覆盖全部后继的 setter/clear/batch 历史继续保留对应约束。
+- 在无环正常控制流中，跳过确定能汇合且不影响目标语句、相关局部量或堆写入的分支区域。
+  相关局部量包含后续条件及其辅助方法实参的依赖；提前返回、异常边和相关赋值阻止跳过。
+  到达同一位置、相关定义和保留条件相同的状态会合并。
+- 每加入控制条件或部分参数来源，就先检查已支持的常量、纯表达式、整数区间和 null 矛盾。
+  只有已证明冲突才剪枝，不能把有界模型搜索没有找到样例当成冲突。
+  例如十个参数都由同一个布尔输入选择两个分支时，只保留两组相容组合，无需枚举全部 1,024 组。
+
+- `SATISFIABLE`：找到满足已建模条件的入口模型，所选参数重演成功。
+- `UNSATISFIABLE`：完整检查的路径均冲突，`combinations()` 为空；原始 SQL 候选仍保留用于核查。
+- `UNKNOWN`：存在未覆盖路径、未知条件/值或预算截断；保留已求出的组合与未知候选，不能当成无解。
+  汇总状态为 UNKNOWN 时，其中个别组合仍可能是 SATISFIABLE。
+
+当前精确检查普通无环控制流、局部到达定义、跨调用上下文、if/else 与 switch（含 default）、
+布尔/byte/short/char/int/long 与常量的比较和区间冲突、null 条件；long 比较识别 JVM 的 cmp。
+其余已建模的纯值表达式通过有界模型搜索验证，整数计算保留 Java 溢出语义。
+搜索未找到模型时不会据此宣称无解。每个 SQL 最多检查 4,096 个参数前缀、尝试 512 组完整参数来源、
+保留 128 组联合候选；每个调用帧最多探索 4,000 步、保留 64 条路径，条件依赖闭包也受 4,000 步
+和 64 组选择限制，模型搜索最多 2,048 步。截断都有诊断，取消/超时继续生效。
+历史化简超过 20,000 步时直接使用原历史，不丢候选；真实独立分支仍可能触发枚举预算。
+
+循环展开、异常路径、堆别名、未知外部调用和完整浮点/引用身份约束
+尚未建模，按 UNKNOWN 保留。SATISFIABLE 是受支持控制条件和值语义下的模型，
+不证明目标程序一定正常执行到数据库，也不验证数据库状态或外部方法的行为。
+联合求解逻辑位于 core 的 parameter 包，框架子模块只负责提供来源；手工创建的 raw SQL 尚未求解时返回 Optional.empty。
 
 JDBC 关联规则：
 
@@ -392,16 +476,21 @@ core 的 `dataflow` 包对 JDBC 没有依赖：`ProgramIndex` 使用应用类层
 不支持的结构，相关诊断保存在该条结果的 `templateIssues()`，与来源诊断 `issues()` 分开。
 `Statement.complete()` 同时要求来源、模板及 raw SQL 恢复完整，`SqlExtraction.complete()` 汇总所有语句。
 `ValueTrace.complete()` 仍仅表示来源完整性。这些状态并不表示入口参数已有运行时取值，
-也不保证 CHA 候选路径在实际运行时一定可行。条件相关性和精确堆 points-to 尚未实现。
+也不保证 CHA 候选路径在实际运行时一定可行。受支持条件之间的相关性由联合结果另外给出，精确堆 points-to 尚未实现。
 字段读取保存项目中的候选字段写入及其上游依赖，并标记别名/写入顺序不确定；
 已发现调用点中遇到的反射/库调用边界、无法解析的 Statement 来源、递归和循环不会静默丢弃，
 结果及终态标为不完整/PARTIAL。纯反射 SQL 调用和 invokedynamic 回调的完整调用关系尚未建模。
 库方法返回值保留调用及其可见输入依赖，不能声称已分析库的实现。
 StringBuilder 等可变容器的精确内容恢复仍需后续模型。
 
-跨方法/依赖深度使用 `AnalyzerConfig.maxTraceDepth`（默认 32，可通过 withMaxTraceDepth 调整）；
-单次调用路径查询最多保留 256 个上下文，单次依赖/控制流查询最多处理 10000 个节点。
+调用链、应用方法返回值、引用来源和框架快照的跨方法展开使用 `AnalyzerConfig.maxCallDepth`（默认 32）；
+数据依赖展开使用 `maxTraceDepth`（默认 256），每次值/引用溯源访问节点数使用 `maxTraceNodes`（默认 10000）。
+旧模板恢复同样使用独立的调用、数据依赖和节点预算。增加表达式深度不会放宽递归调用上限。
+正常终点先于展开深度检查：恰好到达 main、没有调用方的方法、字面量或入口输入时，不因深度边界误报 LIMIT。
+节点访问总量及路径容量仍受限；单次调用路径查询最多保留 256 个上下文，单次控制流查询最多处理 10000 个节点。
 达到限制会保留已发现结果并标为不完整；调用链/数据依赖树使用 LIMIT 标记，引用来源查询返回不完整状态。
+调用链的 LIMIT/CYCLE 诊断同时进入当前上下文的 Statement、联合结果和每个参数组合，
+相关联合结果标为 UNKNOWN，不能因 SQL 恰好是常量而升级为 SATISFIABLE。完整的其他调用上下文不受影响。
 取消和超时沿用 Analyzer 的检查点。
 
 后续框架可通过 `registry.extraction(selector, handler)` 接入；handler 接收带调用上下文的 FlowPoint

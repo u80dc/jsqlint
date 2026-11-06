@@ -39,7 +39,20 @@ final class JdbcSqlExtractor implements SqlExtractionHandler {
                     : List.of("Statement receiver has unresolved or multiple candidate origins");
             results.addAll(batch ? session.batch(call, origin, issues) : session.prepared(call, origin, issues));
         }
-        return results.stream().distinct().toList();
+        return mergePaths(results);
+    }
+
+    /** 相同状态只输出一次，同时保留产生该状态的多条控制路径（析取），不把它们错误合取。 */
+    private static List<SqlTraceSource> mergePaths(List<SqlTraceSource> sources) {
+        Map<SqlTraceSource, Set<List<ControlFlowEdge>>> grouped = new LinkedHashMap<>();
+        for (var source : sources) {
+            var key = new SqlTraceSource(source.sql(), source.bindings(), source.batchEntry(), source.issues());
+            var paths = grouped.computeIfAbsent(key, ignored -> new LinkedHashSet<>());
+            if (source.controlFlowPaths().isEmpty()) paths.add(List.of());
+            else paths.addAll(source.controlFlowPaths());
+        }
+        return grouped.entrySet().stream().map(entry -> new SqlTraceSource(entry.getKey().sql(), entry.getKey().bindings(),
+                entry.getKey().batchEntry(), entry.getKey().issues(), new ArrayList<>(entry.getValue()))).toList();
     }
 
     private static SqlTraceSource unresolved(String reason) {
@@ -106,9 +119,9 @@ final class JdbcSqlExtractor implements SqlExtractionHandler {
                 var issues = new ArrayList<>(state.issues()); issues.addAll(end.issues());
                 if (end.end() != DataFlowAnalysis.End.FOUND) issues.add("Statement history ended at " + end.end());
                 if (state.sql().isEmpty()) issues.add("Prepared SQL origin is unavailable");
-                results.add(new SqlTraceSource(state.sql(), new ArrayList<>(state.bindings().values()), Optional.empty(), issues));
+                results.add(new SqlTraceSource(state.sql(), new ArrayList<>(state.bindings().values()), Optional.empty(), issues, List.of(end.path())));
             });
-            return results.stream().distinct().toList();
+            return mergePaths(results);
         }
 
         /** 逆序收集 addBatch 时刻的快照；executeBatch 前最后一次 setXxx 不会覆盖已经加入的批次。 */
@@ -131,7 +144,7 @@ final class JdbcSqlExtractor implements SqlExtractionHandler {
                 List<SqlTraceSource> snapshots = site.invocation().getArgCount() == 1
                         ? List.of(SqlTraceSource.sql(point.value(site.invocation().getArg(0)))) : prepared(point, origin, initialIssues);
                 var copy = new ArrayList<>(state.entries());
-                for (SqlTraceSource source : snapshots) copy.add(new SqlTraceSource(source.sql(), source.bindings(), Optional.of(site.location()), source.issues()));
+                for (SqlTraceSource source : snapshots) copy.add(new SqlTraceSource(source.sql(), source.bindings(), Optional.of(site.location()), source.issues(), source.controlFlowPaths()));
                 return Decision.skipCall(new BatchState(copy, state.issues()));
             }, end -> {
                 var entries = new ArrayList<>(end.state().entries()); Collections.reverse(entries);
@@ -139,13 +152,17 @@ final class JdbcSqlExtractor implements SqlExtractionHandler {
                 if (end.end() != DataFlowAnalysis.End.FOUND) historyIssues.add("Batch history ended at " + end.end());
                 for (SqlTraceSource entry : entries) {
                     var issues = new ArrayList<>(entry.issues()); issues.addAll(historyIssues);
-                    results.add(new SqlTraceSource(entry.sql(), entry.bindings(), entry.batchEntry(), issues));
+                    var paths = entry.controlFlowPaths().isEmpty() ? List.<List<ControlFlowEdge>>of(List.of()) : entry.controlFlowPaths();
+                    var combined = paths.stream().map(path -> {
+                        var edges = new LinkedHashSet<>(path); edges.addAll(end.path()); return List.copyOf(edges);
+                    }).toList();
+                    results.add(new SqlTraceSource(entry.sql(), entry.bindings(), entry.batchEntry(), issues, combined));
                 }
                 // 无已知 SQL 时仍输出未知来源，避免把丢失的诊断解释为“确定空批次”。
                 if (entries.isEmpty() && !historyIssues.isEmpty())
                     results.add(new SqlTraceSource(Optional.empty(), List.of(), Optional.empty(), historyIssues));
             });
-            return results.stream().distinct().toList();
+            return mergePaths(results);
         }
         private boolean setter(InvocationSite site) {
             var signature = site.invocation().getMethodSignature();

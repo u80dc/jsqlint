@@ -1,13 +1,18 @@
 package org.u80dc.jsqlint.core.spi;
 
 import org.u80dc.jsqlint.core.dataflow.FlowPoint.ValuePoint;
+import org.u80dc.jsqlint.core.dataflow.ControlFlowEdge;
 import java.util.*;
 
 /** 框架定位 SQL 与绑定值后，交给 core 统一追踪；一个执行点可以对应多个批次/分支。 @author u80dc */
 public record SqlTraceSource(Optional<ValuePoint> sql, List<Binding> bindings,
-                             Optional<SourceLocation> batchEntry, List<String> issues) {
+                             Optional<SourceLocation> batchEntry, List<String> issues, List<List<ControlFlowEdge>> controlFlowPaths) {
     public SqlTraceSource {
         Objects.requireNonNull(sql); bindings = List.copyOf(bindings); Objects.requireNonNull(batchEntry); issues = List.copyOf(issues);
+        controlFlowPaths = controlFlowPaths.stream().map(List::copyOf).toList();
+    }
+    public SqlTraceSource(Optional<ValuePoint> sql, List<Binding> bindings, Optional<SourceLocation> batchEntry, List<String> issues) {
+        this(sql, bindings, batchEntry, issues, List.of());
     }
     public static SqlTraceSource sql(ValuePoint value) { return new SqlTraceSource(Optional.of(value), List.of(), Optional.empty(), List.of()); }
     /**

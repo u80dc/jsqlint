@@ -15,6 +15,7 @@ import sootup.java.core.views.JavaView;
 
 import java.util.*;
 import java.util.function.BiConsumer;
+import java.util.function.Supplier;
 
 /**
  * 按需解析 SQL 值：控制流到达定义、参数调用来源、静态/特殊调用返回值和 Java 字符串连接。
@@ -26,17 +27,31 @@ public final class ValueTraceAnalyzer {
     private final JavaView view;
     private final Map<MethodSignature, List<InvocationSite>> callers;
     private final int maxDepth;
+    private final int maxNodes;
+    private final int maxCallDepth;
     private final Runnable checkpoint;
     private final BiConsumer<String, String> incomplete;
     // 只缓存与调用上下文无关的到达定义查询；外层按最近访问顺序限制方法数量。
     private final LocalDefinitions definitions;
     private int symbols;
+    private int nodes;
+    private int callDepth;
 
     public ValueTraceAnalyzer(JavaView view, Map<MethodSignature, List<InvocationSite>> callers,
                               int maxDepth, int cacheSize, Runnable checkpoint, BiConsumer<String, String> incomplete) {
+        this(view, callers, maxDepth, maxDepth, 10000, cacheSize, checkpoint, incomplete);
+    }
+
+    public ValueTraceAnalyzer(JavaView view, Map<MethodSignature, List<InvocationSite>> callers,
+                              int maxCallDepth, int maxDepth, int maxNodes, int cacheSize,
+                              Runnable checkpoint, BiConsumer<String, String> incomplete) {
+        if (maxCallDepth < 1 || maxDepth < 1 || maxNodes < 1)
+            throw new IllegalArgumentException("Trace budgets must be positive");
         this.view = view;
         this.callers = callers;
         this.maxDepth = maxDepth;
+        this.maxNodes = maxNodes;
+        this.maxCallDepth = maxCallDepth;
         this.checkpoint = checkpoint;
         this.incomplete = incomplete;
         definitions = new LocalDefinitions(cacheSize, checkpoint);
@@ -44,6 +59,8 @@ public final class ValueTraceAnalyzer {
 
     private ValueTraceAnalyzer(ValueTraceAnalyzer parent, BiConsumer<String, String> diagnostic) {
         view = parent.view; callers = parent.callers; maxDepth = parent.maxDepth;
+        maxNodes = parent.maxNodes;
+        maxCallDepth = parent.maxCallDepth;
         checkpoint = parent.checkpoint; definitions = parent.definitions; incomplete = diagnostic;
     }
 
@@ -64,18 +81,23 @@ public final class ValueTraceAnalyzer {
 
     /** 从 SQL 使用点向前追踪值，再将常量、拼接和分支统一转换为 SQL 节点。 */
     public SqlNode sql(SqlInput.ValueAt input) {
+        nodes = 0; callDepth = 0;
         return node(resolve(input.method(), input.statement(), input.value(), Map.of(), new HashSet<>(), 0), false);
     }
 
     /** 在指定调用上下文求 SQL 文本，避免不同调用方的实参混入当前结果。 */
     public SqlNode sql(SqlInput.ValueAt input, CallContext context) {
+        nodes = 0;
         Map<Integer, Term> bindings = Map.of();
+        int callerDepth = 0;
         for (InvocationSite call : context.calls()) {
             Map<Integer, Term> arguments = new LinkedHashMap<>();
             for (int i = 0; i < call.invocation().getArgCount(); i++)
-                arguments.put(i, new Deferred(call.method(), call.statement(), call.invocation().getArg(i), bindings));
+                arguments.put(i, new Deferred(call.method(), call.statement(), call.invocation().getArg(i), bindings, callerDepth));
             bindings = arguments;
+            callerDepth++;
         }
+        callDepth = callerDepth;
         return node(resolve(input.method(), input.statement(), input.value(), bindings, new HashSet<>(), 0), false);
     }
 
@@ -86,8 +108,8 @@ public final class ValueTraceAnalyzer {
     private Term resolve(JavaSootMethod method, Stmt use, Value value, Map<Integer, Term> bindings,
                          Set<Key> active, int depth) {
         checkpoint.run();
-        if (depth >= maxDepth) {
-            incomplete.accept("TRACE_LIMIT", "Trace depth exceeded at " + method.getSignature() + ": " + value);
+        if (++nodes > maxNodes) {
+            incomplete.accept("TRACE_LIMIT", "Trace node budget exceeded at " + method.getSignature() + ": " + value);
             return new Unknown("trace_limit");
         }
         if (value instanceof StringConstant constant) return new Literal(constant.getValue());
@@ -97,6 +119,13 @@ public final class ValueTraceAnalyzer {
         if (value instanceof DoubleConstant constant) return new Literal(constant.getValue());
         if (value instanceof BooleanConstant constant) return new Literal(constant.getValue());
         if (value instanceof NullConstant) return new Literal(null);
+        if (value instanceof JParameterRef parameter && !bindings.containsKey(parameter.getIndex())
+                && callers.getOrDefault(method.getSignature(), List.of()).isEmpty())
+            return new Unknown("parameter_" + parameter.getIndex());
+        if (depth >= maxDepth) {
+            incomplete.accept("TRACE_LIMIT", "Trace depth exceeded at " + method.getSignature() + ": " + value);
+            return new Unknown("trace_limit");
+        }
         Key key = new Key(method.getSignature(), use, value, bindings);
         if (!active.add(key)) return unsupported("cyclic_value");
         try {
@@ -116,14 +145,15 @@ public final class ValueTraceAnalyzer {
                 if (bindings.containsKey(parameter.getIndex())) {
                     Term bound = bindings.get(parameter.getIndex());
                     if (bound instanceof Deferred deferred)
-                        return resolve(deferred.method(), deferred.use(), deferred.value(), deferred.bindings(), active, depth + 1);
+                        return inCallContext(deferred.callDepth(), () -> resolve(deferred.method(), deferred.use(),
+                                deferred.value(), deferred.bindings(), active, depth + 1));
                     return bound;
                 }
                 List<Term> values = new ArrayList<>();
                 for (InvocationSite caller : callers.getOrDefault(method.getSignature(), List.of())) {
                     if (caller.invocation().getArgCount() > parameter.getIndex())
-                        values.add(resolve(caller.method(), caller.statement(),
-                                caller.invocation().getArg(parameter.getIndex()), Map.of(), active, depth + 1));
+                        values.add(inCallContext(callDepth + 1, () -> resolve(caller.method(), caller.statement(),
+                                caller.invocation().getArg(parameter.getIndex()), Map.of(), active, depth + 1)));
                 }
                 // 非私有方法可能还有项目外调用，已找到的实参不能代表全部输入，需保留未知分支。
                 if (!method.isPrivate() || values.isEmpty()) values.add(new Unknown("parameter_" + parameter.getIndex()));
@@ -193,7 +223,8 @@ public final class ValueTraceAnalyzer {
                 for (Stmt statement : target.get().getBody().getStmts()) {
                     checkpoint.run();
                     if (statement instanceof JReturnStmt result)
-                        returned.add(resolve(target.get(), statement, result.getOp(), arguments, active, depth + 1));
+                        returned.add(inCallContext(callDepth + 1, () -> resolve(target.get(), statement,
+                                result.getOp(), arguments, active, depth + 1)));
                 }
                 return returned.isEmpty() ? unsupported("missing_return") : alternatives(returned);
             }
@@ -201,6 +232,18 @@ public final class ValueTraceAnalyzer {
         } finally {
             active.remove(key);
         }
+    }
+
+    /** 进入被调用方法增加调用深度；沿已绑定的实参返回调用方时恢复其真实深度。 */
+    private Term inCallContext(int nextDepth, Supplier<Term> action) {
+        if (nextDepth > maxCallDepth) {
+            incomplete.accept("TRACE_LIMIT", "Return/argument call depth budget exceeded");
+            return new Unknown("call_depth_limit");
+        }
+        int previous = callDepth;
+        callDepth = nextDepth;
+        try { return action.get(); }
+        finally { callDepth = previous; }
     }
 
     private Unknown unsupported(String reason) {
@@ -232,7 +275,8 @@ public final class ValueTraceAnalyzer {
      */
     private SqlNode node(Term term, boolean stringified) {
         return switch (term) {
-            case Deferred deferred -> node(resolve(deferred.method(), deferred.use(), deferred.value(), deferred.bindings(), new HashSet<>(), 0), stringified);
+            case Deferred deferred -> node(inCallContext(deferred.callDepth(), () -> resolve(deferred.method(),
+                    deferred.use(), deferred.value(), deferred.bindings(), new HashSet<>(), 0)), stringified);
             case Literal literal -> !stringified && !(literal.value() instanceof String)
                     ? node(unsupported("non_string_sql"), false)
                     : new StaticTextSqlNode(String.valueOf(literal.value()));
@@ -252,7 +296,7 @@ public final class ValueTraceAnalyzer {
     /** 追踪阶段的中间值，保留候选关系，直到输出时才转换成通用 SQL 节点。 */
     private sealed interface Term {}
     private record Literal(Object value) implements Term {}
-    private record Deferred(JavaSootMethod method, Stmt use, Value value, Map<Integer, Term> bindings) implements Term {}
+    private record Deferred(JavaSootMethod method, Stmt use, Value value, Map<Integer, Term> bindings, int callDepth) implements Term {}
     private record Unknown(String reason) implements Term {}
     private record Concat(List<Term> parts) implements Term {}
     private record Alternatives(List<Term> values) implements Term {}

@@ -26,7 +26,7 @@ public final class DataFlowAnalysis {
     public static final int MAX_STEPS = 10000;
     private final ProgramIndex program;
     private final LocalDefinitions definitions;
-    private final int maxDepth;
+    private final int maxCallDepth, maxTraceDepth, maxTraceNodes;
     private final Runnable checkpoint;
     private final BiConsumer<String, String> incomplete;
     private final Set<String> reported = new HashSet<>();
@@ -34,7 +34,14 @@ public final class DataFlowAnalysis {
 
     public DataFlowAnalysis(ProgramIndex program, int maxDepth, int cacheSize, Runnable checkpoint,
                             BiConsumer<String, String> incomplete) {
-        this.program = program; this.maxDepth = maxDepth; this.checkpoint = checkpoint; this.incomplete = incomplete;
+        this(program, maxDepth, maxDepth, MAX_STEPS, cacheSize, checkpoint, incomplete);
+    }
+    public DataFlowAnalysis(ProgramIndex program, int maxCallDepth, int maxTraceDepth, int maxTraceNodes,
+                            int cacheSize, Runnable checkpoint, BiConsumer<String, String> incomplete) {
+        if (maxCallDepth < 1 || maxTraceDepth < 1 || maxTraceNodes < 1)
+            throw new IllegalArgumentException("Trace budgets must be positive");
+        this.program = program; this.maxCallDepth = maxCallDepth; this.maxTraceDepth = maxTraceDepth;
+        this.maxTraceNodes = maxTraceNodes; this.checkpoint = checkpoint; this.incomplete = incomplete;
         definitions = new LocalDefinitions(cacheSize, checkpoint);
     }
     public ProgramIndex program() { return program; }
@@ -56,11 +63,13 @@ public final class DataFlowAnalysis {
             checkpoint.run();
             Pending next = pending.removeFirst();
             End end = null;
-            if (next.active().contains(next.method().getSignature())) end = End.CYCLE;
-            else if (next.reversed().size() >= maxDepth || result.size() + pending.size() >= MAX_PATHS) end = End.LIMIT;
-            else if (next.method().isMain(program.view().getIdentifierFactory())) end = End.ENTRY;
             var callers = program.callers().getOrDefault(next.method().getSignature(), List.of());
-            if (end == null && callers.isEmpty()) end = End.NO_CALLER;
+            // 总路径容量耗尽时留一个显式截断结果；正常终点不消耗额外的调用展开深度。
+            if (result.size() >= MAX_PATHS - 1 && !pending.isEmpty()) end = End.LIMIT;
+            else if (next.method().isMain(program.view().getIdentifierFactory())) end = End.ENTRY;
+            else if (callers.isEmpty()) end = End.NO_CALLER;
+            else if (next.active().contains(next.method().getSignature())) end = End.CYCLE;
+            else if (next.reversed().size() >= maxCallDepth || result.size() + pending.size() >= MAX_PATHS) end = End.LIMIT;
             if (end != null) {
                 List<InvocationSite> calls = new ArrayList<>(next.reversed()); Collections.reverse(calls);
                 result.add(new ContextPath(new CallContext(calls), end));
@@ -83,7 +92,7 @@ public final class DataFlowAnalysis {
     }
     private ValueTrace.Node trace(ValuePoint input, Set<ValuePoint> active, int depth, int[] steps) {
         checkpoint.run();
-        if (depth >= maxDepth || ++steps[0] > MAX_STEPS) return leaf(input, Kind.LIMIT, "data dependency budget exceeded");
+        if (++steps[0] > maxTraceNodes) return leaf(input, Kind.LIMIT, "data dependency node budget exceeded");
         if (!active.add(input)) return leaf(input, Kind.CYCLE, "cyclic data dependency");
         try {
             Value value = input.value();
@@ -103,6 +112,11 @@ public final class DataFlowAnalysis {
                     return node(input, Kind.CONSTANT, "Constant string conversion is not modeled: " + constant, List.of());
                 return computed(input, Kind.CONSTANT, constant instanceof NullConstant ? Operation.NULL : Operation.LITERAL, text, List.of());
             }
+            // 已知字面量或入口输入是正常终点，即使恰好处于深度边界也无需继续展开。
+            if ((value instanceof JParameterRef || value instanceof JThisRef) && argument(input).isEmpty())
+                return leaf(input, point.method().isMain(program.view().getIdentifierFactory()) ? Kind.ENTRY : Kind.NO_CALLER,
+                        "project input: " + value);
+            if (depth >= maxTraceDepth) return leaf(input, Kind.LIMIT, "data dependency depth budget exceeded");
             if (value instanceof Local local) {
                 var reaching = definitions.reaching(point.method(), local, point.statement());
                 var children = new ArrayList<ValueTrace.Node>();
@@ -198,6 +212,8 @@ public final class DataFlowAnalysis {
                 var resolution = program.resolution(site);
                 List<JavaSootMethod> targets = resolution.applicationTargets();
                 if (!targets.isEmpty()) {
+                    if (point.context().calls().size() >= maxCallDepth)
+                        return leaf(input, Kind.LIMIT, "return value call depth budget exceeded");
                     List<ValueTrace.Node> children = new ArrayList<>();
                     for (JavaSootMethod target : targets) for (Stmt stmt : target.getBody().getStmts()) {
                         if (stmt instanceof JReturnStmt returned) children.add(trace(new FlowPoint(target, stmt,
@@ -229,7 +245,10 @@ public final class DataFlowAnalysis {
                 .map(value -> trace(input.point().value(value), active, depth + 1, steps)).toList();
     }
     private ValueTrace.Node computed(ValuePoint input, Kind kind, Operation operation, String text, List<ValueTrace.Node> children) {
-        return new ValueTrace.Node(input.snapshot(), kind, text, children, new ValueTrace.Computation(operation, text));
+        var variable = input.snapshot();
+        // 拼接配方中的 stringify 是合成操作，结果为 String；原始操作数类型保留在输入节点中。
+        if (operation == Operation.STRINGIFY) variable = variable.withType("java.lang.String");
+        return new ValueTrace.Node(variable, kind, text, children, new ValueTrace.Computation(operation, text));
     }
 
     /** 严格按 JVM 拼接配方保存常量与实参顺序，重复实参不能像普通依赖边一样去重。 */
@@ -300,9 +319,17 @@ public final class DataFlowAnalysis {
     private boolean origins(ValuePoint input, Predicate<InvocationSite> factory, Set<ValuePoint> active,
                             int depth, int[] steps, List<ValuePoint> values) {
         checkpoint.run();
-        if (depth >= maxDepth || ++steps[0] > MAX_STEPS || !active.add(input)) return false;
+        if (++steps[0] > maxTraceNodes || !active.add(input)) return false;
         try {
             FlowPoint point = input.point();
+            // 引用身份的终点也先于展开预算检查；工厂调用本身无需进入方法体。
+            if (input.value() instanceof Constant || input.value() instanceof JNewExpr
+                    || input.value() instanceof JNewArrayExpr || input.value() instanceof JNewMultiArrayExpr
+                    || (input.value() instanceof JParameterRef || input.value() instanceof JThisRef) && argument(input).isEmpty()
+                    || input.value() instanceof AbstractInvokeExpr invoke && factory.test(invocation(input, invoke))) {
+                values.add(input); return true;
+            }
+            if (depth >= maxTraceDepth) return false;
             if (input.value() instanceof Local local) {
                 var reaching = definitions.reaching(point.method(), local, point.statement());
                 boolean complete = !reaching.missing() && !reaching.statements().isEmpty();
@@ -333,6 +360,7 @@ public final class DataFlowAnalysis {
                     var resolution = program.resolution(site);
                     List<JavaSootMethod> targets = resolution.applicationTargets();
                     if (!targets.isEmpty()) {
+                        if (point.context().calls().size() >= maxCallDepth) { values.add(input); return false; }
                         boolean complete = !resolution.hasExternalTargets(), returned = false;
                         // 未解析分支保留调用本身作为来源，不能只保留项目实现返回的对象。
                         if (resolution.hasExternalTargets()) values.add(input);
@@ -357,7 +385,7 @@ public final class DataFlowAnalysis {
      * 自动进入应用方法的返回点、退出到对应实参调用点；框架仅解释它关心的操作。
      */
     public <S> void backward(FlowPoint start, S initial, Transfer<S> transfer, Consumer<FlowEnd<S>> sink) {
-        record Work<S>(FlowPoint point, S state, Set<FlowPoint> visited, List<String> issues, boolean exceptional) {}
+        record Work<S>(FlowPoint point, S state, Set<FlowPoint> visited, List<String> issues, boolean exceptional, List<ControlFlowEdge> path) {}
         Deque<Work<S>> work = new ArrayDeque<>();
         Consumer<Work<S>> previous = new Consumer<>() {
             public void accept(Work<S> item) {
@@ -366,55 +394,61 @@ public final class DataFlowAnalysis {
                 var normal = graph.predecessors(point.statement());
                 var exceptional = graph.exceptionalPredecessors(point.statement());
                 if (normal.isEmpty() && exceptional.isEmpty()) {
-                    if (point.context().calls().isEmpty()) sink.accept(new FlowEnd<>(item.state(), End.NO_CALLER, item.issues()));
+                    if (point.context().calls().isEmpty()) sink.accept(new FlowEnd<>(item.state(), End.NO_CALLER, item.issues(), item.path()));
                     else {
                         var caller = point.context().calls().getLast();
                         accept(new Work<>(new FlowPoint(caller.method(), caller.statement(), point.context().parent()),
-                                item.state(), item.visited(), item.issues(), false));
+                                item.state(), item.visited(), item.issues(), false, item.path()));
                     }
                 }
-                for (Stmt stmt : normal) work.addLast(new Work<>(new FlowPoint(point.method(), stmt, point.context()), item.state(), item.visited(), item.issues(), false));
+                for (Stmt stmt : normal) {
+                    FlowPoint predecessor = new FlowPoint(point.method(), stmt, point.context());
+                    var path = new ArrayList<>(item.path()); path.add(new ControlFlowEdge(predecessor, point, false));
+                    work.addLast(new Work<>(predecessor, item.state(), item.visited(), item.issues(), false, List.copyOf(path)));
+                }
                 for (Stmt stmt : exceptional) {
                     var issues = new ArrayList<>(item.issues()); issues.add("exceptional predecessor: effects may not have completed");
-                    work.addLast(new Work<>(new FlowPoint(point.method(), stmt, point.context()), item.state(), item.visited(), issues, true));
+                    FlowPoint predecessor = new FlowPoint(point.method(), stmt, point.context());
+                    var path = new ArrayList<>(item.path()); path.add(new ControlFlowEdge(predecessor, point, true));
+                    work.addLast(new Work<>(predecessor, item.state(), item.visited(), issues, true, List.copyOf(path)));
                 }
             }
         };
-        previous.accept(new Work<>(start, initial, Set.of(), List.of(), false));
+        previous.accept(new Work<>(start, initial, Set.of(), List.of(), false, List.of()));
         int steps = 0;
         while (!work.isEmpty()) {
             checkpoint.run();
             Work<S> item = work.removeLast();
             if (++steps > MAX_STEPS || work.size() > MAX_PATHS) {
-                sink.accept(new FlowEnd<>(item.state(), End.LIMIT, item.issues()));
+                sink.accept(new FlowEnd<>(item.state(), End.LIMIT, item.issues(), item.path()));
                 incomplete("interprocedural control-flow budget exceeded at " + start.method().getSignature());
                 break;
             }
             if (item.visited().contains(item.point())) {
-                sink.accept(new FlowEnd<>(item.state(), End.CYCLE, item.issues())); continue;
+                sink.accept(new FlowEnd<>(item.state(), End.CYCLE, item.issues(), item.path())); continue;
             }
             Set<FlowPoint> visited = new HashSet<>(item.visited()); visited.add(item.point());
             Decision<S> decision = item.exceptional() ? Decision.skipCall(item.state()) : transfer.visit(item.point(), item.state());
-            if (decision.stop()) { sink.accept(new FlowEnd<>(decision.state(), End.FOUND, item.issues())); continue; }
+            if (decision.stop()) { sink.accept(new FlowEnd<>(decision.state(), End.FOUND, item.issues(), item.path())); continue; }
             var call = item.point().invocation(program.view());
             List<JavaSootMethod> targets = !decision.skipCall() && call.isPresent() ? program.targets(call.get()) : List.of();
             if (!targets.isEmpty()) {
-                if (item.point().context().calls().size() >= maxDepth) {
-                    sink.accept(new FlowEnd<>(decision.state(), End.LIMIT, item.issues())); continue;
+                if (item.point().context().calls().size() >= maxCallDepth) {
+                    sink.accept(new FlowEnd<>(decision.state(), End.LIMIT, item.issues(), item.path())); continue;
                 }
                 boolean returned = false;
                 for (JavaSootMethod target : targets) for (Stmt stmt : target.getBody().getStmts()) {
                     if (stmt instanceof ReturnStmt) {
                         returned = true;
                         work.addLast(new Work<>(new FlowPoint(target, stmt, item.point().context().push(call.orElseThrow())),
-                                decision.state(), visited, item.issues(), false));
+                                decision.state(), visited, item.issues(), false, item.path()));
                     }
                 }
                 // 虚调用可能同时落到项目和依赖库。外部分支继续回溯调用前的候选状态，
                 // 由框架 transfer 对相关对象的未知副作用作标记，不能被项目分支覆盖。
                 if (returned && !program.resolution(call.orElseThrow()).hasExternalTargets()) continue;
             }
-            previous.accept(new Work<>(item.point(), decision.state(), visited, item.issues(), false));
+            previous.accept(new Work<>(item.point(), decision.state(), visited, item.issues(), false, item.path()));
         }
     }
     public record ContextPath(CallContext context, End end) {
@@ -440,7 +474,10 @@ public final class DataFlowAnalysis {
         }
     }
     public enum End { ENTRY, NO_CALLER, FOUND, CYCLE, LIMIT }
-    public record FlowEnd<S>(S state, End end, List<String> issues) { public FlowEnd { issues = List.copyOf(issues); } }
+    public record FlowEnd<S>(S state, End end, List<String> issues, List<ControlFlowEdge> path) {
+        public FlowEnd { issues = List.copyOf(issues); path = List.copyOf(path); }
+        public FlowEnd(S state, End end, List<String> issues) { this(state, end, issues, List.of()); }
+    }
     @FunctionalInterface public interface Transfer<S> { Decision<S> visit(FlowPoint point, S state); }
     public record Decision<S>(S state, boolean stop, boolean skipCall) {
         public static <S> Decision<S> next(S state) { return new Decision<>(state, false, false); }

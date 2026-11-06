@@ -156,7 +156,7 @@ class JdbcParameterInferenceTest {
                 """);
         var slots = only(result.rawSqls()).placeholders();
         assertEquals("O''Neil", known(only(slots.get(0).inference().possibleValues())));
-        assertEquals(20, known(only(slots.get(1).inference().possibleValues())));
+        assertEquals("20", known(only(slots.get(1).inference().possibleValues())), "拼接槽位保存 String.valueOf 之后的文本");
         assertTrue(slots.stream().allMatch(s -> s.inference().complete()));
         assertThrows(UnsupportedOperationException.class, () -> slots.getFirst().inference().possibleValues().clear());
     }
@@ -406,6 +406,121 @@ class JdbcParameterInferenceTest {
                 "准备点和清空后的执行点均无已设置的绑定参数");
         var bound = only(result.rawSqls().stream().filter(sql -> !sql.bindings().isEmpty()).toList());
         assertEquals(5, known(only(only(bound.bindings()).inference().possibleValues())));
+    }
+
+    @Test
+    void independentInvocationsKeepAllReturnBranchCombinations() throws Exception {
+        var result = analyze("""
+                public class Sample {
+                    static int choose(boolean flag) { int value = flag ? 1 : 2; return value; }
+                    static void run(java.sql.Connection c, boolean a, boolean b) throws Exception {
+                        var p = c.prepareStatement("SELECT ?");
+                        int left = choose(a); int right = choose(b);
+                        p.setInt(1, left * 10 + right); p.executeQuery();
+                    }
+                }
+                """);
+        var inference = bindings(result).get("1").inference();
+        assertTrue(inference.complete());
+        assertEquals(Set.of(11, 12, 21, 22), inference.possibleValues().stream()
+                .map(JdbcParameterInferenceTest::known).collect(Collectors.toSet()));
+        assertEquals(4, inference.possibleValues().size());
+        assertTrue(inference.possibleValues().stream().allMatch(value -> value.initialValues().stream()
+                .map(InferredParameterValue.InitialValue::variable).filter(variable -> variable.method().getName().equals("choose"))
+                .map(ValueTrace.Variable::callContext).distinct().count() == 2), "同值的两次调用也应保留各自的来源上下文");
+    }
+
+    @Test
+    void forwardedValueRetainsTheOriginalBranchChoice() throws Exception {
+        var result = analyze("""
+                public class Sample {
+                    static int forward(int value) { return value; }
+                    static void run(java.sql.Connection c, boolean flag) throws Exception {
+                        var p = c.prepareStatement("SELECT ?");
+                        int value = flag ? 10 : 20; int copy = forward(value);
+                        p.setInt(1, value - copy); p.executeQuery();
+                    }
+                }
+                """);
+        var inference = bindings(result).get("1").inference();
+        assertTrue(inference.complete());
+        assertEquals(List.of(0, 0), inference.possibleValues().stream().map(JdbcParameterInferenceTest::known).toList());
+        assertTrue(inference.possibleValues().stream().allMatch(value -> value.initialValues().size() == 1));
+    }
+
+    @Test
+    void replacementAfterNumericStringificationUsesConvertedText() throws Exception {
+        var result = analyze("""
+                public class Sample {
+                    public static void main(String[] args) throws Exception { run(null, 12); }
+                    static void run(java.sql.Statement s, int id) throws Exception {
+                        s.execute(("SELECT " + id).replace("1", "X"));
+                    }
+                }
+                """);
+        var sql = only(result.rawSqls());
+        var parameter = only(sql.parameters());
+        assertEquals("SELECT ${id}", sql.text());
+        assertEquals("X2", known(only(parameter.possibleValues())));
+        assertEquals("java.lang.String", parameter.type());
+        assertTrue(nodes(sql.trace().orElseThrow().root()).filter(node -> node.computation().operation() == ValueTrace.Operation.STRINGIFY)
+                .allMatch(node -> node.variable().type().equals("java.lang.String")), "完整传播树也应记录转换后的结果类型");
+        assertTrue(only(parameter.possibleValues()).initialValues().stream()
+                .anyMatch(input -> input.value().equals(new SqlValue.Known(12)) && input.variable().type().equals("int")));
+    }
+
+    @Test
+    void reassignedLocalDoesNotReuseThePreviousDefinitionChoice() throws Exception {
+        var result = analyze("""
+                public class Sample {
+                    static int forward(int value) { return value; }
+                    static void run(java.sql.Connection c, boolean a, boolean b) throws Exception {
+                        var p = c.prepareStatement("SELECT ?");
+                        int value = a ? 1 : 2; int previous = forward(value);
+                        value = b ? 10 : 20;
+                        p.setInt(1, previous + value); p.executeQuery();
+                    }
+                }
+                """);
+        var inference = bindings(result).get("1").inference();
+        assertTrue(inference.complete());
+        assertEquals(Set.of(11, 12, 21, 22), inference.possibleValues().stream()
+                .map(JdbcParameterInferenceTest::known).collect(Collectors.toSet()));
+        assertEquals(4, inference.possibleValues().size());
+    }
+
+    @Test
+    void replacementAfterNullStringificationUsesNullText() throws Exception {
+        var result = analyze("""
+                public class Sample {
+                    public static void main(String[] args) throws Exception { run(null, null); }
+                    static void run(java.sql.Statement s, String name) throws Exception {
+                        s.execute(("SELECT '" + name + "'").replace("l", "L"));
+                    }
+                }
+                """);
+        var parameter = only(only(result.rawSqls()).parameters());
+        assertEquals("nuLL", known(only(parameter.possibleValues())));
+        assertEquals("java.lang.String", parameter.type());
+        assertTrue(only(parameter.possibleValues()).initialValues().stream()
+                .anyMatch(input -> input.value().equals(new SqlValue.Known(null))));
+    }
+
+    @Test
+    void chainedReplacementRetainsBooleanAndCharacterStringConversion() throws Exception {
+        var result = analyze("""
+                public class Sample {
+                    public static void main(String[] args) throws Exception { run(null, true, 'A'); }
+                    static void run(java.sql.Statement s, boolean enabled, char marker) throws Exception {
+                        s.execute(("SELECT " + enabled + "," + marker).replace("r", "R").replace("A", "Z"));
+                    }
+                }
+                """);
+        var sql = only(result.rawSqls());
+        assertTrue(sql.inferenceComplete());
+        assertEquals(Map.of("enabled", "tRue", "marker", "Z"), sql.parameters().stream()
+                .collect(Collectors.toMap(ParameterValueInferenceResult::name, p -> known(only(p.possibleValues())))));
+        assertTrue(sql.parameters().stream().allMatch(p -> p.type().equals("java.lang.String")));
     }
 
     private AnalysisResult analyze(String source) throws Exception {

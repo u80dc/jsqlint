@@ -8,6 +8,7 @@ import org.u80dc.jsqlint.core.parameter.ParameterValueInferencer;
 import org.u80dc.jsqlint.core.parameter.ParameterValueInferenceResult;
 import org.u80dc.jsqlint.core.parameter.RandomExternalValueGenerator;
 import org.u80dc.jsqlint.core.parameter.InferredParameterValue;
+import org.u80dc.jsqlint.core.parameter.JointSqlValueInferencer;
 import org.u80dc.jsqlint.core.dataflow.*;
 import org.u80dc.jsqlint.core.spi.*;
 import org.u80dc.jsqlint.core.resource.AnalysisResource;
@@ -179,8 +180,8 @@ final class AnalysisSession {
         // 此时所有资源定义和应用调用点已就绪，避免分析结果受发现顺序影响。
         ProgramIndex program = extractionRequests.isEmpty() ? null : new ProgramIndex(view, applicationClasses,
                 callers.values().stream().flatMap(Collection::stream).toList(), this::checkpoint);
-        ValueTraceAnalyzer tracing = new ValueTraceAnalyzer(view, program == null ? callers : program.callers(), config.maxTraceDepth(),
-                config.methodCacheSize(), this::checkpoint, this::incomplete);
+        ValueTraceAnalyzer tracing = new ValueTraceAnalyzer(view, program == null ? callers : program.callers(), config.maxCallDepth(),
+                config.maxTraceDepth(), config.maxTraceNodes(), config.methodCacheSize(), this::checkpoint, this::incomplete);
         if (extensions.isEmpty()) diagnostic("NO_MODULES", "No SQL discovery modules registered");
         for (Pending item : pending) {
             checkpoint();
@@ -206,13 +207,15 @@ final class AnalysisSession {
             progress(stage);
         }
         if (program != null) {
-            var dataFlow = new DataFlowAnalysis(program, config.maxTraceDepth(), config.methodCacheSize(), this::checkpoint, this::incomplete);
+            var dataFlow = new DataFlowAnalysis(program, config.maxCallDepth(), config.maxTraceDepth(), config.maxTraceNodes(),
+                    config.methodCacheSize(), this::checkpoint, this::incomplete);
             for (PendingExtraction extraction : extractionRequests) extract(extraction, dataFlow, tracing);
         }
         return partial ? Status.PARTIAL : Status.SUCCESS;
     }
 
     private void extract(PendingExtraction request, DataFlowAnalysis flow, ValueTraceAnalyzer tracing) {
+        var jointInference = new JointSqlValueInferencer(flow);
         for (var context : flow.contexts(request.site().method())) {
             checkpoint();
             List<SqlExtraction.Statement> statements = new ArrayList<>();
@@ -224,7 +227,10 @@ final class AnalysisSession {
                     checkpoint();
                     Optional<ValueTrace> sql = source.sql().map(flow::trace);
                     SqlNode template = ValueSqlNode.raw("unresolvedSql");
-                    var sourceIssues = new ArrayList<>(source.issues());
+                    // 调用链截断影响该上下文下的每条 SQL，必须随来源进入联合求解及每个组合。
+                    // 仅降低路径判定的确定性，不抹掉已恢复的常量和参数传播链。
+                    var sourceIssues = new ArrayList<>(issues);
+                    sourceIssues.addAll(source.issues());
                     List<String> templateIssues = new ArrayList<>();
                     if (source.sql().isPresent()) {
                         try {
@@ -256,6 +262,16 @@ final class AnalysisSession {
                         rawSql = new RawSql(List.of(), List.of("Raw SQL reconstruction failed: " + e.getMessage()));
                     }
                     rawSql = inferPlaceholders(rawSql, inference);
+                    try { rawSql = jointInference.infer(rawSql, bindings, point, source.controlFlowPaths(), sourceIssues); }
+                    catch (Exception e) {
+                        // 联合求解是进一步精化，失败不能抹掉已经提取的 SQL、来源和独立参数候选。
+                        recover("JOINT_PATH_INFERENCE", request.site().location().toString(), e);
+                        var failed = new org.u80dc.jsqlint.core.parameter.JointSqlInferenceResult(
+                                org.u80dc.jsqlint.core.parameter.JointSqlInferenceResult.Status.UNKNOWN,
+                                List.of(), List.of("Joint path inference failed: " + e.getMessage()));
+                        rawSql = new RawSql(rawSql.variants().stream().map(variant -> new RawSql.Variant(
+                                variant.text(), variant.placeholders(), variant.trace(), bindings, Optional.of(failed))).toList(), rawSql.issues());
+                    }
                     statements.add(new SqlExtraction.Statement(sql, template, bindings, source.batchEntry(), sourceIssues, templateIssues, rawSql));
                 }
             } catch (Exception e) {
@@ -279,6 +295,8 @@ final class AnalysisSession {
                     // 同一调用点可能有多条相同文本，使用候选编号关联各自选中的传播分支。
                     variant.trace().ifPresent(trace -> printTrace(label, trace));
                     variant.placeholders().stream().map(RawSql.Placeholder::inference).distinct().forEach(this::printInference);
+                    variant.jointInference().ifPresent(joint -> LOG.info("SQL 联合路径: variant={}, status={}, combinations={}, issues={}",
+                            label, joint.status(), joint.combinations().size(), joint.issues()));
                 }
                 statement.sql().ifPresent(trace -> printTrace("sql", trace));
                 for (var binding : statement.bindings()) {

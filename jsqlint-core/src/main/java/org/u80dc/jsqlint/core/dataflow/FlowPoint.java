@@ -21,7 +21,8 @@ public record FlowPoint(JavaSootMethod method, Stmt statement, CallContext conte
         public SqlInput.ValueAt input() { return new SqlInput.ValueAt(point.method(), point.statement(), value); }
         public ValueTrace.Variable snapshot() {
             return new ValueTrace.Variable(point.method().getSignature(),
-                    point.method().getBody().getStmts().indexOf(point.statement()), value.toString(), value.getType().toString());
+                    point.method().getBody().getStmts().indexOf(point.statement()), value.toString(), value.getType().toString(),
+                    point.context().snapshot());
         }
     }
 }

@@ -33,7 +33,8 @@ class JdbcRawSqlTest {
         var sql = only(raw.variants());
         assertEquals("SELECT * FROM users WHERE id=${id} OR parent=${id} AND name='${name}'", sql.text());
         assertEquals(List.of("id", "id", "name"), names(sql));
-        assertEquals("int", sql.placeholders().getFirst().source().variable().type());
+        assertEquals("java.lang.String", sql.placeholders().getFirst().source().variable().type());
+        assertEquals("int", sql.placeholders().getFirst().source().inputs().getFirst().variable().type(), "原始类型仍在转换链中保留");
         assertEquals("SELECT * FROM users WHERE id=42 OR parent=42 AND name='Bob'",
                 SqlNodeRenderer.render(sql.template(), Map.of("id", 42, "name", "Bob")).sql().orElseThrow());
         assertSlots(sql);

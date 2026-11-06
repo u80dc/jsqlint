@@ -17,11 +17,17 @@ public final class ParameterValueInferencer {
     private final ExternalValueGenerator generator;
     private final Runnable checkpoint;
     private final Map<SampleKey, SqlValue> samples = new HashMap<>();
+    private final Map<Variable, SqlValue> inputs;
 
     public ParameterValueInferencer() { this(new RandomExternalValueGenerator(), () -> {}); }
     public ParameterValueInferencer(ExternalValueGenerator generator) { this(generator, () -> {}); }
     public ParameterValueInferencer(ExternalValueGenerator generator, Runnable checkpoint) {
+        this(generator, checkpoint, Map.of());
+    }
+    /** 联合求解后使用同一组入口值重演全部参数，不能继续沿用各参数原先的随机样例。 */
+    public ParameterValueInferencer(ExternalValueGenerator generator, Runnable checkpoint, Map<Variable, SqlValue> inputs) {
         this.generator = Objects.requireNonNull(generator); this.checkpoint = Objects.requireNonNull(checkpoint);
+        this.inputs = Map.copyOf(inputs);
     }
 
     public ParameterValueInferenceResult infer(ValueTrace trace) { return infer(variableName(trace.root()), trace); }
@@ -30,7 +36,7 @@ public final class ParameterValueInferencer {
         if (expectedType.equals(trace.variable().type())
                 || !primitiveType(expectedType) && !trace.variable().type().equals("null")) return infer(trace);
         Variable source = trace.variable();
-        Variable typed = new Variable(source.method(), source.statementIndex(), source.expression(), expectedType);
+        Variable typed = source.withType(expectedType);
         Node converted = new Node(typed, Kind.EXPRESSION, "Binding argument conversion", List.of(trace.root()),
                 new Computation(Operation.CAST, expectedType));
         return infer(variableName(trace.root()), new ValueTrace(typed, trace.callChain(), converted));
@@ -58,8 +64,10 @@ public final class ParameterValueInferencer {
     }
 
     private record SampleKey(Variable variable, String type, String element) {}
-    private record Evaluation(SqlValue value, Node node, List<InitialValue> initials, List<String> issues, Map<Node, Integer> choices) {}
-    private record Arguments(List<Evaluation> values, Map<Node, Integer> choices) {}
+    /** 同一局部值在不同使用位置的合流共用标识，定义集合发生变化或调用上下文不同时独立处理。 */
+    private record ChoiceKey(Variable owner, Kind kind, Operation operation, Set<Variable> sources) {}
+    private record Evaluation(SqlValue value, Node node, List<InitialValue> initials, List<String> issues, Map<ChoiceKey, Variable> choices) {}
+    private record Arguments(List<Evaluation> values, Map<ChoiceKey, Variable> choices) {}
 
     private final class Query {
         private int steps;
@@ -76,6 +84,7 @@ public final class ParameterValueInferencer {
         }
 
         private List<Evaluation> compute(Node node, int depth) {
+            if (node.computation().operation() == Operation.ARRAY_INPUT) return arrayInput(node, depth);
             if (node.kind() == Kind.ENTRY || node.kind() == Kind.NO_CALLER) {
                 // RawSqlBuilder 的外部数组槽位仍携带数组根与下标，用元素类型生成样例。
                 if (node.computation().operation() == Operation.ARRAY_READ && !node.inputs().isEmpty()) return array(node, depth);
@@ -102,7 +111,8 @@ public final class ParameterValueInferencer {
 
         private Evaluation external(Node node, Variable source, String type, String element) {
             var key = new SampleKey(source, type, element);
-            SqlValue value = samples.computeIfAbsent(key, ignored -> Objects.requireNonNull(generator.generate(type, variableName(node))));
+            SqlValue value = samples.computeIfAbsent(key, ignored -> inputs.containsKey(source) ? inputs.get(source)
+                    : Objects.requireNonNull(generator.generate(type, variableName(node))));
             if (value instanceof SqlValue.Unknown unknown) issues.add(unknown.reason());
             return new Evaluation(value, node, List.of(new InitialValue(node.variable(), value, value instanceof SqlValue.Known)),
                     value instanceof SqlValue.Unknown unknown ? List.of(unknown.reason()) : List.of(), Map.of());
@@ -111,10 +121,11 @@ public final class ParameterValueInferencer {
         private List<Evaluation> alternatives(Node node, int depth) {
             if (node.inputs().isEmpty()) return List.of(unknown(node, "No parameter source alternatives"));
             List<Evaluation> result = new ArrayList<>();
+            ChoiceKey key = choiceKey(node);
             for (int i = 0; i < node.inputs().size(); i++) {
                 for (Evaluation value : visit(node.inputs().get(i), depth + 1)) {
                     if (result.size() >= MAX_VALUES) { issues.add("Parameter value limit exceeded"); return List.copyOf(result); }
-                    var choices = new HashMap<>(value.choices()); choices.put(node, i);
+                    var choices = new HashMap<>(value.choices()); choices.put(key, node.inputs().get(i).variable());
                     Evaluation wrapped = wrap(node, List.of(value), choices, value.value());
                     result.add(coerce(wrapped, node.variable().type()));
                 }
@@ -180,6 +191,7 @@ public final class ParameterValueInferencer {
         private List<Evaluation> array(Node node, int depth) {
             if (node.inputs().size() < 2) return List.of(unknown(node, "Array element source is unavailable"));
             List<Evaluation> result = new ArrayList<>();
+            ChoiceKey key = choiceKey(node);
             var indexes = visit(node.inputs().getFirst(), depth + 1);
             for (int i = 1; i < node.inputs().size(); i++) {
                 Node source = node.inputs().get(i);
@@ -187,20 +199,13 @@ public final class ParameterValueInferencer {
                 for (Evaluation index : indexes) {
                     List<Evaluation> values;
                     if (external) {
-                        if (index.value() instanceof SqlValue.Known known && known.value() instanceof Number number && number.intValue() >= 0) {
-                            // 保存元素自己的类型与下标，避免把 String 样例记成 String[] 的初始值。
-                            String element = Integer.toString(number.intValue());
-                            Variable variable = new Variable(source.variable().method(), source.variable().statementIndex(),
-                                    source.variable().expression() + "[" + element + "]", node.variable().type());
-                            Node input = new Node(variable, source.kind(), "external array element", List.of(source));
-                            values = List.of(external(input, source.variable(), variable.type(), element));
-                        } else values = List.of(unknown(source, "External array index is unknown or negative"));
+                        values = List.of(externalArrayElement(node, index, source));
                     } else values = visit(source, depth + 1);
                     for (Evaluation value : values) {
                         if (result.size() >= MAX_VALUES) { issues.add("Parameter value limit exceeded"); return List.copyOf(result); }
-                        Map<Node, Integer> choices = merge(index.choices(), value.choices());
+                        Map<ChoiceKey, Variable> choices = merge(index.choices(), value.choices());
                         if (choices == null) continue;
-                        choices.put(node, i);
+                        choices.put(key, source.variable());
                         SqlValue actual = index.value() instanceof SqlValue.Unknown ? index.value() : value.value();
                         Evaluation wrapped = wrap(node, List.of(index, value), choices, actual);
                         if (index.value() instanceof SqlValue.Known known && known.value() instanceof Number number && number.intValue() < 0) {
@@ -214,6 +219,47 @@ public final class ParameterValueInferencer {
             return result.isEmpty() ? List.of(unknown(node, "No compatible array element replay result")) : List.copyOf(result);
         }
 
+        private List<Evaluation> arrayInput(Node node, int depth) {
+            if (node.inputs().size() != 2) return List.of(unknown(node, "External array identity/index is unavailable"));
+            return visit(node.inputs().getFirst(), depth + 1).stream()
+                    .map(index -> externalArrayElement(node, index, node.inputs().get(1))).toList();
+        }
+
+        /** 元素保持入口数组和下标依赖，已选传播链再次重演时仍必须检查同一份数组模型。 */
+        private Evaluation externalArrayElement(Node owner, Evaluation index, Node base) {
+            Node input = new Node(owner.variable(), base.kind(), "external array element", List.of(index.node(), base),
+                    new Computation(Operation.ARRAY_INPUT, "external array element"));
+            Evaluation value;
+            if (!(index.value() instanceof SqlValue.Known known) || !(known.value() instanceof Number number)
+                    || number.intValue() < 0) {
+                value = unknown(input, "External array index is unknown or negative");
+            } else {
+                int offset = number.intValue();
+                Variable variable = new Variable(base.variable().method(), base.variable().statementIndex(),
+                        base.variable().expression() + "[" + offset + "]", owner.variable().type(), base.variable().callContext());
+                input = new Node(variable, base.kind(), input.detail(), input.inputs(), input.computation());
+                SqlValue model = inputs.get(base.variable());
+                if (model instanceof SqlValue.Known array) {
+                    if (array.value() == null) value = unknown(input, "Cannot read external array element from null array model");
+                    else if (!array.value().getClass().isArray()) value = unknown(input, "External array model is not an array");
+                    else if (offset >= java.lang.reflect.Array.getLength(array.value())) value = unknown(input, "External array index exceeds model length");
+                    else {
+                        SqlValue element = new SqlValue.Known(java.lang.reflect.Array.get(array.value(), offset));
+                        if (inputs.containsKey(variable) && !element.equals(inputs.get(variable)))
+                            value = unknown(input, "External array and element models disagree");
+                        else value = new Evaluation(element, input, List.of(new InitialValue(variable, element, false)), List.of(), Map.of());
+                    }
+                } else if (model instanceof SqlValue.Unknown unknown) {
+                    value = unknown(input, "External array model is unknown: " + unknown.reason());
+                } else {
+                    // 数组本身没有具体模型时，按元素身份生成样例；不能将数组对象的模型当作元素值。
+                    value = external(input, variable, variable.type(), "");
+                }
+            }
+            return new Evaluation(value.value(), value.node(), java.util.stream.Stream.concat(index.initials().stream(), value.initials().stream()).distinct().toList(),
+                    java.util.stream.Stream.concat(index.issues().stream(), value.issues().stream()).distinct().toList(), index.choices());
+        }
+
         private List<Arguments> combinations(List<List<Evaluation>> inputs) {
             List<Arguments> result = List.of(new Arguments(List.of(), Map.of()));
             for (List<Evaluation> input : inputs) {
@@ -221,7 +267,7 @@ public final class ParameterValueInferencer {
                 outer: for (Arguments prefix : result) for (Evaluation suffix : input) {
                     checkpoint.run();
                     if (++steps > MAX_STEPS) { issues.add("Parameter inference budget exceeded"); return List.of(); }
-                    Map<Node, Integer> choices = merge(prefix.choices(), suffix.choices());
+                    Map<ChoiceKey, Variable> choices = merge(prefix.choices(), suffix.choices());
                     if (choices == null) continue;
                     if (next.size() >= MAX_VALUES) { issues.add("Parameter value limit exceeded"); break outer; }
                     var values = new ArrayList<>(prefix.values()); values.add(suffix);
@@ -247,7 +293,19 @@ public final class ParameterValueInferencer {
         }
     }
 
-    private static Evaluation wrap(Node node, List<Evaluation> operands, Map<Node, Integer> choices, SqlValue value) {
+    private static ChoiceKey choiceKey(Node node) {
+        Variable owner = node.variable();
+        if (node.kind() == Kind.DEFINITION) {
+            // 到达定义集合相同则是同一个局部值，不能因读取位置或 forward 调用而重新选择分支。
+            owner = new Variable(owner.method(), -1, owner.expression(), owner.type(), owner.callContext());
+        }
+        // 使用来源位置而非列表下标关联选择，避免逆向遍历顺序变化造成错误配对。
+        var sources = new HashSet<Variable>();
+        node.inputs().forEach(input -> sources.add(input.variable()));
+        return new ChoiceKey(owner, node.kind(), node.computation().operation(), Set.copyOf(sources));
+    }
+
+    private static Evaluation wrap(Node node, List<Evaluation> operands, Map<ChoiceKey, Variable> choices, SqlValue value) {
         Node selected = new Node(node.variable(), node.kind(), node.detail(), operands.stream().map(Evaluation::node).toList(), node.computation());
         return new Evaluation(value, selected, operands.stream().flatMap(v -> v.initials().stream()).distinct().toList(),
                 operands.stream().flatMap(v -> v.issues().stream()).distinct().toList(), Map.copyOf(choices));
@@ -256,10 +314,10 @@ public final class ParameterValueInferencer {
         var issues = new ArrayList<>(value.issues()); issues.add(issue);
         return new Evaluation(value.value(), value.node(), value.initials(), List.copyOf(issues), value.choices());
     }
-    private static Map<Node, Integer> merge(Map<Node, Integer> left, Map<Node, Integer> right) {
+    private static Map<ChoiceKey, Variable> merge(Map<ChoiceKey, Variable> left, Map<ChoiceKey, Variable> right) {
         var merged = new HashMap<>(left);
         for (var entry : right.entrySet()) {
-            Integer existing = merged.putIfAbsent(entry.getKey(), entry.getValue());
+            Variable existing = merged.putIfAbsent(entry.getKey(), entry.getValue());
             if (existing != null && !existing.equals(entry.getValue())) return null;
         }
         return merged;

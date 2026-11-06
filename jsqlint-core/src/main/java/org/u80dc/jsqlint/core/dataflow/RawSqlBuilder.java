@@ -77,7 +77,7 @@ public final class RawSqlBuilder {
                 yield variants.stream().map(variant -> variant.withSources(join(
                         node.inputs().subList(0, Math.min(1, node.inputs().size())), variant.sources()))).toList();
             }
-            case OPAQUE, BINARY, NEGATE, CAST, CALL -> unknown(node, chooseName(node, hint), "Unmodeled SQL value: " + node.detail());
+            case OPAQUE, BINARY, NEGATE, CAST, CALL, ARRAY_INPUT -> unknown(node, chooseName(node, hint), "Unmodeled SQL value: " + node.detail());
         };
     }
 
@@ -130,7 +130,7 @@ public final class RawSqlBuilder {
                 text.append(replaced);
                 int offset = text.length();
                 text.append("${").append(slot.name()).append('}');
-                var source = new Node(slot.source().variable(), Kind.EXPRESSION, "String.replace on substituted value",
+                var source = new Node(slot.source().variable().withType("java.lang.String"), Kind.EXPRESSION, "String.replace on substituted value",
                         List.of(slot.source(), node.inputs().get(1), node.inputs().get(2)), node.computation());
                 slots.add(new RawSql.Placeholder(slot.name(), offset, text.length(), source));
                 start = slot.end();
@@ -170,10 +170,20 @@ public final class RawSqlBuilder {
         if (node.inputs().size() != 1) return unknown(node, hint, "Invalid string conversion");
         Node value = node.inputs().getFirst();
         var variants = visit(value, hint, Use.STRINGIFIED, depth + 1);
-        if (!Set.of("char", "boolean").contains(node.computation().text())) return variants;
         List<Fragment> converted = new ArrayList<>();
         for (var variant : variants) {
-            if (!variant.placeholders().isEmpty()) { converted.add(variant); continue; }
+            if (!variant.placeholders().isEmpty()) {
+                // 单槽位代表整个被转换值，必须保留转换：12 -> "12"、null -> "null"。
+                // 已拆开的字符串片段在内部各自完成了转换，不能把外层转换再次分配到每个原始参数上。
+                var slot = variant.placeholders().getFirst();
+                if (variant.placeholders().size() == 1 && slot.start() == 0 && slot.end() == variant.text().length()) {
+                    Node source = stringified(slot.source(), node.computation().text());
+                    converted.add(new Fragment(variant.text(), List.of(new RawSql.Placeholder(
+                            slot.name(), slot.start(), slot.end(), source)), variant.sources()));
+                } else converted.add(variant);
+                continue;
+            }
+            if (!Set.of("char", "boolean").contains(node.computation().text())) { converted.add(variant); continue; }
             String text = variant.text();
             try {
                 String convertedText = node.computation().text().equals("char")
@@ -183,6 +193,13 @@ public final class RawSqlBuilder {
             } catch (NumberFormatException ignored) { return unknown(node, hint, "Invalid primitive string conversion"); }
         }
         return converted;
+    }
+
+    private static Node stringified(Node source, String inputType) {
+        // 这些操作正常返回时已经是非 null 字符串，重复 stringify 没有新的语义。
+        if (Set.of(Operation.STRINGIFY, Operation.CONCAT, Operation.REPLACE).contains(source.computation().operation())) return source;
+        return new Node(source.variable().withType("java.lang.String"), Kind.EXPRESSION, "String conversion for SQL slot",
+                List.of(source), new Computation(Operation.STRINGIFY, inputType));
     }
 
     private List<Fragment> concat(Node node, String hint, int depth) {

@@ -6,6 +6,7 @@ import org.junit.jupiter.api.parallel.Isolated;
 import org.u80dc.jsqlint.core.*;
 import org.u80dc.jsqlint.core.node.*;
 import org.u80dc.jsqlint.core.parameter.ParameterValueInferenceResult;
+import org.u80dc.jsqlint.core.parameter.JointSqlInferenceResult;
 import org.u80dc.jsqlint.core.spi.AnalysisSeed;
 import org.u80dc.jsqlint.core.spi.SqlCallSite;
 
@@ -13,6 +14,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -42,7 +45,7 @@ class JdbcUserQueryAnalysisTest {
         var analyzer = new Analyzer(AnalyzerConfig.defaults().withCleanupClassOutput(true));
         var result = analyzer.analyze(project, AnalysisOptions.defaults()
                 .withClassOutputId(outputId).withListener(capture));
-        printSqlReport(project, result);
+        var samples = printSqlReport(project, result);
         String diagnostics = String.join("\n", capture.diagnostics);
 
         assertTrue(result.status() == SUCCESS || result.status() == PARTIAL, diagnostics);
@@ -58,6 +61,7 @@ class JdbcUserQueryAnalysisTest {
         assertEquals(13, rawSqls.stream().map(RawSql.Variant::text).distinct().count());
         assertEquals(3, rawSqls.stream().filter(sql -> sql.text().startsWith("INSERT INTO app_users")).count());
         assertTrue(rawSqls.stream().allMatch(sql -> sql.trace().isPresent()));
+        assertTrue(rawSqls.stream().allMatch(sql -> sql.jointInference().isPresent()), "输入关闭后仍保留联合求解结果");
         assertTrue(rawSqls.stream().allMatch(sql -> sql.bindings().isEmpty()), "纯拼接样例不存在 JDBC setXxx 绑定");
         assertThrows(UnsupportedOperationException.class, rawSqls::clear);
 
@@ -117,6 +121,21 @@ class JdbcUserQueryAnalysisTest {
                 .filter(v -> v.value().equals(new SqlValue.Known("O''Neil")))
                 .allMatch(v -> v.initialValues().stream().anyMatch(input -> input.value().equals(new SqlValue.Known("O'Neil")))));
 
+        // 模拟值来自同一个联合组合，直接代入转换后的槽位；不重新做笛卡尔积或二次转义。
+        Set<String> simulatedSqls = samples.stream().flatMap(sample -> sample.rendered().sql().stream()).collect(Collectors.toSet());
+        assertTrue(simulatedSqls.contains("INSERT INTO app_users (id, username, email, age, active) VALUES "
+                + "(1, 'alice', 'alice@example.test', 24, true)"));
+        assertTrue(simulatedSqls.contains("INSERT INTO app_users (id, username, email, age, active) VALUES "
+                + "(2, 'bob', 'bob@example.test', 31, false)"));
+        assertTrue(simulatedSqls.contains("INSERT INTO app_users (id, username, email, age, active) VALUES "
+                + "(3, 'O''Neil', 'oneil@example.test', 37, true)"));
+        assertTrue(simulatedSqls.contains("UPDATE app_users SET email = 'bob.updated@example.test', age = 33, active = true WHERE id = 2"));
+        assertTrue(simulatedSqls.contains("DELETE FROM app_users WHERE id = 1"));
+        assertTrue(simulatedSqls.stream().noneMatch(sql -> sql.contains("${")), "完整模拟 SQL 不应留下参数槽位");
+        assertTrue(samples.stream().noneMatch(sample -> sample.status() == JointSqlInferenceResult.Status.UNSATISFIABLE));
+        assertTrue(samples.stream().anyMatch(sample -> sample.status() == JointSqlInferenceResult.Status.UNKNOWN),
+                "未知路径的样例仍可供人工核查，但不能标成已证明可行");
+
         // public 方法仍允许来自样例 main 以外的调用，不能用已知实参覆盖掉所有未知参数。
         for (String method : List.of("insert", "findById", "findUsers", "update", "deleteById")) {
             var sql = byMethod.get(method);
@@ -130,13 +149,15 @@ class JdbcUserQueryAnalysisTest {
     }
 
     /** 打印每条静态候选及对应参数；保留准备点、执行点和不同调用路径，便于核对分析结果。 */
-    private static void printSqlReport(Path project, AnalysisResult result) throws IOException {
+    private static List<SampleSql> printSqlReport(Path project, AnalysisResult result) throws IOException {
+        List<SampleSql> samples = new ArrayList<>();
         var report = new StringBuilder("jdbc-user-query SQL 与参数分析报告\n");
         report.append("分析状态: ").append(result.status())
                 .append("\nSQL 候选记录: ").append(result.rawSqls().size())
                 .append("\n不同 SQL 文本: ").append(result.rawSqls().stream().map(RawSql.Variant::text).distinct().count())
-                .append("\n说明: 静态候选包含准备点/执行点及不同路径，未验证分支可行性，不代表实际执行次数。\n")
-                .append("拼接参数属于 ${name} 槽位；JDBC 绑定参数属于 setXxx 设置的 ? 或命名参数。\n");
+                .append("\n说明: 原始候选包含准备点/执行点及不同路径；联合可行性见各条求解状态，不代表实际执行次数。\n")
+                .append("拼接参数属于 ${name} 槽位；JDBC 绑定参数属于 setXxx 设置的 ? 或命名参数。\n")
+                .append("模拟 SQL 按同一联合组合生成；UNKNOWN 仅供核查，尚未证明路径可行；UNSATISFIABLE 不生成样例。\n");
         int number = 0;
         for (var extraction : result.extractions()) {
             for (var statement : extraction.statements()) {
@@ -162,16 +183,77 @@ class JdbcUserQueryAnalysisTest {
                     }
                     if (!statement.rawSql().issues().isEmpty())
                         report.append("SQL 诊断: ").append(statement.rawSql().issues()).append('\n');
+                    int sqlNumber = number;
+                    sql.jointInference().ifPresentOrElse(joint -> {
+                        report.append("联合路径: ").append(joint.status()).append(", combinations=").append(joint.combinations().size()).append('\n');
+                        if (joint.status() == JointSqlInferenceResult.Status.UNSATISFIABLE) {
+                            report.append("模拟样例 SQL: 不生成（已证明路径无解）\n");
+                        } else if (joint.combinations().isEmpty()) {
+                            report.append("模拟样例 SQL: 未生成（没有联合参数组合，保留原始 SQL 与诊断）\n");
+                        }
+                        int combinationNumber = 0;
+                        for (var combination : joint.combinations()) {
+                            report.append("  联合组合 ").append(++combinationNumber).append(": ").append(combination.status()).append(" slots=");
+                            var values = new LinkedHashMap<String, SqlValue>();
+                            combination.parameters().forEach((name, value) -> values.put(name, value.value()));
+                            report.append(values).append(" bindings=").append(combination.bindings().stream()
+                                    .map(binding -> binding.keyValue().value() + "=" + binding.value().value()).toList())
+                                    .append(" conditions=").append(combination.conditions().size()).append('\n');
+                            if (combination.status() == JointSqlInferenceResult.Status.UNSATISFIABLE) continue;
+                            // 当前共享样例只有拼接槽位；若以后加入 setXxx，需单独按 SQL 方言处理绑定字面量。
+                            assertTrue(combination.bindings().isEmpty(), "此样例的模拟渲染不应忽略 JDBC 绑定值");
+                            var rendered = SqlNodeRenderer.render(sql.template(), values);
+                            samples.add(new SampleSql(sqlNumber, combinationNumber, combination.status(), rendered));
+                            String label = combination.status() == JointSqlInferenceResult.Status.SATISFIABLE
+                                    ? "已满足建模条件" : "尚未证明路径可行";
+                            report.append("    模拟样例 SQL（").append(label).append("）: ")
+                                    .append(rendered.sql().orElse("未生成完整 SQL（存在未知参数）")).append('\n');
+                            if (!rendered.diagnostics().isEmpty()) report.append("    渲染诊断: ").append(rendered.diagnostics()).append('\n');
+                            if (!combination.issues().isEmpty()) report.append("    组合诊断: ").append(combination.issues()).append('\n');
+                        }
+                        if (!joint.issues().isEmpty()) report.append("联合诊断: ").append(joint.issues()).append('\n');
+                    }, () -> report.append("模拟样例 SQL: 未生成（尚无联合求解结果）\n"));
                 }
             }
         }
+        long completeSamples = samples.stream().filter(sample -> sample.rendered().sql().isPresent()).count();
+        long distinctSamples = samples.stream().flatMap(sample -> sample.rendered().sql().stream()).distinct().count();
+        var statusCounts = result.rawSqls().stream().map(sql -> sql.jointInference().orElseThrow().status())
+                .collect(Collectors.groupingBy(Function.identity(), Collectors.counting()));
+        report.append("\n报告统计:\nSQL 联合状态: ").append(statusCounts)
+                .append("\n完整模拟 SQL（按联合组合）: ").append(completeSamples)
+                .append("\n不同模拟 SQL 文本: ").append(distinctSamples)
+                .append("\n未完成渲染的联合组合: ").append(samples.size() - completeSamples).append('\n');
         // UTF-8 文件保留中文和值的原始内容，避免终端代码页影响阅读。
         Path file = project.getParent().getParent().resolve("jsqlint-test/target/jdbc-user-query-sql-report.txt");
         Files.createDirectories(file.getParent());
         Files.writeString(file, report);
         System.out.print(report);
         System.out.println("SQL 与参数报告: " + file);
+        // 另存精简 SQL 清单；同文不同路径的对应关系仍完整保留在上面的详细报告中。
+        var examples = new LinkedHashMap<String, List<SampleSql>>();
+        for (SampleSql sample : samples) sample.rendered().sql().ifPresent(text ->
+                examples.computeIfAbsent(text, ignored -> new ArrayList<>()).add(sample));
+        var script = new StringBuilder("-- jdbc-user-query 静态分析模拟 SQL（按文本去重）\n"
+                + "-- UNKNOWN 尚未证明路径可行；仅供查看，未执行数据库操作；无解候选见详细报告。\n");
+        int exampleNumber = 0;
+        for (var entry : examples.entrySet()) {
+            var statuses = entry.getValue().stream().map(SampleSql::status).collect(Collectors.toCollection(LinkedHashSet::new));
+            var sourceNumbers = entry.getValue().stream().map(SampleSql::sqlNumber).distinct().toList();
+            script.append("\n-- 样例 ").append(++exampleNumber).append(" | 联合状态: ").append(statuses)
+                    .append(" | 来源 SQL 编号: ").append(sourceNumbers).append('\n').append(entry.getKey());
+            if (!entry.getKey().stripTrailing().endsWith(";")) script.append(';');
+            script.append('\n');
+        }
+        Path exampleFile = file.resolveSibling("jdbc-user-query-simulated.sql");
+        Files.writeString(exampleFile, script);
+        System.out.print(script);
+        System.out.println("模拟 SQL 清单: " + exampleFile);
+        return List.copyOf(samples);
     }
+
+    private record SampleSql(int sqlNumber, int combinationNumber, JointSqlInferenceResult.Status status,
+                             SqlNodeRenderer.RenderedSql rendered) {}
 
     private static void appendParameter(StringBuilder report, String prefix, ParameterValueInferenceResult parameter) {
         report.append("  - ").append(prefix).append("name=").append(parameter.name())

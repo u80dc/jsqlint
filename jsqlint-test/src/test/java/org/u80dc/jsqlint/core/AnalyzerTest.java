@@ -134,6 +134,28 @@ class AnalyzerTest {
     }
 
     @Test
+    void templateReturnTracingAlsoRespectsTheIndependentCallBudget() throws Exception {
+        Path classes = compile("Sample", """
+                public class Sample {
+                    static String first() { return second(); }
+                    static String second() { return "SELECT 1"; }
+                    public void query(java.sql.Connection c) throws Exception { c.prepareStatement(first()); }
+                }
+                """);
+        var config = AnalyzerConfig.defaults().withMaxCallDepth(1);
+        Capture limited = new Capture();
+        assertEquals(PARTIAL, new Analyzer(config, List.of(new JdbcAnalysisModule()), List.of())
+                .analyze(classes, options(limited)).status());
+        assertTrue(limited.diagnostics.stream().anyMatch(text -> text.contains("call depth budget")));
+        assertFalse(limited.sql.getFirst().complete());
+
+        Capture complete = new Capture();
+        assertEquals(SUCCESS, new Analyzer(config.withMaxCallDepth(2), List.of(new JdbcAnalysisModule()), List.of())
+                .analyze(classes, options(complete)).status());
+        assertEquals(List.of("SELECT 1"), complete.completeSql());
+    }
+
+    @Test
     void indexesCallersAcrossAllMethodsIncludingNonControllerEntrypoints() throws Exception {
         Path classes = compile("Sample", """
                 public class Sample {

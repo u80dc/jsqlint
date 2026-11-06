@@ -33,8 +33,27 @@ null/字符/布尔转换、缺少调试信息时的参数名称，以及候选�
 未知操作/异常和真实 null 的区别。验证使用真实编译后的字节码，不执行样例或连接数据库。
 还验证 `AnalysisResult.rawSqls()` 同时关联拼接参数与预编译绑定值：相同 SQL 文本在不同调用上下文中
 保留各自参数，批次保存 addBatch 时的绑定快照，clearParameters 后不混入先前的值；关联列表不可变。
+分支一致性回归覆盖同一辅助方法的独立调用、同一值原样转发及局部变量重新赋值；
+字符串转换回归覆盖数值/null 拼接后的替换、布尔/字符转换后的连续替换，验证转换结果和原始输入同时保留。
 共享 JDBC 样例还验证 alice、bob、O'Neil 的 INSERT 参数候选，确认转义后的 O''Neil
 及其初始字面量、传播链被保存在 AnalysisResult 中。
+`JdbcJointPathInferenceTest` 验证 SQL 与多个绑定值的同分支配对、重复条件与整数范围冲突、
+槽位和绑定值使用同一入口模型重演、字面量导致的不可达 SQL、独立 helper 调用、switch/default、
+null、动态绑定下标和 long 边界溢出；未知条件、循环和组合预算必须显式标为 UNKNOWN。
+还验证相同条件下的后续 setter 覆盖、clearParameters，以及不同 addBatch 入口的条件与绑定快照。
+`JdbcJointPathOptimizationTest` 验证条件辅助方法的嵌套调用、多个返回位置、虚调用目标和 switch 条件，
+以及开放分派、递归和循环的未知边界；无关分支和等价 JDBC 快照历史应合并，相关赋值、提前返回和
+未完整覆盖的历史条件必须保留。十个参数共享同一布尔分支时应只生成两组相容组合。
+`JdbcJointConsistencyTest` 验证同次虚调用在 SQL、多个参数和条件间共享目标，嵌套调用和外部分派保持一致，
+不同调用仍独立选择；同时验证数组别名/跨方法传递/拼接下的空值模型，以及保存传播链再次重演时的
+下标变化、实际数组值、越界、未知或相互冲突的数组模型。
+
+`FingerprintUtilsTest` 覆盖字符串与注释边界、引号标识符、一元/二元运算符、数值与布尔常量、
+Locale 独立性及长输入；同时验证 ANSI/MySQL/PostgreSQL 词法差异、MySQL 引号和转义模式、
+PostgreSQL dollar 字符串/嵌套注释/JSON 运算符、参数名称保留、IN 列表折叠配置及未闭合输入报错。
+`FingerprintUtilsOracleTest` 验证 Oracle Q/NQ 替代引号（包括成对、自定义及多字节分隔符）、
+浮点后缀和特殊常量、位置/命名/引号绑定、含 `$`/`#` 的标识符、行提示、日期与间隔字面量，
+以及 CONNECT BY、RETURNING、分页、旧式外连接和 PL/SQL 范围的结构保留。
 
 ## 运行
 
@@ -73,6 +92,9 @@ Linux / macOS 将命令替换为 `./mvnw`，参数相同。
 测试会逐条打印 raw SQL、所属方法/调用链、拼接参数和 JDBC 绑定参数的推断值，并保存 UTF-8 报告至
 `target/jdbc-user-query-sql-report.txt`。样例使用字符串拼接，没有 setXxx 绑定，故 JDBC 绑定列表为空。
 报告保留准备点、执行点及各调用路径的全部静态候选，不按文本去重；未知值和诊断也会保留。
+同时按每组联合参数生成并打印模拟 SQL：拼接槽位使用转换后的文本，不重复转义或另加引号；
+UNKNOWN 样例标明尚未证明可行，无解候选不生成模拟 SQL。未知参数保留渲染诊断，不强行替换成 null。
+完整模拟 SQL 另存为按文本去重的 `target/jdbc-user-query-simulated.sql`，含联合状态与来源 SQL 编号。
 
 Gradle 集成测试可以通过 `'-Djsqlint.test.gradle.home=C:\path\to\gradle'` 指定已有 Gradle 安装，
 否则使用 Tooling API 的默认发行版，首次运行可能下载。其余基于临时项目的 Maven 输出目录测试使用离线模式，

@@ -62,8 +62,7 @@ public record AnalysisOptions(@Nullable Duration timeout, BooleanSupplier cancel
 
     /** 合并为本次调用独有的配置快照，保持 Analyzer 上的默认配置不变。 */
     AnalyzerConfig resolveAgainst(AnalyzerConfig config) {
-        return new AnalyzerConfig(timeout == null ? config.timeout() : timeout,
-                config.maxTraceDepth(), config.methodCacheSize(),
-                cleanupClassOutput == null ? config.cleanupClassOutput() : cleanupClassOutput, config.inputOptions());
+        return config.withTimeout(timeout == null ? config.timeout() : timeout)
+                .withCleanupClassOutput(cleanupClassOutput == null ? config.cleanupClassOutput() : cleanupClassOutput);
     }
 }

@@ -232,6 +232,61 @@ Tooling API 的版本是调用库版本；目标工程实际使用的 Gradle 发
 日志依赖继承父 POM 的 SLF4J/Logback 配置；Maven 依赖沿用原实现的
 `slf4j-simple` 排除配置。测试统一放在 `jsqlint-test` 模块。
 
+## SQL 指纹
+
+`utils.FingerprintUtils` 按词法模板归一化 SQL，随后计算 UTF-8 SHA-256 指纹。
+现有 `normalize(sql)`、`fingerprint(sql)`、`isSameStructure(a, b)` 入口继续可用，
+默认采用 ANSI 规则：单引号为字符串，双引号为标识符。需要根据目标数据库显式选择方言，
+不会从 SQL 文本猜测双引号含义。
+
+```java
+import org.u80dc.jsqlint.commons.utils.FingerprintUtils;
+import org.u80dc.jsqlint.commons.utils.FingerprintUtils.Dialect;
+import org.u80dc.jsqlint.commons.utils.FingerprintUtils.Options;
+
+String template = FingerprintUtils.normalize("SELECT * FROM users WHERE id=-12");
+// select * from users where id = ?
+String fingerprint = FingerprintUtils.fingerprint("SELECT $$a'--b$$ FROM users", Dialect.POSTGRESQL);
+String oracleTemplate = FingerprintUtils.normalize(
+        "SELECT q'[O'Neil]' FROM dual WHERE id=:1", Dialect.ORACLE);
+// select ? from dual where id = :1
+
+var options = new Options(Dialect.MYSQL, false) // 保留 IN 列表长度
+        .withMysqlAnsiQuotes(true)              // 对应 MySQL ANSI_QUOTES
+        .withMysqlBackslashEscapes(false);      // 对应 MySQL NO_BACKSLASH_ESCAPES
+boolean same = FingerprintUtils.isSameStructure(sql1, sql2, options);
+```
+
+- 字符串、十六进制/十进制/科学计数法数值及布尔常量替换为 `?`，保留二元运算符。
+  普通注释被移除，字符串或引号标识符内的注释符不参与处理。`NULL` 保留，以区分 `IS NULL` 等结构。
+- ANSI/PostgreSQL/Oracle 的非引号单词使用 `Locale.ROOT` 折叠大小写；引号标识符原样保留。
+  MySQL 保守保留标识符及非保留关键字的大小写，只折叠明确的保留字，避免合并不同表名。
+- PostgreSQL 支持 dollar 字符串、`E'...'`、嵌套注释及常见 JSON 运算符；普通字符串假定
+  `standard_conforming_strings=on`。MySQL 默认双引号为字符串，启用反斜杠转义，
+  支持反引号标识符、`#` 注释及要求后继空白的 `--` 注释。
+- Oracle 支持 `q'[...]'`、`q'{...}'`、`q'(...)'`、`q'<...>'` 及自定义字符分隔符，
+  同时支持 `N'...'`、`NQ'...'` 和前缀大小写变体。替代引号内部的单引号、注释符按字符串内容处理；
+  无效分隔符或未闭合的替代引号会报告位置。普通 Oracle 字符串不启用反斜杠转义。
+  `f/F/d/D` 数值后缀以及 `BINARY_FLOAT/DOUBLE_NAN/INFINITY` 常量整体替换为 `?`。
+  标识符中的 `$`、`#` 及数字保留，数据库链接名、序列名和双引号标识符不会被当作常量屏蔽。
+  `DATE`、`TIMESTAMP`、`INTERVAL` 的类型关键字和单位保留，仅屏蔽字面值。
+- 默认将仅含常量或 JDBC `?` 的平面 `IN` 列表折叠为 `IN (?)`，可通过
+  `Options.defaults().withCollapseInLists(false)` 禁用。表达式、行值、子查询不折叠；
+  命名参数和 PostgreSQL `$1`、Oracle `:1` 等位置参数保留名称/编号，也不折叠其所在的列表。
+  Oracle 还支持 `:user_id`、`:user#1` 及 `:"Case Name"` 等绑定形式；绑定名称保守保留原始大小写。
+- MySQL 可执行注释 `/*! ... */` 和优化器提示 `/*+ ... */` 保留完整文本，避免忽略执行差异。
+  Oracle 的 `--+ ...` 行提示也保留，并保留其换行边界，避免吞掉后续 SQL。
+  统一标点周围空白，忽略末尾分号，保留多个语句之间的分号。
+- null、空白及仅含普通注释的输入返回空字符串；null 与空字符串视为相同空模板。
+  未闭合引号、dollar 字符串或块注释抛出带位置的 `IllegalArgumentException`。
+
+这是轻量词法归一化工具，不是完整 SQL 解析器或语义等价判定器，也不覆盖所有方言扩展。
+Oracle 的 `CONNECT BY PRIOR`、`START WITH`、`RETURNING INTO`、分页、旧式外连接 `(+)`、
+命名实参 `=>` 及 PL/SQL 范围 `..` 等结构可保留；不解析 SQL*Plus 命令或执行 PL/SQL 语义分析。
+Oracle 字面量规则参考 [Oracle SQL Language Reference](https://docs.oracle.com/en/database/oracle/oracle-database/19/sqlrf/Literals.html)。
+指纹适合对模板分组；各条原始 SQL、参数候选及传播链仍应保留，不能仅凭指纹删除分析结果。
+比较或持久化指纹时应使用同一配置。此次归一化规则已修正，旧版本保存的指纹需要重新生成。
+
 ## 验证
 
 从仓库根目录执行：

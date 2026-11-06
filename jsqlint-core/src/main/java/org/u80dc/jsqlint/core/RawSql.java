@@ -3,11 +3,12 @@ package org.u80dc.jsqlint.core;
 import org.u80dc.jsqlint.core.dataflow.ValueTrace;
 import org.u80dc.jsqlint.core.node.*;
 import org.u80dc.jsqlint.core.parameter.ParameterValueInferenceResult;
+import org.u80dc.jsqlint.core.parameter.JointSqlInferenceResult;
 import java.util.*;
 
 /**
  * 从传播链恢复的 SQL 候选；命名槽位表示原始文本拼接，JDBC 的 ? 仍由 Binding 描述。
- * 候选不附带路径可行性证明，complete 只表示文本结构恢复没有未知操作或截断。
+ * complete 只表示文本结构恢复没有未知操作或截断；联合参数与条件求解状态见 Variant.jointInference。
  * @author u80dc
  */
 public record RawSql(List<Variant> variants, List<String> issues) {
@@ -18,15 +19,19 @@ public record RawSql(List<Variant> variants, List<String> issues) {
     RawSql withBindings(List<SqlExtraction.Binding> bindings) {
         var snapshot = List.copyOf(bindings);
         return new RawSql(variants.stream().map(variant -> new Variant(
-                variant.text(), variant.placeholders(), variant.trace(), snapshot)).toList(), issues);
+                variant.text(), variant.placeholders(), variant.trace(), snapshot, variant.jointInference())).toList(), issues);
     }
 
-    /** 每个候选保存自己的传播树、拼接参数及绑定参数；相同文本但不同来源的候选仍分别保留。 */
+    /**
+     * 每个候选保存自己的传播树、独立参数推断和联合求解结果；相同文本但不同来源仍分别保留。
+     * 联合求解为 UNSATISFIABLE 的原始候选也保留，供审计剔除原因；手工构造或尚未求解时为 Optional.empty。
+     */
     public record Variant(String text, List<Placeholder> placeholders, Optional<ValueTrace> trace,
-                          List<SqlExtraction.Binding> bindings) {
+                          List<SqlExtraction.Binding> bindings, Optional<JointSqlInferenceResult> jointInference) {
         public Variant {
             Objects.requireNonNull(text); placeholders = List.copyOf(placeholders); Objects.requireNonNull(trace);
             bindings = List.copyOf(bindings);
+            Objects.requireNonNull(jointInference);
             int end = 0;
             for (var slot : placeholders) {
                 if (slot.start() < end || slot.end() > text.length()
@@ -34,6 +39,10 @@ public record RawSql(List<Variant> variants, List<String> issues) {
                     throw new IllegalArgumentException("Placeholder positions must match ordered, non-overlapping text slots");
                 end = slot.end();
             }
+        }
+
+        public Variant(String text, List<Placeholder> placeholders, Optional<ValueTrace> trace, List<SqlExtraction.Binding> bindings) {
+            this(text, placeholders, trace, bindings, Optional.empty());
         }
 
         /** raw SQL 构造阶段尚未关联绑定参数，语句结果组装时统一补入。 */
