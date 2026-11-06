@@ -2,6 +2,8 @@ package org.u80dc.jsqlint.core.parameter;
 
 import org.u80dc.jsqlint.core.node.*;
 import org.u80dc.jsqlint.core.spi.*;
+import org.u80dc.jsqlint.core.dataflow.CallContext;
+import org.u80dc.jsqlint.core.dataflow.LocalDefinitions;
 import sootup.core.jimple.common.*;
 import sootup.core.jimple.common.constant.*;
 import sootup.core.jimple.common.expr.*;
@@ -27,7 +29,7 @@ public final class ValueTraceAnalyzer {
     private final Runnable checkpoint;
     private final BiConsumer<String, String> incomplete;
     // 只缓存与调用上下文无关的到达定义查询；外层按最近访问顺序限制方法数量。
-    private final Map<MethodSignature, Map<Query, Definitions>> definitions;
+    private final LocalDefinitions definitions;
     private int symbols;
 
     public ValueTraceAnalyzer(JavaView view, Map<MethodSignature, List<InvocationSite>> callers,
@@ -37,17 +39,44 @@ public final class ValueTraceAnalyzer {
         this.maxDepth = maxDepth;
         this.checkpoint = checkpoint;
         this.incomplete = incomplete;
-        definitions = new LinkedHashMap<>(16, 0.75f, true) {
-            @Override
-            protected boolean removeEldestEntry(Map.Entry<MethodSignature, Map<Query, Definitions>> entry) {
-                return size() > cacheSize;
-            }
-        };
+        definitions = new LocalDefinitions(cacheSize, checkpoint);
+    }
+
+    private ValueTraceAnalyzer(ValueTraceAnalyzer parent, BiConsumer<String, String> diagnostic) {
+        view = parent.view; callers = parent.callers; maxDepth = parent.maxDepth;
+        checkpoint = parent.checkpoint; definitions = parent.definitions; incomplete = diagnostic;
+    }
+
+    /** 单条 SQL 的恢复状态；共享定义缓存，但符号与诊断在查询间隔离。 */
+    public Recovery recoverSql(SqlInput.ValueAt input, CallContext context) {
+        List<String> issues = new ArrayList<>();
+        var query = new ValueTraceAnalyzer(this, (code, message) -> {
+            issues.add(code + ": " + message);
+            incomplete.accept(code, message);
+        });
+        SqlNode template = query.sql(input, context);
+        return new Recovery(template, issues);
+    }
+
+    public record Recovery(SqlNode template, List<String> issues) {
+        public Recovery { Objects.requireNonNull(template); issues = List.copyOf(issues); }
     }
 
     /** 从 SQL 使用点向前追踪值，再将常量、拼接和分支统一转换为 SQL 节点。 */
     public SqlNode sql(SqlInput.ValueAt input) {
         return node(resolve(input.method(), input.statement(), input.value(), Map.of(), new HashSet<>(), 0), false);
+    }
+
+    /** 在指定调用上下文求 SQL 文本，避免不同调用方的实参混入当前结果。 */
+    public SqlNode sql(SqlInput.ValueAt input, CallContext context) {
+        Map<Integer, Term> bindings = Map.of();
+        for (InvocationSite call : context.calls()) {
+            Map<Integer, Term> arguments = new LinkedHashMap<>();
+            for (int i = 0; i < call.invocation().getArgCount(); i++)
+                arguments.put(i, new Deferred(call.method(), call.statement(), call.invocation().getArg(i), bindings));
+            bindings = arguments;
+        }
+        return node(resolve(input.method(), input.statement(), input.value(), bindings, new HashSet<>(), 0), false);
     }
 
     /**
@@ -73,7 +102,7 @@ public final class ValueTraceAnalyzer {
         try {
             if (value instanceof Local local) {
                 // 按控制流寻找所有可达赋值，不能简单取源码中最近的一次赋值。
-                Definitions reaching = reaching(method, local, use);
+                var reaching = definitions.reaching(method, local, use);
                 List<Term> values = new ArrayList<>();
                 for (Stmt definition : reaching.statements()) {
                     Value right = ((AbstractDefinitionStmt) definition).getRightOp();
@@ -84,7 +113,12 @@ public final class ValueTraceAnalyzer {
             }
             if (value instanceof JParameterRef parameter) {
                 // 已知调用上下文优先；否则从共享调用者索引回溯实参，不重复扫描整个项目。
-                if (bindings.containsKey(parameter.getIndex())) return bindings.get(parameter.getIndex());
+                if (bindings.containsKey(parameter.getIndex())) {
+                    Term bound = bindings.get(parameter.getIndex());
+                    if (bound instanceof Deferred deferred)
+                        return resolve(deferred.method(), deferred.use(), deferred.value(), deferred.bindings(), active, depth + 1);
+                    return bound;
+                }
                 List<Term> values = new ArrayList<>();
                 for (InvocationSite caller : callers.getOrDefault(method.getSignature(), List.of())) {
                     if (caller.invocation().getArgCount() > parameter.getIndex())
@@ -186,43 +220,6 @@ public final class ValueTraceAnalyzer {
         return term;
     }
 
-    /**
-     * 从使用点沿控制流反向搜索，每条路径遇到该局部变量的有效定义后停止。
-     * 异常边单独标记：语句抛出异常时，其左侧赋值可能尚未完成，需继续寻找更早的定义。
-     */
-    private Definitions reaching(JavaSootMethod method, Local local, Stmt use) {
-        Map<Query, Definitions> cache = definitions.computeIfAbsent(method.getSignature(), key -> new HashMap<>());
-        Query query = new Query(local, use);
-        if (cache.containsKey(query)) return cache.get(query);
-        var graph = method.getBody().getControlFlowGraph();
-        Deque<Edge> work = new ArrayDeque<>();
-        graph.predecessors(use).forEach(stmt -> work.add(new Edge(stmt, false)));
-        graph.exceptionalPredecessors(use).forEach(stmt -> work.add(new Edge(stmt, true)));
-        Set<Edge> visited = new HashSet<>();
-        Set<Stmt> found = new LinkedHashSet<>();
-        boolean missing = work.isEmpty();
-        while (!work.isEmpty()) {
-            checkpoint.run();
-            Edge edge = work.removeFirst();
-            if (!visited.add(edge)) continue;
-            Stmt stmt = edge.statement();
-            if (!edge.exceptional() && stmt instanceof AbstractDefinitionStmt definition
-                    && definition.getLeftOp().equals(local)) {
-                found.add(stmt);
-                continue;
-            }
-            var predecessors = graph.predecessors(stmt);
-            var exceptional = graph.exceptionalPredecessors(stmt);
-            // 存在未遇到赋值就到达入口的路径时，不能只保留其他路径上的已知值。
-            if (predecessors.isEmpty() && exceptional.isEmpty()) missing = true;
-            predecessors.forEach(pred -> work.add(new Edge(pred, false)));
-            exceptional.forEach(pred -> work.add(new Edge(pred, true)));
-        }
-        Definitions result = new Definitions(List.copyOf(found), missing);
-        cache.put(query, result);
-        return result;
-    }
-
     /** 只合并结构相同的候选值，不取首个分支，也不在此阶段展开组合。 */
     private Term alternatives(List<Term> values) {
         List<Term> distinct = values.stream().distinct().toList();
@@ -235,6 +232,7 @@ public final class ValueTraceAnalyzer {
      */
     private SqlNode node(Term term, boolean stringified) {
         return switch (term) {
+            case Deferred deferred -> node(resolve(deferred.method(), deferred.use(), deferred.value(), deferred.bindings(), new HashSet<>(), 0), stringified);
             case Literal literal -> !stringified && !(literal.value() instanceof String)
                     ? node(unsupported("non_string_sql"), false)
                     : new StaticTextSqlNode(String.valueOf(literal.value()));
@@ -254,11 +252,9 @@ public final class ValueTraceAnalyzer {
     /** 追踪阶段的中间值，保留候选关系，直到输出时才转换成通用 SQL 节点。 */
     private sealed interface Term {}
     private record Literal(Object value) implements Term {}
+    private record Deferred(JavaSootMethod method, Stmt use, Value value, Map<Integer, Term> bindings) implements Term {}
     private record Unknown(String reason) implements Term {}
     private record Concat(List<Term> parts) implements Term {}
     private record Alternatives(List<Term> values) implements Term {}
     private record Key(MethodSignature method, Stmt use, Value value, Map<Integer, Term> bindings) {}
-    private record Query(Local local, Stmt use) {}
-    private record Definitions(List<Stmt> statements, boolean missing) {}
-    private record Edge(Stmt statement, boolean exceptional) {}
 }

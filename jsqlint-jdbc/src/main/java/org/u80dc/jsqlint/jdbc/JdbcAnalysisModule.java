@@ -21,6 +21,7 @@ public final class JdbcAnalysisModule implements SqlAnalysisModule {
     @Override
     public void register(DiscoveryRegistry registry) {
         registry.sqlInvocation(JdbcAnalysisModule::isSqlCall);
+        registry.extraction(JdbcAnalysisModule::isSqlCall, new JdbcSqlExtractor());
         // 提取起点仍要求 SQL 字符串实参；无参执行调用独立报告，不伪造 SQL 参数。
         registry.invocation(JdbcAnalysisModule::hasSqlArgument,
                 (site, seeds) -> {
@@ -43,7 +44,7 @@ public final class JdbcAnalysisModule implements SqlAnalysisModule {
     }
 
     /** 只接受 JDBC 标准重载，避免驱动扩展中碰巧同名的方法被识别为 SQL 入口。 */
-    private static boolean hasSqlArgument(MethodSignature signature) {
+    static boolean hasSqlArgument(MethodSignature signature) {
         String name = signature.getName();
         if (!CONNECTION.contains(name) && !STATEMENT.contains(name)) return false;
         List<String> parameters = signature.getParameterTypes().stream().map(Object::toString).toList();

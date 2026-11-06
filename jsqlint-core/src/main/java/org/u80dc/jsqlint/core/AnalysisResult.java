@@ -1,15 +1,30 @@
 package org.u80dc.jsqlint.core;
 
 import java.util.Objects;
+import java.util.List;
 
 /**
- * 分析终态；执行中的阶段通过监听器报告。
+ * 分析终态、raw SQL 与已保存的 SQL/参数溯源结果；执行中的阶段通过监听器报告。
  *
  * @author u80dc
  */
-public record AnalysisResult(Status status) {
+public record AnalysisResult(Status status, List<SqlExtraction> extractions) {
     public AnalysisResult {
         Objects.requireNonNull(status, "status");
+        extractions = List.copyOf(extractions);
+    }
+
+    public AnalysisResult(Status status) { this(status, List.of()); }
+
+    /**
+     * 直接获取本次分析已产生的全部 raw SQL 候选，包括不完整候选。
+     * 按提取结果、语句、分支的顺序展开；相同文本的不同调用点/传播路径不去重。
+     * 返回不可变列表，候选保留原有占位符及传播树，输入关闭后仍可读取。
+     * 从不可变的 extractions 派生，避免两份结果存储不同步；调用点、绑定参数及诊断仍可从 extractions 读取。
+     */
+    public List<RawSql.Variant> rawSqls() {
+        return extractions.stream().flatMap(extraction -> extraction.statements().stream())
+                .flatMap(statement -> statement.rawSql().variants().stream()).toList();
     }
 
     public enum Status {

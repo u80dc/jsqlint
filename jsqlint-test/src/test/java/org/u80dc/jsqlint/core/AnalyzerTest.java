@@ -407,7 +407,9 @@ class AnalyzerTest {
     void emptyDiscoverySucceedsAndInvalidContractsFailEarly() {
         var resource = memory(Map.of("ignore.txt", "not sql"));
         Analyzer analyzer = new Analyzer(List.of(sqlFiles("sql")), List.of());
-        assertEquals(SUCCESS, analyzer.analyze(new AnalysisRequest(List.of(), List.of(resource))).status());
+        var result = analyzer.analyze(new AnalysisRequest(List.of(), List.of(resource)));
+        assertEquals(SUCCESS, result.status());
+        assertTrue(result.rawSqls().isEmpty());
         assertThrows(IllegalArgumentException.class, () -> new AnalysisRequest(List.of(), List.of()));
         assertThrows(IllegalArgumentException.class, () -> new Analyzer(List.of(sqlFiles("same"), sqlFiles("same")), List.of()));
         assertThrows(IllegalArgumentException.class, () -> analyzer.analyze(temporary.resolve("missing")));

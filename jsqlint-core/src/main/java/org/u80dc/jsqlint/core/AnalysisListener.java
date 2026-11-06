@@ -22,6 +22,8 @@ public interface AnalysisListener {
      * 方法声明与实际调用分别报告，core 同时输出 INFO 日志。
      */
     default void onSqlCallSite(String moduleId, SqlCallSite site) {}
+    /** SQL、含命名槽位的 raw SQL、绑定参数及各自的数据依赖树与调用链；同一结果也保存在 AnalysisResult 中。 */
+    default void onSqlExtraction(SqlExtraction extraction) {}
     /**
      * 逐个接收分析结果。template 是提取的通用节点，sql 包含样例或尚未求值的残留节点；
      * 未知参数不会被填成空串，因此 sql.sql() 可能为空。

@@ -122,7 +122,8 @@ Path 入口将配置和本次输出路径一起交给选中的解析器；common
 
 ## 进度、结果与长任务控制
 
-`AnalysisResult` 暂时只包含内部枚举 `Status`：
+`AnalysisResult` 包含内部枚举 `Status`、不可变的 `extractions()` 列表，以及直接获取 raw SQL 的 `rawSqls()`。
+SQL 提取结果在输入关闭后仍可读取，不持有 JavaView、方法体或编译目录资源。
 
 | 终态 | 含义 |
 |---|---|
@@ -173,6 +174,165 @@ JavaView 的内存上限；当前仍需要保存发现的起点和调用索引�
 
 ## 扩展协议
 
+### JDBC SQL 与绑定参数溯源
+
+JDBC 模块在共享代码扫描完成后定位 SQL 和绑定值，core 负责逆向数据依赖、调用图、结果保存和日志输出：
+
+```java
+var result = new Analyzer().analyze(project);
+for (var extraction : result.extractions()) {
+    System.out.println(extraction.callSite()); // 执行/准备/批次加入调用点
+    System.out.println(extraction.callChain()); // 从项目入口到该调用点所在方法
+    for (var statement : extraction.statements()) {
+        statement.sql().ifPresent(trace -> System.out.println(trace.root()));
+        for (var binding : statement.bindings()) {
+            System.out.println(binding.key());       // 位置、命名参数或显式的 unknown 标识
+            System.out.println(binding.value());     // 绑定变量的数据依赖树和调用链
+            System.out.println(binding.keyTrace());  // 动态下标/名称本身的来源
+        }
+    }
+}
+```
+
+也可通过 `AnalysisListener.onSqlExtraction(...)` 逐条接收。core 的 INFO 日志分别打印
+`SQL 提取`、`变量调用链` 和 `逆向数据链`；后者逐条保留根变量到来源的所有候选依赖路径。
+各节点带所属方法完整签名、Jimple 语句索引、表达式、类型和追踪原因。未知值不会被填成空串。
+`template()` 保存按当前调用上下文恢复的 SQL 节点，`?` 仍保留为 JDBC 占位符；绑定值独立保存，
+不直接拼回 SQL，也不执行数据库查询。
+
+### 根据传播链构造 raw SQL
+
+通过 `AnalysisResult.rawSqls()` 可以直接遍历本次分析已产生的全部候选：
+
+```java
+var result = new Analyzer().analyze(project);
+for (var sql : result.rawSqls()) {
+    System.out.println(sql.text());
+    System.out.println(sql.placeholders());
+    sql.trace().ifPresent(trace -> System.out.println(trace.root()));
+}
+```
+
+返回值为不可变的 `List<RawSql.Variant>`，从保存的提取结果派生，不重新解析 SQL。
+按提取结果、语句、分支的顺序展开，不按文本去重，也不筛掉不完整候选；没有候选时返回空列表。
+因此 `rawSqls().size()` 是候选记录数，包含已识别的准备点/执行点和不同调用上下文，不能作为实际执行次数。
+只需要不同文本时可使用 `result.rawSqls().stream().map(RawSql.Variant::text).distinct().toList()`。
+调用点、绑定参数及各层诊断继续通过 `result.extractions()` 获取；未能生成任何候选的失败来源也保存在其中。
+
+`statement.rawSql()` 保存可直接查看的 SQL 文本候选，core 同时以 `Raw SQL` 日志输出。
+构造器消费 `ValueTrace.Node.computation()` 中的计算语义，不重新扫描方法体，也不从 Jimple
+打印文本猜测字符串。保留原始空白、引号、反斜线和重复拼接项。通用恢复逻辑位于 core，
+框架模块只负责定位 SQL 与绑定参数。
+
+```java
+for (var extraction : result.extractions()) {
+    for (var statement : extraction.statements()) {
+        var raw = statement.rawSql();
+        for (var variant : raw.variants()) {
+            System.out.println(variant.text());
+            // 例如：SELECT * FROM users WHERE id=${id} AND name='${name}'
+            variant.trace().ifPresent(trace -> {
+                System.out.println(trace.callChain()); // 当前调用上下文
+                System.out.println(trace.root());      // 此候选选中的 SQL 传播分支
+            });
+            for (var slot : variant.placeholders()) {
+                System.out.println(slot.name());
+                System.out.println(slot.source()); // 变量类型、所在方法、转换操作及上游依赖
+            }
+        }
+        System.out.println(raw.issues());
+    }
+}
+```
+
+- 确定的文本片段合并为字面量，拼接值使用 `${变量名}`；入口/顶层形参即使有已知常量实参，
+  仍可保留为命名槽位以便生成不同样例。整条 SQL 的参数转发和可恢复的拼接片段继续向上展开。
+- 同一来源重复出现时保留全部位置；不同来源重名时增加 `_2` 等后缀。
+  字节码包含局部变量调试信息时使用变量名，否则尽可能使用 `parameterN`，其余未知值使用稳定的合成名。
+- JDBC 的 `?` 保持原样，真正的预编译绑定值仍由 `statement.bindings()` 单独保存。
+  raw SQL 的槽位表示文本拼接，也可能出现在表名或条件片段中，不能一律当作 JDBC 参数。
+- `Placeholder.start/end` 是文本中的 UTF-16 起止位置（结束位置不包含在内），
+  `source` 保留变量及转换依赖。SQL 字面量中原本存在的 `${...}` 不会被误识别为槽位。
+- 支持 StringConcatFactory、String.concat、参数转发、返回值、分支和可解析的数组元素，
+  以及常见的 String.valueOf、String 构造、Objects.requireNonNull 与常量 String.replace。
+  动态值上的单字符替换保留转换来源；可能跨越槽位边界的多字符替换保守地保留为整体未知值。
+- 分支生成多个候选；这些候选没有路径条件相关性或运行期可行性保证。
+  每个候选的 `trace()` 关联其传播树：已展开的赋值/返回值分支仅保留此次选择，拼接保留全部操作数。
+  未展开的符号值和未知操作仍保留原始依赖，不表示内部所有分支均已求值。
+  同一执行方法有多个调用方时分别生成 `SqlExtraction`，其候选传播树携带对应的 `callChain()`。
+  同一调用上下文内存在多个 SQL 分支时分别保存在 `rawSql().variants()`；即使文本相同，
+  只要来源不同也保留多个候选。调用方若只关心不同 SQL 文本，可自行对 `Variant.text()` 去重。
+  `trace` 由分析器生成时始终有值；手工创建的文本候选允许不提供来源。
+  目前上限为 128 个候选、每个文本 1,000,000 个字符，恢复过程还受步数、深度及分析取消/超时约束。
+  未知操作或达到限制时保留槽位及诊断，不把未知值吞成空串。
+
+INFO 日志通过 `rawSql[1]`、`rawSql[2]` 等编号将每条 raw SQL 与其传播树对应；编号作用域为当前 Statement。
+
+`raw.complete()` 仅表示 raw SQL 结构恢复没有未知操作或截断，不表示变量已有运行时取值。
+它与 `sourcesComplete()`、`templateComplete()` 分别记录状态；`statement.complete()` 要求三者均完整。
+因此旧模板求值器尚不支持的表达式仍可能已经具有完整的 raw SQL。
+
+`variant.template()` 可以将该候选转为通用动态 SQL 节点，并通过 `SqlNodeRenderer` 填入样例值。
+这里的样例值代表槽位 `source` 所描述转换**之后**的文本，不自动执行 Java 方法或转义/添加引号。
+例如 `email.replace("'", "''")` 的槽位需要提供已替换后的文本；原值和转换后的值同时使用时拥有独立名称。
+后续模拟器可根据 `source` 中的转换链自动生成这些值。不要对 raw SQL 直接做正则占位符替换，
+否则可能误改 SQL 中原本存在的 `${...}` 字面文本。
+
+JDBC 关联规则：
+
+- Statement 的带 SQL 执行/加入批次方法、Connection 的 prepareStatement/prepareCall/nativeSQL
+  从 SQL 实参开始追踪；无参 PreparedStatement/CallableStatement 执行先追踪接收对象的工厂来源。
+- 追踪局部别名、跨方法传入和工厂返回；工厂在不同调用位置产生的对象按调用上下文区分。
+- 识别标准 setXxx、CallableStatement 命名参数；setNull 记录真正的 null，不把 JDBC 类型编号当成绑定值。
+  registerOutParameter 是输出参数声明，不作为输入绑定值。
+- 从执行点沿 CFG 逆序查询。同一参数以到达执行点的最后一次设置为准，clearParameters 阻断更早的绑定；
+  不读取执行之后的 setter。分支分别保存候选状态，动态参数下标不能唯一确定时保留候选并标记不完整。
+- addBatch 保存该位置的绑定快照；executeBatch/executeLargeBatch 查询有效 addBatch 历史，
+  确定操作同一 Statement 的 clearBatch 才丢弃更早的批次；可能别名的清理或加入保留候选并标记不完整。
+  executeBatch 之前、addBatch 之后的新 setter 不会改写已加入批次的值。
+  同一对象正常完成 executeBatch/executeLargeBatch 后，后续批次不再包含已提交条目；
+  绑定参数仍保留。可能别名或异常退出时不强行清除历史，而是保留候选并标记不完整。
+  分支或循环下的记录是静态候选，不代表已穷举运行期批次数量。
+- 外部方法接收 Statement 时，绑定和批次均记录未建模的副作用边界；即使没有已知 SQL，
+  也保留带诊断的未知来源。只有确定为空且无诊断的批次才返回完整的空列表。
+
+core 的 `dataflow` 包对 JDBC 没有依赖：`ProgramIndex` 使用应用类层次 CHA 解析虚调用/接口调用，
+静态/特殊调用按声明解析；`DataFlowAnalysis` 提供调用上下文、引用来源、过程间逆向 CFG 遍历和变量依赖树；
+`LocalDefinitions` 为 SQL 文本恢复及变量追踪共用到达定义算法。
+调用解析同时保存可分析的项目目标和外部/未解析分支；项目覆盖实现不会吞掉依赖库中的具体实现。
+依赖库的接口、抽象类和可继承类型视为开放的分派边界，不将项目实现当作其全部实现。
+这些分支同时用于返回值追踪、对象来源和过程间状态回溯。
+`ArrayElements` 沿调用路径查询数组元素写入，支持局部别名、跨方法写入、常量下标和新数组默认值；
+确定数组与下标匹配才覆盖历史，不确定别名/下标保留候选并标记不完整。入口数组保留参数来源，
+无法解析的数组身份、外部修改或未覆盖的数组结构明确保留未知信息。
+`HeapExposure` 保留逆向路径上的外部可达容器与字段存储边，支持嵌套容器、数组容器和静态字段的间接逃逸；
+未做精确堆别名与字段覆盖建模，遇到可能的外部修改保留候选并报告不完整。
+`ObjectContents` 将对象分配与构造参数关联，支持 String 的空构造和 String 拷贝构造；
+其他构造保留可见实参来源并标记内容模型缺失，不能只找到 new 就声称内容完整。
+调用链在 main 或项目内没有调用方的方法处结束，不在 public 方法处提前停止。
+常量的数据依赖可在定义处结束，但仍单独保存该使用上下文通往入口的调用链。
+每个入口调用上下文独立分析 SQL 和参数，避免把不同调用方的值合并成一个确定结果。
+
+`Statement.sourcesComplete()` 表示数据来源/关联完整性；`templateComplete()` 表示模板恢复未遇到
+不支持的结构，相关诊断保存在该条结果的 `templateIssues()`，与来源诊断 `issues()` 分开。
+`Statement.complete()` 同时要求来源、模板及 raw SQL 恢复完整，`SqlExtraction.complete()` 汇总所有语句。
+`ValueTrace.complete()` 仍仅表示来源完整性。这些状态并不表示入口参数已有运行时取值，
+也不保证 CHA 候选路径在实际运行时一定可行。条件相关性和精确堆 points-to 尚未实现。
+字段读取保存项目中的候选字段写入及其上游依赖，并标记别名/写入顺序不确定；
+已发现调用点中遇到的反射/库调用边界、无法解析的 Statement 来源、递归和循环不会静默丢弃，
+结果及终态标为不完整/PARTIAL。纯反射 SQL 调用和 invokedynamic 回调的完整调用关系尚未建模。
+库方法返回值保留调用及其可见输入依赖，不能声称已分析库的实现。
+StringBuilder 等可变容器的精确内容恢复仍需后续模型。
+
+跨方法/依赖深度使用 `AnalyzerConfig.maxTraceDepth`（默认 32，可通过 withMaxTraceDepth 调整）；
+单次调用路径查询最多保留 256 个上下文，单次依赖/控制流查询最多处理 10000 个节点。
+达到限制会保留已发现结果并标为不完整；调用链/数据依赖树使用 LIMIT 标记，引用来源查询返回不完整状态。
+取消和超时沿用 Analyzer 的检查点。
+
+后续框架可通过 `registry.extraction(selector, handler)` 接入；handler 接收带调用上下文的 FlowPoint
+及 core 的 DataFlowAnalysis，只需返回包含 SQL 变量位置和绑定变量位置的 SqlTraceSource。
+core 统一生成 SqlExtraction 和 ValueTrace，框架不需要自行实现调用链遍历。
+
 ### SQL 调用点
 
 分析时 core 通过 `org.u80dc.jsqlint.core.AnalysisSession` 的 INFO 日志打印已确认的 SQL 调用点，
@@ -193,7 +353,7 @@ SQL 调用点: module=jdbc, kind=INVOCATION, class=java.sql.Statement, method=<j
 只报告一次，不同位置调用同一方法分别保留；不同模块的识别结果分别报告。
 调用点在发现阶段输出，即使后续 SQL/Provider 无法解析也不会被吞掉。
 调用点数与 SQL 提取起点数不相等，例如无参 `PreparedStatement.execute()` 可以是调用点，
-但 SQL 字符串来自先前的 `prepareStatement(sql)`；现阶段尚未建立二者的对象关联。
+SQL 字符串来自先前的 `prepareStatement(sql)`；JDBC 的过程间提取会关联二者并保存参数快照。
 `Progress.discovered/analyzed` 继续统计 SQL 提取起点和结果，不统计调用点。
 
 调用者代码只扫描 Application 输入，不以 main/Controller 可达性过滤；Library 输入用于类型解析。
@@ -261,7 +421,7 @@ core 负责通用 SQL 提取、值与参数溯源、保守推断和节点渲染�
   外部输入不会随机伪造；SQL 文本和样例均不作为数据库执行入口。
 
 尚未完整迁移旧 analysis 的框架能力：StringBuilder 等可变对象建模、复杂虚调用/字段传播、
-JDBC setXxx 绑定参数关联、Spring JDBC、MyBatis Provider、动态 include 属性、
+精确堆别名、Spring JDBC、MyBatis Provider、动态 include 属性、
 selectKey 与 JPA 等仍需后续扩展。遇到已发现起点中不支持的结构，会保留未知节点并报告
 PARTIAL；没有启用相应框架模块的代码不属于本次框架识别范围。
 

@@ -106,8 +106,10 @@ class SqlCallSiteDiscoveryTest {
                 }
                 """));
         Capture capture = new Capture();
-        assertEquals(SUCCESS, new Analyzer(List.of(new JdbcAnalysisModule()), List.of())
+        // 外部传入的 PreparedStatement 没有工厂来源，调用点仍全部报告，SQL 关联应标为部分完成。
+        assertEquals(PARTIAL, new Analyzer(List.of(new JdbcAnalysisModule()), List.of())
                 .analyze(classes, options(capture)).status(), capture.diagnostics.toString());
+        assertTrue(capture.diagnostics.stream().allMatch(message -> message.startsWith("SQL_DATA_FLOW_INCOMPLETE:")));
         assertEquals(16, capture.invocations().size());
         assertEquals(8, capture.sqlCount);
         assertTrue(capture.declarations().isEmpty());

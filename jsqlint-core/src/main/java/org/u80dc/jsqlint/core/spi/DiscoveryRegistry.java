@@ -24,6 +24,7 @@ public final class DiscoveryRegistry {
     private final List<Rule<InvocationSite>> invocations = new ArrayList<>();
     private final List<BiPredicate<JavaSootMethod, JavaView>> sqlMethods = new ArrayList<>();
     private final List<Predicate<InvocationSite>> sqlInvocations = new ArrayList<>();
+    private final List<ExtractionRule> extractions = new ArrayList<>();
     private boolean callIndexRequired;
 
     /**
@@ -34,7 +35,7 @@ public final class DiscoveryRegistry {
     }
 
     public boolean isCallIndexRequired() {
-        return callIndexRequired || !invocations.isEmpty();
+        return callIndexRequired || !invocations.isEmpty() || !extractions.isEmpty();
     }
 
     /**
@@ -79,6 +80,15 @@ public final class DiscoveryRegistry {
     public List<BiPredicate<JavaSootMethod, JavaView>> sqlMethods() { return List.copyOf(sqlMethods); }
 
     public List<Predicate<InvocationSite>> sqlInvocations() { return List.copyOf(sqlInvocations); }
+
+    /** 在代码索引建立后，逐个调用上下文解析 SQL/绑定参数；自动启用共享调用图与逆向数据流。 */
+    public void extraction(Predicate<InvocationSite> selector, SqlExtractionHandler handler) {
+        extractions.add(new ExtractionRule(selector, handler));
+    }
+    public List<ExtractionRule> extractions() { return List.copyOf(extractions); }
+    public record ExtractionRule(Predicate<InvocationSite> matches, SqlExtractionHandler handler) {
+        public ExtractionRule { Objects.requireNonNull(matches); Objects.requireNonNull(handler); }
+    }
 
     public List<Rule<AnalysisResource>> resources() {
         return List.copyOf(resources);
