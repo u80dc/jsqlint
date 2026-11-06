@@ -10,8 +10,14 @@ public record SqlTraceSource(Optional<ValuePoint> sql, List<Binding> bindings,
         Objects.requireNonNull(sql); bindings = List.copyOf(bindings); Objects.requireNonNull(batchEntry); issues = List.copyOf(issues);
     }
     public static SqlTraceSource sql(ValuePoint value) { return new SqlTraceSource(Optional.of(value), List.of(), Optional.empty(), List.of()); }
-    /** key 可以是位置、名称或未知标识；keyInput 保留动态参数下标/名称本身的数据来源。 */
-    public record Binding(String key, ValuePoint keyInput, ValuePoint value, SourceLocation location) {
-        public Binding { Objects.requireNonNull(key); Objects.requireNonNull(keyInput); Objects.requireNonNull(value); Objects.requireNonNull(location); }
+    /**
+     * key 可以是位置、名称或未知标识；keyInput 保留动态参数下标/名称本身的数据来源。
+     * valueType 是使用位置的声明类型，可补足字节码中的 boolean/byte/short 等类型信息。
+     */
+    public record Binding(String key, ValuePoint keyInput, ValuePoint value, SourceLocation location, String valueType) {
+        public Binding { Objects.requireNonNull(key); Objects.requireNonNull(keyInput); Objects.requireNonNull(value); Objects.requireNonNull(location); Objects.requireNonNull(valueType); }
+        public Binding(String key, ValuePoint keyInput, ValuePoint value, SourceLocation location) {
+            this(key, keyInput, value, location, value.value().getType().toString());
+        }
     }
 }

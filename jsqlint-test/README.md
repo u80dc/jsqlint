@@ -27,6 +27,14 @@ null/字符/布尔转换、缺少调试信息时的参数名称，以及候选�
 多个拼接分支的组合来源，以及共用 SQL 执行方法时不同调用方的调用链隔离。
 `AnalysisResult.rawSqls()` 的验证覆盖空结果、不完整候选保留、相同文本的不同调用路径保留，
 以及共享 Maven 项目编译输出清理后仍可读取不可变的 raw SQL 列表。
+`JdbcParameterInferenceTest` 验证参数沿传播链重演：字面量和外部输入、随机样例复用、
+跨方法字符串转换、算术/包装/拆箱/类型转换、Java 整数溢出与除法、入口数组与元素写入、
+同值不同路径保留、独立分支组合和重复操作数选择一致性，以及候选数量限制、取消、
+未知操作/异常和真实 null 的区别。验证使用真实编译后的字节码，不执行样例或连接数据库。
+还验证 `AnalysisResult.rawSqls()` 同时关联拼接参数与预编译绑定值：相同 SQL 文本在不同调用上下文中
+保留各自参数，批次保存 addBatch 时的绑定快照，clearParameters 后不混入先前的值；关联列表不可变。
+共享 JDBC 样例还验证 alice、bob、O'Neil 的 INSERT 参数候选，确认转义后的 O''Neil
+及其初始字面量、传播链被保存在 AnalysisResult 中。
 
 ## 运行
 
@@ -62,6 +70,9 @@ Linux / macOS 将命令替换为 `./mvnw`，参数相同。
 ```
 
 该测试无需预编译样例或启动数据库；首次运行可通过 Maven Central 下载样例的 H2 依赖。
+测试会逐条打印 raw SQL、所属方法/调用链、拼接参数和 JDBC 绑定参数的推断值，并保存 UTF-8 报告至
+`target/jdbc-user-query-sql-report.txt`。样例使用字符串拼接，没有 setXxx 绑定，故 JDBC 绑定列表为空。
+报告保留准备点、执行点及各调用路径的全部静态候选，不按文本去重；未知值和诊断也会保留。
 
 Gradle 集成测试可以通过 `'-Djsqlint.test.gradle.home=C:\path\to\gradle'` 指定已有 Gradle 安装，
 否则使用 Tooling API 的默认发行版，首次运行可能下载。其余基于临时项目的 Maven 输出目录测试使用离线模式，

@@ -8,6 +8,7 @@ import sootup.core.jimple.common.ref.*;
 import sootup.core.jimple.common.stmt.*;
 import sootup.core.signatures.MethodSignature;
 import sootup.java.core.JavaSootMethod;
+import org.u80dc.jsqlint.core.parameter.JavaValueOperations;
 import java.util.*;
 import java.util.function.*;
 
@@ -148,6 +149,16 @@ public final class DataFlowAnalysis {
             if (value instanceof JCastExpr cast && cast.getType().toString().equals("java.lang.String"))
                 return computed(input, Kind.EXPRESSION, Operation.IDENTITY, "String cast",
                         List.of(trace(point.value(cast.getOp()), active, depth + 1, steps)));
+            if (value instanceof JCastExpr cast)
+                return computed(input, Kind.EXPRESSION, Operation.CAST, cast.getType().toString(),
+                        List.of(trace(point.value(cast.getOp()), active, depth + 1, steps)));
+            if (value instanceof AbstractBinopExpr binary)
+                return computed(input, Kind.EXPRESSION, Operation.BINARY, binary.getSymbol().trim(), List.of(
+                        trace(point.value(binary.getOp1()), active, depth + 1, steps),
+                        trace(point.value(binary.getOp2()), active, depth + 1, steps)));
+            if (value instanceof JNegExpr negation)
+                return computed(input, Kind.EXPRESSION, Operation.NEGATE, "negate",
+                        List.of(trace(point.value(negation.getOp()), active, depth + 1, steps)));
             if (value instanceof AbstractInvokeExpr invoke) {
                 String owner = invoke.getMethodSignature().getDeclClassType().toString();
                 String name = invoke.getMethodSignature().getName();
@@ -173,6 +184,15 @@ public final class DataFlowAnalysis {
                     return computed(input, Kind.EXPRESSION, Operation.CONCAT, "String.concat", List.of(
                             trace(point.value(instance.getBase()), active, depth + 1, steps),
                             trace(point.value(invoke.getArg(0)), active, depth + 1, steps)));
+                }
+                if (JavaValueOperations.supports(invoke.getMethodSignature())) {
+                    // 仅记录显式建模的纯 Java 值操作，按接收者、实参顺序保存，重复操作数不得去重。
+                    List<ValueTrace.Node> inputs = new ArrayList<>();
+                    if (invoke instanceof AbstractInstanceInvokeExpr instance)
+                        inputs.add(trace(point.value(instance.getBase()), active, depth + 1, steps));
+                    for (Value argument : invoke.getArgs()) inputs.add(trace(point.value(argument), active, depth + 1, steps));
+                    return new ValueTrace.Node(input.snapshot(), Kind.EXPRESSION, invoke.getMethodSignature().toString(), inputs,
+                            new ValueTrace.Computation(Operation.CALL, name, Optional.of(invoke.getMethodSignature())));
                 }
                 InvocationSite site = invocation(input, invoke);
                 var resolution = program.resolution(site);

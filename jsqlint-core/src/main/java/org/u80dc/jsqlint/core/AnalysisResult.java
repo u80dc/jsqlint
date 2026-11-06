@@ -19,8 +19,9 @@ public record AnalysisResult(Status status, List<SqlExtraction> extractions) {
     /**
      * 直接获取本次分析已产生的全部 raw SQL 候选，包括不完整候选。
      * 按提取结果、语句、分支的顺序展开；相同文本的不同调用点/传播路径不去重。
-     * 返回不可变列表，候选保留原有占位符及传播树，输入关闭后仍可读取。
-     * 从不可变的 extractions 派生，避免两份结果存储不同步；调用点、绑定参数及诊断仍可从 extractions 读取。
+     * 每个候选通过 parameters() 保存拼接参数推断，通过 bindings() 保存所属语句的绑定参数快照。
+     * 参数的推断值和传播链随候选保留；列表不可变，输入关闭后仍可读取。
+     * 从不可变的 extractions 派生，避免两份结果存储不同步；调用点和诊断仍可从 extractions 读取。
      */
     public List<RawSql.Variant> rawSqls() {
         return extractions.stream().flatMap(extraction -> extraction.statements().stream())

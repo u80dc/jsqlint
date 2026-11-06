@@ -5,11 +5,13 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.parallel.Isolated;
 import org.u80dc.jsqlint.core.*;
 import org.u80dc.jsqlint.core.node.*;
+import org.u80dc.jsqlint.core.parameter.ParameterValueInferenceResult;
 import org.u80dc.jsqlint.core.spi.AnalysisSeed;
 import org.u80dc.jsqlint.core.spi.SqlCallSite;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -30,7 +32,7 @@ class JdbcUserQueryAnalysisTest {
 
     @Test
     @Tag("integration")
-    void analyzerDiscoversCrudSqlFromMavenProject() {
+    void analyzerDiscoversCrudSqlFromMavenProject() throws IOException {
         Path project = sampleProject();
         String outputId = "jdbc-user-query-test-" + UUID.randomUUID();
         Path output = Path.of(System.getProperty("java.io.tmpdir"), ".jsqlint", outputId).toAbsolutePath().normalize();
@@ -40,6 +42,7 @@ class JdbcUserQueryAnalysisTest {
         var analyzer = new Analyzer(AnalyzerConfig.defaults().withCleanupClassOutput(true));
         var result = analyzer.analyze(project, AnalysisOptions.defaults()
                 .withClassOutputId(outputId).withListener(capture));
+        printSqlReport(project, result);
         String diagnostics = String.join("\n", capture.diagnostics);
 
         assertTrue(result.status() == SUCCESS || result.status() == PARTIAL, diagnostics);
@@ -55,6 +58,7 @@ class JdbcUserQueryAnalysisTest {
         assertEquals(13, rawSqls.stream().map(RawSql.Variant::text).distinct().count());
         assertEquals(3, rawSqls.stream().filter(sql -> sql.text().startsWith("INSERT INTO app_users")).count());
         assertTrue(rawSqls.stream().allMatch(sql -> sql.trace().isPresent()));
+        assertTrue(rawSqls.stream().allMatch(sql -> sql.bindings().isEmpty()), "纯拼接样例不存在 JDBC setXxx 绑定");
         assertThrows(UnsupportedOperationException.class, rawSqls::clear);
 
         assertEquals(6, capture.sql.size(), diagnostics);
@@ -101,6 +105,18 @@ class JdbcUserQueryAnalysisTest {
         assertTrue(rawByMethod.get("findUsers").contains(SELECT + " WHERE 1 = 1 AND username LIKE '%${keyword}%'"
                 + " AND age >= ${minimumAge} AND active = TRUE ORDER BY id"));
 
+        var inserts = result.rawSqls().stream().filter(sql -> sql.text().startsWith("INSERT INTO")).toList();
+        Set<Object> names = inserts.stream().flatMap(sql -> sql.parameters().stream()).filter(p -> p.name().equals("username"))
+                .flatMap(p -> p.possibleValues().stream()).map(v -> assertInstanceOf(SqlValue.Known.class, v.value()).value())
+                .collect(Collectors.toSet());
+        assertEquals(Set.of("alice", "bob", "O''Neil"), names, "推断值应重演 quote 中的单引号转义");
+        assertTrue(inserts.stream().flatMap(sql -> sql.parameters().stream()).allMatch(p -> p.complete()));
+        assertTrue(inserts.stream().flatMap(sql -> sql.parameters().stream()).flatMap(p -> p.possibleValues().stream())
+                .allMatch(v -> !v.sampled() && !v.propagationPath().callChain().isEmpty()));
+        assertTrue(inserts.stream().flatMap(sql -> sql.parameters().stream()).flatMap(p -> p.possibleValues().stream())
+                .filter(v -> v.value().equals(new SqlValue.Known("O''Neil")))
+                .allMatch(v -> v.initialValues().stream().anyMatch(input -> input.value().equals(new SqlValue.Known("O'Neil")))));
+
         // public 方法仍允许来自样例 main 以外的调用，不能用已知实参覆盖掉所有未知参数。
         for (String method : List.of("insert", "findById", "findUsers", "update", "deleteById")) {
             var sql = byMethod.get(method);
@@ -111,6 +127,61 @@ class JdbcUserQueryAnalysisTest {
         assertEquals(AnalysisListener.Stage.FINISHED, finished.stage());
         assertEquals(6, finished.discovered());
         assertEquals(6, finished.analyzed());
+    }
+
+    /** 打印每条静态候选及对应参数；保留准备点、执行点和不同调用路径，便于核对分析结果。 */
+    private static void printSqlReport(Path project, AnalysisResult result) throws IOException {
+        var report = new StringBuilder("jdbc-user-query SQL 与参数分析报告\n");
+        report.append("分析状态: ").append(result.status())
+                .append("\nSQL 候选记录: ").append(result.rawSqls().size())
+                .append("\n不同 SQL 文本: ").append(result.rawSqls().stream().map(RawSql.Variant::text).distinct().count())
+                .append("\n说明: 静态候选包含准备点/执行点及不同路径，未验证分支可行性，不代表实际执行次数。\n")
+                .append("拼接参数属于 ${name} 槽位；JDBC 绑定参数属于 setXxx 设置的 ? 或命名参数。\n");
+        int number = 0;
+        for (var extraction : result.extractions()) {
+            for (var statement : extraction.statements()) {
+                for (var sql : statement.rawSql().variants()) {
+                    report.append("\n[SQL ").append(++number).append("]\n")
+                            .append("所属方法: ").append(extraction.callSite().caller().orElseThrow())
+                            .append("\n调用点: ").append(extraction.callSite().target())
+                            .append("\n位置: ").append(extraction.callSite().location())
+                            .append("\n入口调用链: ").append(extraction.callChain())
+                            .append("\nraw SQL: ").append(sql.text())
+                            .append("\n拼接参数列表:");
+                    if (sql.parameters().isEmpty()) report.append(" []\n");
+                    else {
+                        report.append('\n');
+                        for (var parameter : sql.parameters()) appendParameter(report, "", parameter);
+                    }
+                    report.append("JDBC 绑定参数列表:");
+                    if (sql.bindings().isEmpty()) report.append(" []\n");
+                    else {
+                        report.append('\n');
+                        for (var binding : sql.bindings())
+                            appendParameter(report, "key=" + binding.key() + ", ", binding.inference());
+                    }
+                    if (!statement.rawSql().issues().isEmpty())
+                        report.append("SQL 诊断: ").append(statement.rawSql().issues()).append('\n');
+                }
+            }
+        }
+        // UTF-8 文件保留中文和值的原始内容，避免终端代码页影响阅读。
+        Path file = project.getParent().getParent().resolve("jsqlint-test/target/jdbc-user-query-sql-report.txt");
+        Files.createDirectories(file.getParent());
+        Files.writeString(file, report);
+        System.out.print(report);
+        System.out.println("SQL 与参数报告: " + file);
+    }
+
+    private static void appendParameter(StringBuilder report, String prefix, ParameterValueInferenceResult parameter) {
+        report.append("  - ").append(prefix).append("name=").append(parameter.name())
+                .append(", type=").append(parameter.type()).append(", complete=").append(parameter.complete()).append('\n');
+        for (int i = 0; i < parameter.possibleValues().size(); i++) {
+            var value = parameter.possibleValues().get(i);
+            report.append("    候选 ").append(i + 1).append(": ").append(value.value())
+                    .append(", sampled=").append(value.sampled()).append('\n');
+        }
+        if (!parameter.issues().isEmpty()) report.append("    诊断: ").append(parameter.issues()).append('\n');
     }
 
     /** 从 Maven 模块或 IDE 的工作目录向上定位仓库，避免写死机器路径或依赖预编译产物。 */

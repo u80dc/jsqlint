@@ -4,6 +4,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.u80dc.jsqlint.core.node.*;
 import org.u80dc.jsqlint.core.parameter.ValueTraceAnalyzer;
+import org.u80dc.jsqlint.core.parameter.ParameterValueInferencer;
+import org.u80dc.jsqlint.core.parameter.ParameterValueInferenceResult;
+import org.u80dc.jsqlint.core.parameter.RandomExternalValueGenerator;
+import org.u80dc.jsqlint.core.parameter.InferredParameterValue;
 import org.u80dc.jsqlint.core.dataflow.*;
 import org.u80dc.jsqlint.core.spi.*;
 import org.u80dc.jsqlint.core.resource.AnalysisResource;
@@ -234,9 +238,14 @@ final class AnalysisSession {
                             templateIssues.add("SQL template recovery failed: " + e.getMessage());
                         }
                     } else templateIssues.add("SQL source is unavailable");
+                    // 同一语句的绑定值与拼接槽位共用输入样例；不同调用上下文不共享可变推断状态。
+                    var inference = new ParameterValueInferencer(new RandomExternalValueGenerator(), this::checkpoint);
                     List<SqlExtraction.Binding> bindings = new ArrayList<>();
-                    for (var binding : source.bindings()) bindings.add(new SqlExtraction.Binding(binding.key(),
-                            flow.trace(binding.keyInput()), flow.trace(binding.value()), binding.location()));
+                    for (var binding : source.bindings()) {
+                        var value = flow.trace(binding.value());
+                        bindings.add(new SqlExtraction.Binding(binding.key(), flow.trace(binding.keyInput()), value,
+                                binding.location(), inferParameter(inference, ParameterValueInferencer.variableName(value.root()), value, binding.valueType())));
+                    }
                     RawSql rawSql;
                     try {
                         rawSql = sql.map(trace -> RawSqlBuilder.build(trace, this::checkpoint))
@@ -246,6 +255,7 @@ final class AnalysisSession {
                         recover("RAW_SQL", request.site().location().toString(), e);
                         rawSql = new RawSql(List.of(), List.of("Raw SQL reconstruction failed: " + e.getMessage()));
                     }
+                    rawSql = inferPlaceholders(rawSql, inference);
                     statements.add(new SqlExtraction.Statement(sql, template, bindings, source.batchEntry(), sourceIssues, templateIssues, rawSql));
                 }
             } catch (Exception e) {
@@ -268,14 +278,55 @@ final class AnalysisSession {
                             variant.placeholders().stream().map(RawSql.Placeholder::name).toList(), statement.rawSql().complete(), statement.rawSql().issues());
                     // 同一调用点可能有多条相同文本，使用候选编号关联各自选中的传播分支。
                     variant.trace().ifPresent(trace -> printTrace(label, trace));
+                    variant.placeholders().stream().map(RawSql.Placeholder::inference).distinct().forEach(this::printInference);
                 }
                 statement.sql().ifPresent(trace -> printTrace("sql", trace));
                 for (var binding : statement.bindings()) {
                     printTrace("binding[" + binding.key() + "].key", binding.keyTrace());
                     printTrace("binding[" + binding.key() + "].value", binding.value());
+                    printInference(binding.inference());
                 }
             }
             notifyListener(listener -> listener.onSqlExtraction(extraction));
+        }
+    }
+
+    private RawSql inferPlaceholders(RawSql raw, ParameterValueInferencer inferencer) {
+        List<RawSql.Variant> variants = new ArrayList<>();
+        for (var variant : raw.variants()) {
+            Map<String, ParameterValueInferenceResult> inferred = new HashMap<>();
+            List<RawSql.Placeholder> slots = new ArrayList<>();
+            for (var slot : variant.placeholders()) {
+                var value = inferred.computeIfAbsent(slot.name(), ignored -> inferParameter(inferencer, slot.name(),
+                        new ValueTrace(slot.source().variable(), variant.trace().map(ValueTrace::callChain).orElse(List.of()), slot.source()),
+                        slot.source().variable().type()));
+                slots.add(new RawSql.Placeholder(slot.name(), slot.start(), slot.end(), slot.source(), value));
+            }
+            variants.add(new RawSql.Variant(variant.text(), slots, variant.trace(), variant.bindings()));
+        }
+        return new RawSql(variants, raw.issues());
+    }
+
+    private ParameterValueInferenceResult inferParameter(ParameterValueInferencer inferencer, String name,
+                                                          ValueTrace trace, String expectedType) {
+        try {
+            var inferred = inferencer.infer(trace, expectedType);
+            return new ParameterValueInferenceResult(name, inferred.type(), inferred.possibleValues(), inferred.issues());
+        } catch (Exception e) {
+            // 重演失败不得丢失已保存的参数传播链；取消与监听器异常由 recover 继续向外传播。
+            recover("PARAMETER_INFERENCE", trace.variable().toString(), e);
+            String issue = "Parameter inference failed: " + e.getMessage();
+            return new ParameterValueInferenceResult(name, expectedType, List.of(new InferredParameterValue(
+                    new SqlValue.Unknown(issue), trace, List.of(), List.of(issue))), List.of(issue));
+        }
+    }
+
+    private void printInference(ParameterValueInferenceResult result) {
+        LOG.info("参数推断: name={}, type={}, complete={}, issues={}", result.name(), result.type(), result.complete(), result.issues());
+        for (var value : result.possibleValues()) {
+            LOG.info("参数推断值: name={}, value={}, sampled={}, initialValues={}, issues={}",
+                    result.name(), value.value(), value.sampled(), value.initialValues(), value.issues());
+            printTrace("parameter[" + result.name() + "]", value.propagationPath());
         }
     }
 

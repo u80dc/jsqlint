@@ -94,7 +94,9 @@ final class JdbcSqlExtractor implements SqlExtractionHandler {
                     var bindings = new LinkedHashMap<>(state.bindings());
                     // may-alias setter 不强杀更早的确定绑定，否则会把“可能写入”冒充“必定覆盖”。
                     String storageKey = uncertainReceiver ? "candidate:" + site.location() + ":" + key : key;
-                    bindings.putIfAbsent(storageKey, new SqlTraceSource.Binding(key, keyInput, value, site.location()));
+                    String valueType = name.equals("setNull") ? value.value().getType().toString()
+                            : site.invocation().getMethodSignature().getParameterTypes().get(1).toString();
+                    bindings.putIfAbsent(storageKey, new SqlTraceSource.Binding(key, keyInput, value, site.location(), valueType));
                     State next = new State(bindings, false, state.sql(), state.issues());
                     return Decision.skipCall(unknown ? next.issue("Dynamic parameter key may overlap other bindings: " + key) : next);
                 }

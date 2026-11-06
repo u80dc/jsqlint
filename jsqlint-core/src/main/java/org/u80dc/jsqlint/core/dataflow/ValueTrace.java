@@ -23,10 +23,12 @@ public record ValueTrace(Variable variable, List<SqlCallSite> callChain, Node ro
         }
     }
     /** 值计算语义独立于依赖节点类型；下游无需解析 Jimple 的 toString 来恢复 SQL。 */
-    public record Computation(Operation operation, String text) {
-        public Computation { Objects.requireNonNull(operation); Objects.requireNonNull(text); }
+    public record Computation(Operation operation, String text, Optional<MethodSignature> method) {
+        public Computation { Objects.requireNonNull(operation); Objects.requireNonNull(text); Objects.requireNonNull(method); }
+        public Computation(Operation operation, String text) { this(operation, text, Optional.empty()); }
     }
-    public enum Operation { OPAQUE, LITERAL, NULL, IDENTITY, ALTERNATIVES, CONCAT, STRINGIFY, ARRAY_READ, REPLACE }
+    public enum Operation { OPAQUE, LITERAL, NULL, IDENTITY, ALTERNATIVES, CONCAT, STRINGIFY, ARRAY_READ, REPLACE,
+        BINARY, NEGATE, CAST, CALL }
     public enum Kind {
         DEFINITION, PARAMETER, RECEIVER, EXPRESSION, RETURN, CONSTANT, ENTRY, NO_CALLER,
         FIELD, ARRAY_ELEMENT, EXTERNAL_CALL, ALLOCATION, UNRESOLVED, CYCLE, LIMIT

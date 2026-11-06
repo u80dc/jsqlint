@@ -132,8 +132,11 @@ SQL 提取结果在输入关闭后仍可读取，不持有 JavaView、方法体�
 | FAILED | 输入准备、初始化或输出监听器失败 |
 | CANCELLED | 调用方取消或执行线程被中断 |
 
-正常的外部参数保留为符号值，不会单独导致 PARTIAL。部分实现尚不支持的分析操作会报告
+正常的外部参数在 SQL 中保留为符号值，不会单独导致 PARTIAL；参数推断另外生成带来源标识的样例。
+部分实现尚不支持的分析操作会报告
 PARTIAL，避免把实现能力不足伪装成已完成分析。
+该终态表示 SQL 提取流程的完成情况；样例重演的未知值或数量截断单独通过
+`Statement.inferenceComplete()` 和参数的 `inference.complete()` 检查，不等同于 SQL 提取失败。
 
 ```java
 var cancelled = new java.util.concurrent.atomic.AtomicBoolean();
@@ -189,6 +192,7 @@ for (var extraction : result.extractions()) {
             System.out.println(binding.key());       // 位置、命名参数或显式的 unknown 标识
             System.out.println(binding.value());     // 绑定变量的数据依赖树和调用链
             System.out.println(binding.keyTrace());  // 动态下标/名称本身的来源
+            System.out.println(binding.inference()); // 参数名、类型及逐条传播链推断的候选值
         }
     }
 }
@@ -208,7 +212,12 @@ for (var extraction : result.extractions()) {
 var result = new Analyzer().analyze(project);
 for (var sql : result.rawSqls()) {
     System.out.println(sql.text());
-    System.out.println(sql.placeholders());
+    System.out.println(sql.parameters()); // ${name} 拼接参数及各自的推断值、传播链
+    for (var binding : sql.bindings()) {   // 本条 SQL 的预编译绑定参数快照
+        System.out.println(binding.key()); // 位置、名称或 unknown 标识
+        System.out.println(binding.inference()); // 参数名、Java 类型、推断值列表和对应传播链
+    }
+    System.out.println(sql.inferenceComplete());
     sql.trace().ifPresent(trace -> System.out.println(trace.root()));
 }
 ```
@@ -217,7 +226,12 @@ for (var sql : result.rawSqls()) {
 按提取结果、语句、分支的顺序展开，不按文本去重，也不筛掉不完整候选；没有候选时返回空列表。
 因此 `rawSqls().size()` 是候选记录数，包含已识别的准备点/执行点和不同调用上下文，不能作为实际执行次数。
 只需要不同文本时可使用 `result.rawSqls().stream().map(RawSql.Variant::text).distinct().toList()`。
-调用点、绑定参数及各层诊断继续通过 `result.extractions()` 获取；未能生成任何候选的失败来源也保存在其中。
+每个候选直接保存拼接参数和对应的绑定参数，调用方无需按 SQL 文本重新匹配。
+绑定快照在 `SqlExtraction.Statement` 组装时关联，`statement.bindings()` 与候选的 `bindings()` 内容一致；
+不同调用上下文、不同批次中的相同 SQL 文本分别保留各自的参数，准备点不会混入后续 setter 的值。
+拼接参数与预编译绑定参数分别访问，不按名称混合去重；绑定值的 Unknown、初始值和传播链均保留。
+`sql.inferenceComplete()` 只检查当前候选已关联参数的推断，不保证 JDBC 的所有 `?` 都已经被设置。
+调用点、批次位置和各层诊断继续通过 `result.extractions()` 获取；未能生成任何候选的失败来源及其绑定参数也保存在其中。
 
 `statement.rawSql()` 保存可直接查看的 SQL 文本候选，core 同时以 `Raw SQL` 日志输出。
 构造器消费 `ValueTrace.Node.computation()` 中的计算语义，不重新扫描方法体，也不从 Jimple
@@ -249,7 +263,7 @@ for (var extraction : result.extractions()) {
   仍可保留为命名槽位以便生成不同样例。整条 SQL 的参数转发和可恢复的拼接片段继续向上展开。
 - 同一来源重复出现时保留全部位置；不同来源重名时增加 `_2` 等后缀。
   字节码包含局部变量调试信息时使用变量名，否则尽可能使用 `parameterN`，其余未知值使用稳定的合成名。
-- JDBC 的 `?` 保持原样，真正的预编译绑定值仍由 `statement.bindings()` 单独保存。
+- JDBC 的 `?` 保持原样，真正的预编译绑定值由 `statement.bindings()` 保存，并关联到该语句的每个候选 `variant.bindings()`。
   raw SQL 的槽位表示文本拼接，也可能出现在表名或条件片段中，不能一律当作 JDBC 参数。
 - `Placeholder.start/end` 是文本中的 UTF-16 起止位置（结束位置不包含在内），
   `source` 保留变量及转换依赖。SQL 字面量中原本存在的 `${...}` 不会被误识别为槽位。
@@ -275,8 +289,69 @@ INFO 日志通过 `rawSql[1]`、`rawSql[2]` 等编号将每条 raw SQL 与其传
 `variant.template()` 可以将该候选转为通用动态 SQL 节点，并通过 `SqlNodeRenderer` 填入样例值。
 这里的样例值代表槽位 `source` 所描述转换**之后**的文本，不自动执行 Java 方法或转义/添加引号。
 例如 `email.replace("'", "''")` 的槽位需要提供已替换后的文本；原值和转换后的值同时使用时拥有独立名称。
-后续模拟器可根据 `source` 中的转换链自动生成这些值。不要对 raw SQL 直接做正则占位符替换，
+参数推断已经根据 `source` 中的转换链生成这些值，保存在 `placeholder.inference()` 中。
+不要对 raw SQL 直接做正则占位符替换，
 否则可能误改 SQL 中原本存在的 `${...}` 字面文本。
+
+### 参数初始值与传播链重演
+
+通用推断逻辑位于 core 的 `parameter` 包。JDBC 只提供绑定变量和使用位置的声明类型，
+同一套推断器也可以供后续 MyBatis/JPA 适配使用。
+`Analyzer` 在生成提取结果时自动推断，关闭输入或清理编译输出后，推断对象仍然可读。
+
+```java
+for (var extraction : result.extractions()) {
+    for (var statement : extraction.statements()) {
+        System.out.println(statement.inferenceComplete());
+        for (var binding : statement.bindings()) {
+            var parameter = binding.inference();
+            System.out.println(parameter.name()); // 变量名；缺少调试信息时使用字节码名称
+            System.out.println(parameter.type()); // Java 类型，不是 JDBC SQL 类型编号
+            for (var candidate : parameter.possibleValues()) {
+                System.out.println(candidate.value());           // SqlValue.Known 或 SqlValue.Unknown
+                System.out.println(candidate.propagationPath()); // 本候选选中的传播树及入口调用链
+                System.out.println(candidate.initialValues());   // 实际用于重演的字面量/随机初始值
+                System.out.println(candidate.sampled());         // 是否使用了生成的外部输入样例
+            }
+        }
+    }
+}
+// raw SQL 中 ${name} 等拼接槽位的推断，可按槽位名去重后直接获取：
+for (var sql : result.rawSqls()) {
+    System.out.println(sql.parameters());
+    // JDBC 绑定参数也与同一个 raw SQL 关联，不需要回到 extractions 查找。
+    for (var binding : sql.bindings()) System.out.println(binding.inference());
+}
+```
+
+`ParameterValueInferenceResult` 保存 `name`、`type`、`possibleValues` 和诊断 `issues`。
+每个 `InferredParameterValue` 保存一个值、该值对应的传播路径、初始值和本候选诊断；
+不同路径即使得到相同值也不合并。各层列表均为不可变快照。
+
+- 入口是字面量时按其 Java 类型读取，包括真实的 `null`；顶层/入口形参按类型生成随机样例。
+  支持基本类型及包装类型、String、BigDecimal/BigInteger、UUID 和常用 java.time 类型。
+  外部数组按所读取的元素类型与下标生成样例；不加载目标项目类，也不使用 Map 冒充对象。
+- 从入口向使用点重演赋值、参数传递、方法返回、分支、数组元素、字符串拼接/替换、
+  trim/strip、大小写转换、substring/charAt/repeat、长度判断、基本类型包装/拆箱/解析、
+  算术运算、取负和类型转换。整数运算保留 Java 的溢出、整数除法及移位语义。
+- 同一语句内复用同一外部输入的样例；重复引用同一分支节点时保留一致的选择。
+  多个独立操作数的分支会组合成多个候选。当前不求解业务路径条件，因此随机样例与候选路径
+  不保证在实际运行中可行；大小写转换使用分析器 JVM 的默认 Locale。
+- 未建模的方法、复杂对象/字段操作、格式解析失败、空指针或越界等重演异常保留为
+  `SqlValue.Unknown(reason)`，不吞掉该路径或冒充 `Known(null)`。一个分支失败不丢弃其他分支。
+  `complete()` 只说明重演是否完整，`sampled()` 用于区分推测样例与已知字面量推导结果。
+- 单次参数推断最多保留 128 个候选，受 10,000 步、256 层和 1,000,000 字符限制；
+  截断会记录诊断，并保留已得到的候选。分析取消/超时仍由 Analyzer 统一处理。
+
+例如入口传入 `"O'Neil"`，经过 `replace("'", "''")` 后候选值为 `"O''Neil"`，
+初始值列表仍保存原字符串；入口 `int id` 的 `id * 2` 会先生成整数样例，再计算乘积。
+`binding.inference()` 表示传给 JDBC setter 的 Java 值，raw 槽位推断表示源码转换之后的值；
+本阶段只保存结果，不自动执行 SQL，也不将 JDBC `?` 与拼接槽位混合替换。
+
+需要可复现或自定义输入时，可以直接对保存的链使用
+`new ParameterValueInferencer(new RandomExternalValueGenerator(42)).infer(binding.value())`，
+或实现 `ExternalValueGenerator`。推断器实例缓存入口样例，适合单条语句/调用上下文使用，
+不应作为跨项目的共享全局对象。
 
 JDBC 关联规则：
 
@@ -418,7 +493,7 @@ core 负责通用 SQL 提取、值与参数溯源、保守推断和节点渲染�
   Java StringConcatFactory 连接和 String.concat。不同调用的参数上下文分别处理；
   分支保留为符号选择，不取第一个结果。
 - 已知参数可以通过 AnalysisSeed.parameters() 提供，core 渲染分析样例。
-  外部输入不会随机伪造；SQL 文本和样例均不作为数据库执行入口。
+  基于传播链的参数推断独立保存外部输入生成的随机样例及其来源；SQL 文本和样例均不作为数据库执行入口。
 
 尚未完整迁移旧 analysis 的框架能力：StringBuilder 等可变对象建模、复杂虚调用/字段传播、
 精确堆别名、Spring JDBC、MyBatis Provider、动态 include 属性、
