@@ -54,6 +54,13 @@ PostgreSQL dollar 字符串/嵌套注释/JSON 运算符、参数名称保留、I
 `FingerprintUtilsOracleTest` 验证 Oracle Q/NQ 替代引号（包括成对、自定义及多字节分隔符）、
 浮点后缀和特殊常量、位置/命名/引号绑定、含 `$`/`#` 的标识符、行提示、日期与间隔字面量，
 以及 CONNECT BY、RETURNING、分页、旧式外连接和 PL/SQL 范围的结构保留。
+`FingerprintUtilsContractTest` 按四项指纹契约跨方言验证格式差异、条件值变化、关键字大小写和
+普通注释与提示忽略，同时验证不同字段、运算符、表名和引号内容仍生成不同指纹。
+MySQL 回归覆盖 CASE/END、LIMIT/OFFSET、VALUE、锁定子句、窗口边界、时间类型和常用内置函数，
+并检查与关键字同名的表名不会被盲目折叠大小写。
+`FingerprintUtilsMysqlCommentTest` 验证可执行注释与等价展开 SQL 生成相同指纹，覆盖版本前缀、
+片段内的值和格式变化、与外部 SQL 共享运算符和子句上下文、引号内的注释标记、多语句、
+空片段、长输入及未闭合输入；版本前缀不会作为 SQL 数值参与归一化。
 
 ## 运行
 

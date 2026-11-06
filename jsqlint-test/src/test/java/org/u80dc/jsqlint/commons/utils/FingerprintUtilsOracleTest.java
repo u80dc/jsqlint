@@ -90,12 +90,11 @@ class FingerprintUtilsOracleTest {
     }
 
     @Test
-    void optimizerHintsIncludingLineHintsArePreserved() {
-        assertFalse(same("SELECT /*+ INDEX(t idx) */ id FROM t", "SELECT /*+ FULL(t) */ id FROM t"));
-        assertFalse(same("SELECT --+ INDEX(t idx)\n id FROM t", "SELECT --+ FULL(t)\n id FROM t"));
+    void optimizerHintsIncludingLineHintsAreIgnored() {
+        assertTrue(same("SELECT /*+ INDEX(t idx) */ id FROM t", "SELECT /*+ FULL(t) */ id FROM t"));
+        assertTrue(same("SELECT --+ INDEX(t idx)\n id FROM t", "SELECT --+ FULL(t)\n id FROM t"));
         String normalized = normalize("SELECT --+ INDEX(t idx)\r\n id FROM t WHERE id=1");
-        assertTrue(normalized.contains("--+ INDEX(t idx)\n"));
-        assertTrue(normalized.endsWith("id from t where id = ?"));
+        assertEquals("select id from t where id = ?", normalized);
         assertEquals(normalized, normalize(normalized));
         assertTrue(same("SELECT -- ordinary\n id FROM t", "SELECT id FROM t"));
     }

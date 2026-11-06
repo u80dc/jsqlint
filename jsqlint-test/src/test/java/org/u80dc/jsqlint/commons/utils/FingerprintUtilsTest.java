@@ -161,11 +161,11 @@ class FingerprintUtilsTest {
     }
 
     @Test
-    void executionDirectivesAndHintsAreNotDiscarded() {
+    void executableSqlIsIncludedAndHintsAreIgnored() {
         String sql = "SELECT /*! STRAIGHT_JOIN */ id FROM t";
         assertFalse(FingerprintUtils.isSameStructure(sql, "SELECT id FROM t", MYSQL));
-        assertTrue(FingerprintUtils.normalize(sql, MYSQL).contains("/*! STRAIGHT_JOIN */"));
-        assertFalse(FingerprintUtils.isSameStructure("SELECT /*+ NO_INDEX(t) */ id FROM t",
+        assertEquals("select straight_join id from t", FingerprintUtils.normalize(sql, MYSQL));
+        assertTrue(FingerprintUtils.isSameStructure("SELECT /*+ NO_INDEX(t) */ id FROM t",
                 "SELECT /*+ INDEX(t) */ id FROM t", MYSQL));
         assertTrue(FingerprintUtils.isSameStructure("SELECT /* ordinary */ id FROM t", "SELECT id FROM t", MYSQL));
     }

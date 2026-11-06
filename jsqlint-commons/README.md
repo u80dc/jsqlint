@@ -239,6 +239,11 @@ Tooling API 的版本是调用库版本；目标工程实际使用的 Gradle 发
 默认采用 ANSI 规则：单引号为字符串，双引号为标识符。需要根据目标数据库显式选择方言，
 不会从 SQL 文本猜测双引号含义。
 
+同一方言及配置下，SQL 的换行、空格、关键字大小写、普通注释及优化器提示差异不影响指纹；查询结构相同而条件
+字面值不同时也生成相同指纹。例如 `SELECT id FROM users WHERE age=18` 与
+`select id FROM users /* note */ WHERE age = 65` 归一化为同一个 `select id from users where age = ?`。
+表名、字段名、比较运算符及 AND/OR 组合仍属于结构；不会仅因字段集合相同就合并不同查询。
+
 ```java
 import org.u80dc.jsqlint.commons.utils.FingerprintUtils;
 import org.u80dc.jsqlint.commons.utils.FingerprintUtils.Dialect;
@@ -258,9 +263,11 @@ boolean same = FingerprintUtils.isSameStructure(sql1, sql2, options);
 ```
 
 - 字符串、十六进制/十进制/科学计数法数值及布尔常量替换为 `?`，保留二元运算符。
-  普通注释被移除，字符串或引号标识符内的注释符不参与处理。`NULL` 保留，以区分 `IS NULL` 等结构。
+  值位置的 `NULL` 也替换为 `?`（例如 `age=NULL`），`IS NULL`、`IS NOT NULL`、列约束及
+  常见 PL/SQL `NULL;` 语句保留。字符串或引号标识符内部的注释符不会被当作注释处理。
 - ANSI/PostgreSQL/Oracle 的非引号单词使用 `Locale.ROOT` 折叠大小写；引号标识符原样保留。
-  MySQL 保守保留标识符及非保留关键字的大小写，只折叠明确的保留字，避免合并不同表名。
+  MySQL 折叠保留字，以及按语法位置识别的 `END`、`OFFSET`、`VALUE` 等非保留关键字、
+  常用内置函数名、时间类型和单位；保守保留表名、限定名称与绑定名称，避免合并不同对象。
 - PostgreSQL 支持 dollar 字符串、`E'...'`、嵌套注释及常见 JSON 运算符；普通字符串假定
   `standard_conforming_strings=on`。MySQL 默认双引号为字符串，启用反斜杠转义，
   支持反引号标识符、`#` 注释及要求后继空白的 `--` 注释。
@@ -274,10 +281,18 @@ boolean same = FingerprintUtils.isSameStructure(sql1, sql2, options);
   `Options.defaults().withCollapseInLists(false)` 禁用。表达式、行值、子查询不折叠；
   命名参数和 PostgreSQL `$1`、Oracle `:1` 等位置参数保留名称/编号，也不折叠其所在的列表。
   Oracle 还支持 `:user_id`、`:user#1` 及 `:"Case Name"` 等绑定形式；绑定名称保守保留原始大小写。
-- MySQL 可执行注释 `/*! ... */` 和优化器提示 `/*+ ... */` 保留完整文本，避免忽略执行差异。
-  Oracle 的 `--+ ...` 行提示也保留，并保留其换行边界，避免吞掉后续 SQL。
+- 普通行/块注释、优化器提示 `/*+ ... */` 及 Oracle `--+ ...` 行提示不参与指纹；
+  注释按所选方言识别。
+  MySQL 的 `--` 后必须有空白或控制字符，否则保留为运算符序列。
+  统一 token 之间的空格、换行、制表符及 Unicode 空白，保持引号标识符内部内容不变；
   统一标点周围空白，忽略末尾分号，保留多个语句之间的分号。
-- null、空白及仅含普通注释的输入返回空字符串；null 与空字符串视为相同空模板。
+- MySQL 可执行注释 `/*! ... */` 中的 SQL 与外部 SQL 共用词法上下文，参与关键字、常量和
+  IN 列表归一化。例如 `SELECT /*! DISTINCT */ name FROM users` 与
+  `SELECT DISTINCT name FROM users` 生成相同指纹，与没有 DISTINCT 的查询区分。
+  紧随 `/*!` 的五/六位版本前缀被去掉，例如 `/*!80000 DISTINCT */`；空白之后的数字仍属于
+  SQL 字面值，例如 `/*! 80000 */`。目前没有目标 MySQL 版本配置，因此保留全部可执行片段，
+  不判断版本条件在实际服务器上是否成立。其他方言仍将 `/*! ... */` 当作普通注释。
+- null、空白及仅含被忽略注释或空可执行片段的输入返回空字符串；null 与空字符串视为相同空模板。
   未闭合引号、dollar 字符串或块注释抛出带位置的 `IllegalArgumentException`。
 
 这是轻量词法归一化工具，不是完整 SQL 解析器或语义等价判定器，也不覆盖所有方言扩展。

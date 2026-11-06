@@ -8,6 +8,9 @@ import java.util.Objects;
 
 /**
  * SQL 词法模板指纹工具。屏蔽字符串、数值和布尔字面量，保留标识符与运算符。
+ * 忽略 token 之间的空白、关键字大小写、普通注释及优化器提示。
+ * MySQL 可执行注释的 SQL 内容参与归一化；去掉版本前缀，不判断服务器版本是否满足条件。
+ * 值位置的 NULL 同样屏蔽，IS [NOT] NULL 等判断结构保留。
  * <p>
  * 默认采用 ANSI 引号规则：单引号表示字符串，双引号表示标识符。
  * 指纹相同仅表示归一化模板相同，不代表 SQL 语义等价；原始 SQL、参数及传播链应另行保留。
@@ -62,7 +65,7 @@ public final class FingerprintUtils {
         }
     }
 
-    /** 按默认 ANSI 规则归一化；null、空白或仅含普通注释的输入返回空字符串。 */
+    /** 按默认 ANSI 规则归一化；null、空白或仅含被忽略注释的输入返回空字符串。 */
     public static String normalize(String sql) {
         return normalize(sql, Options.defaults());
     }

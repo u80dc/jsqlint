@@ -1,5 +1,6 @@
 package org.u80dc.jsqlint.commons.utils;
 
+import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -16,8 +17,8 @@ import static org.u80dc.jsqlint.commons.utils.FingerprintUtils.Dialect.POSTGRESQ
  * @author u80dc
  */
 final class SqlFingerprintNormalizer {
-    // MySQL 表名大小写依赖服务器配置，只折叠明确的保留字。
-    // VALUE、OFFSET 等非保留关键字可作表名或列名，必须保守保留。
+    // MySQL 表名大小写依赖服务器配置，扫描时只折叠明确的保留字。
+    // VALUE、OFFSET 等非保留关键字先保留，完成扫描后再根据语法位置处理。
     private static final Set<String> MYSQL_RESERVED_WORDS = Set.of(
             "select", "from", "where", "insert", "into", "update", "delete", "using",
             "values", "set", "as", "join", "inner", "outer", "left", "right",
@@ -27,7 +28,29 @@ final class SqlFingerprintNormalizer {
             "case", "when", "then", "else", "with", "recursive", "over", "partition",
             "range", "for", "create", "alter", "drop", "table", "index", "if", "primary",
             "key", "foreign", "references", "constraint", "unique", "check", "default",
-            "cascade", "restrict", "replace", "convert", "collate", "interval", "unsigned");
+            "cascade", "restrict", "replace", "convert", "collate", "interval", "unsigned",
+            "distinctrow", "high_priority", "straight_join", "sql_small_result", "sql_big_result",
+            "sql_calc_found_rows", "div", "mod", "both", "leading", "trailing", "match",
+            "intersect", "except", "window", "rows", "row", "current_date", "current_time",
+            "current_timestamp", "bigint", "binary", "blob", "char", "character", "dec", "decimal",
+            "double", "float", "int", "integer", "long", "longblob", "longtext", "mediumblob",
+            "mediumint", "mediumtext", "numeric", "real", "smallint", "tinyblob", "tinyint",
+            "tinytext", "varbinary", "varchar", "varcharacter", "precision");
+    private static final Set<String> MYSQL_STATEMENT_WORDS = Set.of("select", "insert", "replace", "update", "delete");
+    private static final Set<String> CASE_VALUE_PREFIXES = Set.of("then", "else", "when", "select", ",", "(");
+    private static final Set<String> MYSQL_BUILTIN_FUNCTIONS = Set.of(
+            "count", "sum", "avg", "min", "max", "concat", "concat_ws", "coalesce", "ifnull", "nullif",
+            "length", "char_length", "lower", "upper", "abs", "round", "floor", "ceil", "ceiling",
+            "substring", "substr", "trim", "ltrim", "rtrim", "cast", "date_format", "str_to_date",
+            "date_add", "date_sub", "now", "curdate", "curtime", "json_extract", "json_unquote",
+            "json_length", "group_concat", "extract");
+    private static final Set<String> MYSQL_OBJECT_PREFIXES = Set.of(
+            "from", "join", "into", "update", "table", "view", "index", "using", "references",
+            "insert", "replace", "with");
+    private static final Set<String> MYSQL_INTERVAL_UNITS = Set.of(
+            "year", "quarter", "month", "week", "day", "hour", "minute", "second", "microsecond",
+            "year_month", "day_hour", "day_minute", "day_second", "day_microsecond", "hour_minute",
+            "hour_second", "hour_microsecond", "minute_second", "minute_microsecond", "second_microsecond");
     // 只在明确期待表达式的位置移除数字的一元符号；点号后的关键字仍可能是列名。
     private static final Set<String> OPERAND_PREFIXES = Set.of(
             "select", "where", "having", "on", "and", "or", "xor", "not", "when", "then",
@@ -43,7 +66,7 @@ final class SqlFingerprintNormalizer {
     private static final List<String> OPERATORS = List.of(
             "->>", "<=>", "::", ":=", "->", "<=", ">=", "<>", "!=", "||", "&&", "<<", ">>");
 
-    private enum Kind { WORD, IDENTIFIER, NUMBER, LITERAL, BIND, OPERATOR, PUNCTUATION, DIRECTIVE }
+    private enum Kind { WORD, IDENTIFIER, NUMBER, LITERAL, BIND, OPERATOR, PUNCTUATION }
 
     private record Token(Kind kind, String text) {
         boolean is(String value) {
@@ -67,6 +90,9 @@ final class SqlFingerprintNormalizer {
 
     String normalize() {
         scan();
+        if (options.dialect() == MYSQL) {
+            normalizeMysqlContextualWords();
+        }
         List<Token> normalized = removeUnaryNumberSigns();
         if (options.collapseInLists()) {
             normalized = collapseInLists(normalized);
@@ -79,10 +105,19 @@ final class SqlFingerprintNormalizer {
     }
 
     private void scan() {
+        var executableComments = new ArrayDeque<Integer>();
         while (position < sql.length()) {
             char c = sql.charAt(position);
-            if (Character.isWhitespace(c)) {
+            if (isWhitespace(c)) {
                 position++;
+            } else if (options.dialect() == MYSQL && starts("/*!")) {
+                // 与外部 SQL 共用 token 流，保留跨注释边界的运算符、限定名称和子句上下文。
+                executableComments.addLast(position);
+                position += 3;
+                skipMysqlVersionPrefix();
+            } else if (!executableComments.isEmpty() && starts("*/")) {
+                executableComments.removeLast();
+                position += 2;
             } else if (starts("/*")) {
                 blockComment();
             } else if (isLineComment() || (options.dialect() == MYSQL && c == '#')) {
@@ -115,6 +150,22 @@ final class SqlFingerprintNormalizer {
             } else {
                 operator();
             }
+        }
+        if (!executableComments.isEmpty()) {
+            throw unterminated("MySQL executable comment", executableComments.getLast());
+        }
+    }
+
+    /** 仅识别紧随 /*! 的五/六位版本标记；空白之后的数字属于 SQL 字面值。 */
+    private void skipMysqlVersionPrefix() {
+        int end = position;
+        while (isDigit(at(end))) {
+            end++;
+        }
+        int digits = end - position;
+        if (digits == 5 || digits == 6) {
+            // 未配置目标服务器版本，保留所有可能执行的 SQL 片段，不将版本号当作 SQL 值。
+            position = end;
         }
     }
 
@@ -252,26 +303,19 @@ final class SqlFingerprintNormalizer {
     }
 
     private void lineComment() {
-        int start = position;
-        boolean oracleHint = options.dialect() == ORACLE && starts("--+");
         while (position < sql.length() && at(position) != '\n' && at(position) != '\r') {
             position++;
-        }
-        if (oracleHint) {
-            // 保留换行边界，防止后续 SQL 在归一化或再次扫描时被并入提示注释。
-            add(Kind.DIRECTIVE, sql.substring(start, position) + "\n");
         }
     }
 
     private boolean isLineComment() {
         return starts("--") && (options.dialect() != MYSQL || position + 2 == sql.length()
-                || Character.isWhitespace(at(position + 2)) || Character.isISOControl(at(position + 2)));
+                || isWhitespace(at(position + 2)) || Character.isISOControl(at(position + 2)));
     }
 
     private void blockComment() {
         int start = position;
-        // 优化器提示和 MySQL 可执行注释可能影响执行，保守保留其完整文本。
-        boolean directive = at(start + 2) == '+' || (options.dialect() == MYSQL && at(start + 2) == '!');
+        // 普通块注释和优化器提示被忽略；MySQL 可执行注释在 scan 中展开。
         position += 2;
         int depth = 1;
         while (position < sql.length()) {
@@ -281,9 +325,6 @@ final class SqlFingerprintNormalizer {
             } else if (starts("*/")) {
                 position += 2;
                 if (--depth == 0) {
-                    if (directive) {
-                        add(Kind.DIRECTIVE, sql.substring(start, position));
-                    }
                     return;
                 }
             } else {
@@ -366,6 +407,111 @@ final class SqlFingerprintNormalizer {
         return !tokens.isEmpty() && tokens.getLast().is(".");
     }
 
+    /** MySQL 的非保留关键字可作标识符，仅在对应语法位置折叠大小写。 */
+    private void normalizeMysqlContextualWords() {
+        int cases = 0;
+        int depth = 0;
+        String statement = "";
+        var windows = new ArrayDeque<Integer>();
+        for (int i = 0; i < tokens.size(); i++) {
+            Token token = tokens.get(i);
+            String previous = wordAt(i - 1);
+            String next = wordAt(i + 1);
+            if (token.is("(")) {
+                depth++;
+                if (previous.equals("over")) {
+                    windows.push(depth);
+                }
+            } else if (token.is(")")) {
+                if (!windows.isEmpty() && windows.peek() == depth) {
+                    windows.pop();
+                }
+                depth--;
+            } else if (token.is(";")) {
+                cases = 0;
+                statement = "";
+                windows.clear();
+                depth = 0;
+            }
+            if (token.kind != Kind.WORD || previous.equals(".") || next.equals(".")) {
+                continue;
+            }
+            String lower = token.text.toLowerCase(Locale.ROOT);
+            if (depth == 0 && MYSQL_STATEMENT_WORDS.contains(lower)) {
+                statement = lower;
+            }
+            boolean keyword = false;
+            if (lower.equals("case")) {
+                cases++;
+            } else if (lower.equals("end") && cases > 0
+                    && !CASE_VALUE_PREFIXES.contains(previous)) {
+                cases--;
+                keyword = true;
+            }
+            keyword |= switch (lower) {
+                case "offset" -> wordAt(i - 2).equals("limit") && isValueAt(i - 1);
+                case "value" -> (statement.equals("insert") || statement.equals("replace"))
+                        && next.equals("(") && !MYSQL_OBJECT_PREFIXES.contains(previous);
+                case "duplicate" -> previous.equals("on") && next.equals("key") && wordAt(i + 2).equals("update");
+                case "escape" -> isValueAt(i + 1);
+                case "date", "time", "timestamp" -> isValueAt(i + 1)
+                        || (previous.equals("as") && (next.equals(")") || next.equals("(")));
+                case "signed", "datetime" -> previous.equals("as") && (next.equals(")") || next.equals("("));
+                case "share" -> previous.equals("for");
+                case "nowait" -> isMysqlLockAt(i - 1);
+                case "skip" -> isMysqlLockAt(i - 1) && next.equals("locked");
+                case "locked" -> previous.equals("skip") && isMysqlLockAt(i - 2);
+                default -> false;
+            };
+            if (!windows.isEmpty() && depth == windows.peek()) {
+                keyword |= switch (lower) {
+                    case "unbounded" -> next.equals("preceding") || next.equals("following");
+                    case "preceding", "following" -> previous.equals("unbounded") || isValueAt(i - 1)
+                            || MYSQL_INTERVAL_UNITS.contains(previous);
+                    case "current" -> next.equals("row");
+                    case "row" -> previous.equals("current");
+                    case "rows" -> next.equals("between") || next.equals("unbounded") || isValueAt(i + 1);
+                    default -> false;
+                };
+            }
+            keyword |= MYSQL_INTERVAL_UNITS.contains(lower) && followsIntervalValue(i);
+            boolean function = MYSQL_BUILTIN_FUNCTIONS.contains(lower) && next.equals("(")
+                    && !MYSQL_OBJECT_PREFIXES.contains(previous);
+            if (keyword || function) {
+                tokens.set(i, new Token(Kind.WORD, lower));
+            }
+        }
+    }
+
+    private boolean isMysqlLockAt(int index) {
+        return wordAt(index - 1).equals("for")
+                && (wordAt(index).equals("update") || wordAt(index).equals("share"));
+    }
+
+    private boolean followsIntervalValue(int index) {
+        if (!isValueAt(index - 1)) {
+            return false;
+        }
+        int prefix = index - 2;
+        while (wordAt(prefix).equals("+") || wordAt(prefix).equals("-")) {
+            prefix--;
+        }
+        return wordAt(prefix).equals("interval");
+    }
+
+    private boolean isValueAt(int index) {
+        return index >= 0 && index < tokens.size()
+                && (tokens.get(index).isListValue() || tokens.get(index).kind == Kind.BIND);
+    }
+
+    private String wordAt(int index) {
+        if (index < 0 || index >= tokens.size()) {
+            return "";
+        }
+        Token token = tokens.get(index);
+        return token.kind == Kind.WORD ? token.text.toLowerCase(Locale.ROOT) : token.text;
+    }
+
     private void operator() {
         int start = position;
         if (options.dialect() == ORACLE) {
@@ -435,11 +581,16 @@ final class SqlFingerprintNormalizer {
             if (token.kind == Kind.OPERATOR && token.is("?") && expectsOperand) {
                 token = new Token(Kind.LITERAL, "?");
             }
-            result.add(token);
-            if (token.kind != Kind.DIRECTIVE) {
-                expectsOperand = expectsOperandAfter(token, previous);
-                previous = token;
+            // 值位置的 NULL 与其他字面量一样屏蔽；IS [NOT] NULL、NOT NULL 仍保留结构。
+            if (token.kind == Kind.WORD && token.is("null") && expectsOperand && previous != null
+                    && !previous.is("is") && !previous.is("not")
+                    && !(options.dialect() == ORACLE && i + 1 < tokens.size() && tokens.get(i + 1).is(";")
+                    && (previous.is("then") || previous.is("else")))) {
+                token = new Token(Kind.LITERAL, "?");
             }
+            result.add(token);
+            expectsOperand = expectsOperandAfter(token, previous);
+            previous = token;
         }
         return result;
     }
@@ -527,6 +678,10 @@ final class SqlFingerprintNormalizer {
 
     private static boolean isDigit(char c) {
         return c >= '0' && c <= '9';
+    }
+
+    private static boolean isWhitespace(char c) {
+        return Character.isWhitespace(c) || Character.isSpaceChar(c);
     }
 
     private static boolean isHex(char c) {
