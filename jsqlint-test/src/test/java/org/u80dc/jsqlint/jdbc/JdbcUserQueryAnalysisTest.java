@@ -49,9 +49,21 @@ class JdbcUserQueryAnalysisTest {
         String diagnostics = String.join("\n", capture.diagnostics);
 
         assertTrue(result.status() == SUCCESS || result.status() == PARTIAL, diagnostics);
-        // 允许尚未支持的表达式导致 PARTIAL，不接受超时、预算耗尽、类解析或 SQL 提取异常。
-        assertTrue(capture.diagnostics.stream().allMatch(message -> message.startsWith("UNSUPPORTED_VALUE: ")
-                || message.startsWith("SQL_DATA_FLOW_INCOMPLETE: ")), diagnostics);
+        // SQL 提取阶段仍不接受超时、预算耗尽或解析异常；样例的循环/异常边会使联合路径覆盖不完整。
+        assertTrue(result.diagnostics().stream().allMatch(diagnostic -> Set.of("UNSUPPORTED_VALUE",
+                "SQL_DATA_FLOW_INCOMPLETE", "JOINT_ANALYSIS_INCOMPLETE").contains(diagnostic.code())), diagnostics);
+        var jointDiagnostics = result.diagnostics().stream().filter(d -> d.code().equals("JOINT_ANALYSIS_INCOMPLETE")).toList();
+        long uncoveredExtractions = result.extractions().stream().filter(extraction -> extraction.rawSqls().stream()
+                .anyMatch(sql -> !sql.jointInference().orElseThrow().coverageComplete())).count();
+        assertEquals(uncoveredExtractions, jointDiagnostics.size(), "每个未完整覆盖的调用上下文都应保留诊断");
+        for (var diagnostic : jointDiagnostics) {
+            assertTrue(diagnostic.incomplete());
+            assertTrue(diagnostic.location().isPresent());
+            assertTrue(result.extractions().stream().filter(e -> e.location().equals(diagnostic.location().get()))
+                    .flatMap(e -> e.rawSqls().stream()).flatMap(sql -> sql.jointInference().stream())
+                    .anyMatch(joint -> !joint.coverageComplete() && joint.status() == JointSqlInferenceResult.Status.UNKNOWN),
+                    diagnostic.toString());
+        }
         if (result.status() == PARTIAL) assertFalse(capture.diagnostics.isEmpty(), "PARTIAL 应报告能力限制");
         assertTrue(capture.compiled, "应在 Analyzer 分配的目录中生成新的 class 文件");
         assertFalse(Files.exists(output), "分析结束后应清理本次编译输出");

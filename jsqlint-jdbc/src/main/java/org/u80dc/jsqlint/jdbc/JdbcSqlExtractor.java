@@ -152,7 +152,7 @@ final class JdbcSqlExtractor implements SqlExtractionHandler {
                 if (end.end() != DataFlowAnalysis.End.FOUND) historyIssues.add("Batch history ended at " + end.end());
                 for (SqlTraceSource entry : entries) {
                     var issues = new ArrayList<>(entry.issues()); issues.addAll(historyIssues);
-                    var paths = entry.controlFlowPaths().isEmpty() ? List.<List<ControlFlowEdge>>of(List.of()) : entry.controlFlowPaths();
+                    List<List<ControlFlowEdge>> paths = entry.controlFlowPaths().isEmpty() ? List.<List<ControlFlowEdge>>of(List.of()) : entry.controlFlowPaths();
                     var combined = paths.stream().map(path -> {
                         var edges = new LinkedHashSet<>(path); edges.addAll(end.path()); return List.copyOf(edges);
                     }).toList();
