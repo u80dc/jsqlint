@@ -38,6 +38,40 @@ class JdbcJointPathInferenceTest {
     }
 
     @Test
+    void literalStringConditionRejectsTheOppositeSqlBranch() throws Exception {
+        var sqls = analyze("""
+                public static void main(String[] args) throws Exception { run(null, "age"); }
+                static void run(java.sql.Connection c, String sort) throws Exception {
+                    String sql = "age".equals(sort) ? "SELECT age WHERE sort=?" : "SELECT id WHERE sort=?";
+                    var p = c.prepareStatement(sql); p.setString(1, sort); p.executeQuery();
+                }
+                """);
+        assertEquals(2, sqls.size());
+        for (var sql : sqls) {
+            var joint = sql.jointInference().orElseThrow();
+            if (sql.text().startsWith("SELECT age")) {
+                assertEquals(SATISFIABLE, joint.status(), joint.toString());
+                assertEquals("age", known(only(only(joint.combinations()).bindings()).value()));
+            } else {
+                assertEquals(UNSATISFIABLE, joint.status(), joint.toString());
+                assertTrue(joint.combinations().isEmpty());
+            }
+        }
+    }
+
+    @Test
+    void externalStringConditionSuppliesTheBindingModel() throws Exception {
+        var joint = only(analyze("""
+                static void run(java.sql.Connection c, String sort) throws Exception {
+                    if (!"age".equals(sort)) return;
+                    var p = c.prepareStatement("SELECT ?"); p.setString(1, sort); p.executeQuery();
+                }
+                """)).jointInference().orElseThrow();
+        assertEquals(SATISFIABLE, joint.status(), joint.toString());
+        assertEquals("age", known(only(only(joint.combinations()).bindings()).value()));
+    }
+
+    @Test
     void repeatedPredicatesAndNumericRangesRejectConflictingPairs() throws Exception {
         var sql = only(analyze("""
                 static void run(java.sql.Connection c, int n) throws Exception {
@@ -173,16 +207,23 @@ class JdbcJointPathInferenceTest {
 
     @Test
     void loopsKeepAnExplicitUnknownCandidate() throws Exception {
-        var sql = only(analyze("""
+        var result = analyzeResult("""
                 static void run(java.sql.Connection c, boolean wait) throws Exception {
                     while(wait) { Thread.yield(); }
                     var p = c.prepareStatement("SELECT ?"); p.setInt(1,1); p.executeQuery();
                 }
-                """));
+                """);
+        assertEquals(AnalysisResult.Status.PARTIAL, result.status());
+        var sql = only(executedSqls(result));
         var joint = sql.jointInference().orElseThrow();
         assertEquals(UNKNOWN,joint.status());
+        assertFalse(joint.coverageComplete());
         assertFalse(joint.combinations().isEmpty());
         assertTrue(joint.issues().stream().anyMatch(issue -> issue.contains("loop")));
+        assertTrue(result.diagnostics().stream().anyMatch(d -> d.code().equals("JOINT_ANALYSIS_INCOMPLETE")
+                && d.incomplete() && d.stage() == AnalysisListener.Stage.ANALYZING && d.location().isPresent()
+                && d.location().get().equals(result.extractions().stream()
+                .filter(e -> e.callSite().target().getName().equals("executeQuery")).findFirst().orElseThrow().location())));
     }
 
     @Test
@@ -197,6 +238,7 @@ class JdbcJointPathInferenceTest {
         method.append("p.executeQuery();}");
         var joint = only(analyze(method.toString())).jointInference().orElseThrow();
         assertEquals(UNKNOWN,joint.status());
+        assertFalse(joint.coverageComplete());
         assertTrue(joint.issues().stream().anyMatch(issue -> issue.contains("combination limit")));
     }
 
@@ -265,11 +307,17 @@ class JdbcJointPathInferenceTest {
     }
 
     private List<RawSql.Variant> analyze(String methods) throws Exception {
+        return executedSqls(analyzeResult(methods));
+    }
+    private AnalysisResult analyzeResult(String methods) throws Exception {
         Path source = Files.writeString(temporary.resolve("Sample.java"), "public class Sample {"+methods+"}");
         Path classes = Files.createDirectory(temporary.resolve("classes"));
         assertEquals(0, ToolProvider.getSystemJavaCompiler().run(null,null,null,"-proc:none","-g","-d",classes.toString(),source.toString()));
         var result = new Analyzer(AnalyzerConfig.defaults().withMaxTraceDepth(64), List.of(new JdbcAnalysisModule()),List.of()).analyze(classes);
         assertNotEquals(AnalysisResult.Status.FAILED,result.status());
+        return result;
+    }
+    private List<RawSql.Variant> executedSqls(AnalysisResult result) {
         return result.extractions().stream().filter(e -> Set.of("executeQuery","executeBatch").contains(e.callSite().target().getName()))
                 .flatMap(e -> e.statements().stream()).flatMap(s -> s.rawSql().variants().stream()).toList();
     }

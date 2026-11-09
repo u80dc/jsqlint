@@ -9,6 +9,9 @@ import org.u80dc.jsqlint.core.AnalysisResult;
 import org.u80dc.jsqlint.core.Analyzer;
 import org.u80dc.jsqlint.core.AnalyzerConfig;
 import org.u80dc.jsqlint.core.RawSql;
+import org.u80dc.jsqlint.core.node.SqlValue;
+import org.u80dc.jsqlint.core.parameter.InferredParameterValue;
+import org.u80dc.jsqlint.core.parameter.JointSqlInferenceResult;
 import org.u80dc.jsqlint.core.spi.SqlCallSite;
 
 import java.io.IOException;
@@ -17,11 +20,13 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.u80dc.jsqlint.core.parameter.JointSqlInferenceResult.Status.*;
 
 /**
  * 分析真实 Spring MVC 分层项目，打印所有 raw SQL 候选及其调用位置。
@@ -69,9 +74,78 @@ class SpringMvcJdbcUserQueryAnalysisTest {
         }
         assertEquals(expected, result.rawSqls().stream().map(RawSql.Variant::text).collect(Collectors.toSet()), diagnostics);
         assertTrue(result.rawSqls().stream().allMatch(sql -> sql.trace().isPresent()), "候选应保留传播来源");
+        assertJointPaths(result);
         if (result.status() == AnalysisResult.Status.PARTIAL) {
             assertFalse(capture.diagnostics.isEmpty(), "未完成的分析应说明原因");
         }
+    }
+
+    /** 固定入口只允许年龄排序；SQL 分支、绑定快照和实际参数模型必须共同成立。 */
+    private static void assertJointPaths(AnalysisResult result) {
+        var fixed = result.extractions().stream().filter(extraction -> extraction.callChain().stream()
+                .anyMatch(call -> call.target().getName().equals("findActiveAdults"))).toList();
+        assertEquals(2, fixed.size(), "固定业务入口应分别产生准备点和执行点结果");
+        for (var extraction : fixed) {
+            boolean execution = extraction.callSite().target().getName().equals("executeQuery");
+            int feasible = 0;
+            for (var statement : extraction.statements()) for (var sql : statement.rawSql().variants()) {
+                var joint = sql.jointInference().orElseThrow();
+                boolean expected = sql.text().contains(" AND active = ? ORDER BY age ASC, id ASC")
+                        && (!execution || sql.bindings().size() == 3);
+                if (!expected) {
+                    assertEquals(UNSATISFIABLE, joint.status(), sql.text() + " " + joint);
+                    assertTrue(joint.combinations().isEmpty());
+                    continue;
+                }
+                feasible++;
+                assertEquals(SATISFIABLE, joint.status(), joint.toString());
+                assertFalse(joint.combinations().isEmpty());
+                for (var combination : joint.combinations()) {
+                    assertEquals(SATISFIABLE, combination.status(), combination.issues().toString());
+                    assertEquals("10", known(combination.parameters().get("boundedLimit")));
+                    if (execution) {
+                        Map<String, Object> bindings = combination.bindings().stream().collect(Collectors.toMap(
+                                JointSqlInferenceResult.BindingValue::key, binding -> known(binding.value())));
+                        assertEquals(Set.of("1", "2", "3"), bindings.keySet());
+                        assertEquals(18, bindings.get("2"));
+                        assertEquals(true, bindings.get("3"));
+                        String pattern = assertInstanceOf(String.class, bindings.get("1"));
+                        assertTrue(pattern.startsWith("%") && pattern.endsWith("%"));
+                    } else assertTrue(combination.bindings().isEmpty(), "准备点尚未调用 setter");
+                }
+            }
+            assertEquals(1, feasible, "固定入口在每个调用点只能有一种可行 SQL/绑定快照");
+        }
+        // 通用接口允许四种结构，每种结构只允许与它的问号数量一致的绑定快照。
+        var searches = result.extractions().stream().filter(extraction -> extraction.callSite().target().getName().equals("executeQuery")
+                && extraction.callChain().stream().anyMatch(call -> call.caller().orElseThrow().getName().equals("search")))
+                .flatMap(extraction -> extraction.statements().stream()).flatMap(statement -> statement.rawSql().variants().stream()).toList();
+        assertFalse(searches.isEmpty());
+        Set<String> feasibleTexts = new LinkedHashSet<>();
+        for (var sql : searches) {
+            var joint = sql.jointInference().orElseThrow();
+            boolean active = sql.text().contains(" AND active = ?");
+            if (sql.bindings().size() != (active ? 3 : 2)) {
+                assertEquals(UNSATISFIABLE, joint.status(), sql.text());
+                continue;
+            }
+            assertEquals(SATISFIABLE, joint.status(), joint.toString());
+            feasibleTexts.add(sql.text());
+            for (var combination : joint.combinations()) {
+                int limit = Integer.parseInt((String) known(combination.parameters().get("boundedLimit")));
+                assertTrue(limit >= 1 && limit <= 100);
+                var bindings = combination.bindings().stream().collect(Collectors.toMap(
+                        JointSqlInferenceResult.BindingValue::key, binding -> known(binding.value())));
+                int age = assertInstanceOf(Integer.class, bindings.get("2"));
+                assertTrue(age >= 0 && age <= 120);
+                if (active) assertEquals(true, bindings.get("3"));
+            }
+        }
+        assertEquals(4, feasibleTexts.size());
+    }
+
+    private static Object known(InferredParameterValue value) {
+        return assertInstanceOf(SqlValue.Known.class, value.value(), value.issues().toString()).value();
     }
 
     /** 详细报告不去重；精简清单只按原始文本去重，不改变 AnalysisResult。 */
@@ -104,9 +178,22 @@ class SpringMvcJdbcUserQueryAnalysisTest {
                     report.append("绑定参数: ").append(sql.bindings().stream()
                             .map(binding -> binding.key() + "=" + binding.inference().name() + ":" + binding.inference().type())
                             .toList()).append('\n');
-                    sql.jointInference().ifPresent(joint -> report.append("联合状态: ").append(joint.status())
-                            .append("，组合数: ").append(joint.combinations().size())
-                            .append("，诊断: ").append(joint.issues()).append('\n'));
+                    sql.jointInference().ifPresent(joint -> {
+                        report.append("联合状态: ").append(joint.status())
+                                .append("，组合数: ").append(joint.combinations().size())
+                                .append("，诊断: ").append(joint.issues()).append('\n');
+                        // UNKNOWN 的原因可能只属于一个组合，不能只输出汇总级 issues。
+                        int combinationIndex = 0;
+                        for (var combination : joint.combinations()) {
+                            report.append("  组合 ").append(++combinationIndex).append(": ").append(combination.status())
+                                    .append("，拼接值: ").append(combination.parameters().entrySet().stream()
+                                            .map(entry -> entry.getKey() + "=" + entry.getValue().value()).toList())
+                                    .append("，绑定值: ").append(combination.bindings().stream()
+                                            .map(binding -> binding.keyValue().value() + "=" + binding.value().value()).toList())
+                                    .append("，条件数: ").append(combination.conditions().size())
+                                    .append("，组合诊断: ").append(combination.issues()).append('\n');
+                        }
+                    });
                 }
                 if (!statement.issues().isEmpty()) report.append("语句诊断: ").append(statement.issues()).append('\n');
                 if (!statement.rawSql().issues().isEmpty()) report.append("raw SQL 诊断: ")

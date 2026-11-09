@@ -187,7 +187,18 @@ class AnalyzerTest {
                         """,
                 "ignore.sql", "SELECT ignored"));
         var analyzer = new Analyzer(List.of(new MybatisAnalysisModule()), List.of());
-        assertEquals(SUCCESS, analyzer.analyze(new AnalysisRequest(List.of(), List.of(resources), options(capture))).status());
+        var result = analyzer.analyze(new AnalysisRequest(List.of(), List.of(resources), options(capture)));
+        assertEquals(SUCCESS, result.status());
+        var saved = assertInstanceOf(SqlTemplateResult.class, result.sqlResults().getFirst());
+        assertEquals(1, result.sqlResults().size());
+        assertSame(saved, capture.results.getFirst());
+        assertTrue(result.rawSqls().isEmpty());
+        assertTrue(result.extractions().isEmpty());
+        assertEquals(URI.create("memory:/mapper.xml"), saved.location().resource());
+        assertEquals("app.Mapper.all", saved.location().element());
+        var sample = SqlNodeRenderer.render(saved.template(), Map.of("id", 7));
+        assertTrue(sample.complete());
+        assertEquals("SELECT id, name FROM users WHERE id = 7", sample.sql().orElseThrow().replaceAll("\\s+", " ").trim());
         assertEquals(1, capture.sql.size());
         assertFalse(capture.sql.getFirst().complete());
         assertTrue(capture.templates.getFirst().toString().contains("id, name"));
@@ -204,7 +215,18 @@ class AnalyzerTest {
                 </mapper>
                 """));
         var analyzer = new Analyzer(List.of(new MybatisAnalysisModule()), List.of());
-        assertEquals(PARTIAL, analyzer.analyze(new AnalysisRequest(List.of(), List.of(resource), options(capture))).status());
+        var result = analyzer.analyze(new AnalysisRequest(List.of(), List.of(resource), options(capture)));
+        assertEquals(PARTIAL, result.status());
+        assertEquals(2, result.sqlResults().size());
+        assertEquals(List.of("SELECT 8"), result.rawSqls().stream().map(RawSql.Variant::text).toList());
+        var unresolved = assertInstanceOf(SqlTemplateResult.class, result.sqlResults().getFirst());
+        assertTrue(unresolved.template().isDynamic());
+        var diagnostic = unresolved.diagnostics().getFirst();
+        assertEquals("SQL_EXTRACTION", diagnostic.code());
+        assertEquals(Optional.of(unresolved.location()), diagnostic.location());
+        assertEquals(AnalysisListener.Stage.ANALYZING, diagnostic.stage());
+        assertTrue(diagnostic.incomplete());
+        assertTrue(result.diagnostics().contains(diagnostic));
         assertEquals(2, capture.sql.size());
         assertEquals(List.of("SELECT 8"), capture.completeSql());
         assertFalse(capture.sql.getFirst().complete());
@@ -222,6 +244,76 @@ class AnalyzerTest {
         assertEquals(List.of("SELECT 9", "SELECT 9"), capture.completeSql());
         assertEquals(List.of("one", "two"), capture.modules);
         assertTrue(streamClosed.get());
+    }
+
+    @Test
+    void staticMapperResultsAndDiagnosticsAreImmutableAndSessionScoped() {
+        var analyzer = new Analyzer(List.of(new MybatisAnalysisModule()), List.of());
+        Capture capture = new Capture();
+        var source = memory(Map.of("mapper.xml", "<mapper namespace=\"app.Mapper\"><select id=\"all\">SELECT 42</select></mapper>"));
+        var result = analyzer.analyze(new AnalysisRequest(List.of(), List.of(source), options(capture)));
+        assertEquals(SUCCESS, result.status());
+        assertEquals(List.of("SELECT 42"), result.rawSqls().stream().map(RawSql.Variant::text).toList());
+        var saved = assertInstanceOf(SqlTemplateResult.class, result.sqlResults().getFirst());
+        assertEquals("mybatis", saved.moduleId());
+        assertSame(saved, capture.results.getFirst());
+        assertEquals(new SourceLocation(URI.create("memory:/mapper.xml"), "app.Mapper.all"), saved.location());
+        assertThrows(UnsupportedOperationException.class, () -> result.sqlResults().clear());
+        assertThrows(UnsupportedOperationException.class, () -> result.diagnostics().clear());
+        assertThrows(UnsupportedOperationException.class, () -> saved.diagnostics().clear());
+        var timedOut = analyzer.analyze(new AnalysisRequest(List.of(), List.of(source),
+                AnalysisOptions.defaults().withTimeout(Duration.ofNanos(1))));
+        assertEquals(PARTIAL, timedOut.status());
+        assertTrue(timedOut.diagnostics().stream().anyMatch(d -> d.code().equals("TIMEOUT") && d.incomplete()));
+        var next = analyzer.analyze(new AnalysisRequest(List.of(), List.of(source)));
+        assertEquals(SUCCESS, next.status());
+        assertEquals(1, next.sqlResults().size());
+        assertTrue(next.diagnostics().isEmpty());
+    }
+
+    @Test
+    void mixedModulesSaveEachSqlOnceAndKeepTheLegacyExtractionCallback() throws Exception {
+        Path classes = compile("Sample", """
+                public class Sample {
+                    public void query(java.sql.Statement statement) throws Exception { statement.execute("SELECT 1"); }
+                }
+                """);
+        Files.writeString(classes.resolve("mapper.xml"), "<mapper namespace=\"app.Mapper\"><select id=\"all\">SELECT 2</select></mapper>");
+        List<SqlExtraction> legacy = new ArrayList<>();
+        var listener = new AnalysisListener() {
+            public void onSqlExtraction(SqlExtraction result) { legacy.add(result); }
+        };
+        var result = new Analyzer(List.of(new JdbcAnalysisModule(), new MybatisAnalysisModule()), List.of())
+                .analyze(classes, options(listener));
+        assertEquals(SUCCESS, result.status());
+        assertEquals(2, result.sqlResults().size());
+        assertEquals(1, result.extractions().size());
+        assertSame(result.extractions().getFirst(), legacy.getFirst());
+        assertEquals(Set.of("SELECT 1", "SELECT 2"), new HashSet<>(result.rawSqls().stream().map(RawSql.Variant::text).toList()));
+        assertEquals(2, result.rawSqls().size());
+    }
+
+    @Test
+    void unknownExternalObjectDoesNotMeanPathsWereDropped() throws Exception {
+        // 包名特意含 budget，诊断文案中出现该词不应被误判为预算截断。
+        Path classes = compile("Sample", """
+                package example.budget;
+                class Request {}
+                public class Sample {
+                    public void query(java.sql.Connection c, Request external) throws Exception {
+                        var p = c.prepareStatement("SELECT ?"); p.setObject(1, external); p.executeQuery();
+                    }
+                }
+                """);
+        var result = jdbc().analyze(classes);
+        assertEquals(SUCCESS, result.status(), result.diagnostics().toString());
+        var sql = result.extractions().stream().filter(e -> e.callSite().target().getName().equals("executeQuery"))
+                .flatMap(e -> e.rawSqls().stream()).findFirst().orElseThrow();
+        var joint = sql.jointInference().orElseThrow();
+        assertEquals(org.u80dc.jsqlint.core.parameter.JointSqlInferenceResult.Status.UNKNOWN, joint.status());
+        assertTrue(joint.coverageComplete());
+        assertFalse(sql.bindings().getFirst().inference().truncated());
+        assertTrue(result.diagnostics().stream().noneMatch(AnalysisDiagnostic::incomplete));
     }
 
     @Test
@@ -523,9 +615,13 @@ class AnalyzerTest {
                 """);
         Capture capture = new Capture();
         var analyzer = new Analyzer(List.of(new MybatisAnalysisModule()), List.of());
-        assertEquals(SUCCESS, analyzer.analyze(classes, options(capture)).status());
+        var result = analyzer.analyze(classes, options(capture));
+        assertEquals(SUCCESS, result.status());
         assertEquals(2, capture.sql.size());
         assertEquals(List.of("SELECT 13"), capture.completeSql());
+        assertEquals(2, result.sqlResults().size());
+        assertEquals(List.of("SELECT 13"), result.rawSqls().stream().map(RawSql.Variant::text).toList());
+        assertTrue(result.sqlResults().stream().allMatch(SqlTemplateResult.class::isInstance));
     }
 
     @Test
@@ -579,9 +675,23 @@ class AnalyzerTest {
                 throw new IllegalStateException("output failed");
             }
         };
-        assertEquals(FAILED, new Analyzer(List.of(sqlFiles("sql")), List.of(resolver))
-                .analyze(source, options(broken)).status());
+        var result = new Analyzer(List.of(sqlFiles("sql")), List.of(resolver)).analyze(source, options(broken));
+        assertEquals(FAILED, result.status());
+        assertEquals(List.of("SELECT 1"), result.rawSqls().stream().map(RawSql.Variant::text).toList());
+        assertTrue(result.diagnostics().stream().anyMatch(d -> d.code().equals("LISTENER_FAILED") && d.incomplete()));
         assertEquals(1, location.closeCount);
+    }
+
+    @Test
+    void failingDiagnosticListenerPreservesTheOriginalAndCallbackFailures() {
+        var listener = new AnalysisListener() {
+            public void onDiagnostic(AnalysisDiagnostic diagnostic) { throw new IllegalStateException("diagnostic output failed"); }
+        };
+        var result = new Analyzer(List.of(sqlFiles("sql")), List.of()).analyze(new AnalysisRequest(List.of(),
+                List.of(memory(Map.of("query.sql", "SELECT 1"))), options(listener).withTimeout(Duration.ofNanos(1))));
+        assertEquals(FAILED, result.status());
+        assertEquals(List.of("TIMEOUT", "LISTENER_FAILED"), result.diagnostics().stream().map(AnalysisDiagnostic::code).toList());
+        assertTrue(result.diagnostics().stream().allMatch(AnalysisDiagnostic::incomplete));
     }
 
     private AnalysisOptions options(AnalysisListener listener) {
@@ -640,6 +750,8 @@ class AnalyzerTest {
         final List<String> modules = new ArrayList<>();
         final List<String> diagnostics = new ArrayList<>();
         final List<Progress> progress = new ArrayList<>();
+        final List<SqlResult> results = new ArrayList<>();
+        public void onSqlResult(SqlResult value) { results.add(value); }
         public void onProgress(Progress value) { progress.add(value); }
         public void onDiagnostic(String code, String message) { diagnostics.add(code + ": " + message); }
         public void onSql(String module, AnalysisSeed seed, SqlNode template, SqlNodeRenderer.RenderedSql result) {

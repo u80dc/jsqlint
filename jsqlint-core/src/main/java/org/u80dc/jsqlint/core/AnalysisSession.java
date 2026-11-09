@@ -43,7 +43,9 @@ final class AnalysisSession {
     private final Map<MethodSignature, List<InvocationSite>> callers = new LinkedHashMap<>();
     private final List<JavaSootClass> applicationClasses = new ArrayList<>();
     private final List<PendingExtraction> extractionRequests = new ArrayList<>();
-    private final List<SqlExtraction> extractions = new ArrayList<>();
+    private final List<SqlResult> sqlResults = new ArrayList<>();
+    private final List<AnalysisDiagnostic> diagnostics = new ArrayList<>();
+    private Optional<SourceLocation> diagnosticLocation = Optional.empty();
     private Stage stage = Stage.PREPARING;
     private long resources, methods, analyzed;
     private boolean partial;
@@ -69,18 +71,27 @@ final class AnalysisSession {
     }
 
     void diagnostic(String code, String message) {
-        notifyListener(listener -> listener.onDiagnostic(code, message));
+        diagnostic(code, message, false);
+    }
+
+    private void diagnostic(String code, String message, boolean incomplete) {
+        var diagnostic = new AnalysisDiagnostic(code, stage, diagnosticLocation, incomplete, message);
+        diagnostics.add(diagnostic);
+        partial |= incomplete;
+        notifyListener(listener -> listener.onDiagnostic(diagnostic));
     }
 
     /** 已跳过或截断的工作会影响终态；普通未知参数只保留符号值，不走此分支。 */
     void incomplete(String code, String message) {
-        partial = true;
-        diagnostic(code, message);
+        diagnostic(code, message, true);
     }
 
     private void notifyListener(Consumer<AnalysisListener> action) {
         try { action.accept(options.listener()); }
-        catch (RuntimeException e) { throw new ListenerFailure(e); }
+        catch (RuntimeException e) {
+            recordListenerFailure(e);
+            throw new ListenerFailure(e);
+        }
     }
 
     Status execute(AnalysisRequest request, List<SqlAnalysisModule> extensions) throws Exception {
@@ -182,14 +193,24 @@ final class AnalysisSession {
                 callers.values().stream().flatMap(Collection::stream).toList(), this::checkpoint);
         ValueTraceAnalyzer tracing = new ValueTraceAnalyzer(view, program == null ? callers : program.callers(), config.maxCallDepth(),
                 config.maxTraceDepth(), config.maxTraceNodes(), config.methodCacheSize(), this::checkpoint, this::incomplete);
+        Set<ExtractionPoint> extractionPoints = new HashSet<>();
+        for (var requestPoint : extractionRequests) extractionPoints.add(new ExtractionPoint(requestPoint.moduleId(),
+                requestPoint.site().method().getSignature(), requestPoint.site().statement()));
         if (extensions.isEmpty()) diagnostic("NO_MODULES", "No SQL discovery modules registered");
         for (Pending item : pending) {
             checkpoint();
+            diagnosticLocation = Optional.of(item.seed().location());
+            int diagnosticStart = diagnostics.size();
             SqlNode template;
+            boolean coveredByExtraction = false;
             try {
-                template = switch (item.seed().input()) {
-                    case SqlInput.Template input -> input.node();
-                    case SqlInput.ValueAt input -> tracing.sql(input);
+                SqlInput input = item.seed().input();
+                // JDBC 同时注册旧模板起点和完整溯源处理器，同一调用点只保存完整结果。
+                coveredByExtraction = input instanceof SqlInput.ValueAt value && extractionPoints.contains(
+                        new ExtractionPoint(item.moduleId(), value.method().getSignature(), value.statement()));
+                template = switch (input) {
+                    case SqlInput.Template source -> source.node();
+                    case SqlInput.ValueAt source -> tracing.sql(source);
                 };
             } catch (Exception e) {
                 recover("SQL_EXTRACTION", item.seed().location().toString(), e);
@@ -197,13 +218,24 @@ final class AnalysisSession {
                 template = ValueSqlNode.raw("unresolvedSql");
             }
             var node = template;
-            // 单个起点的渲染失败可继续处理其他起点；输出监听器失败则终止，防止结果丢失。
+            SqlNodeRenderer.RenderedSql rendered = null;
             try {
-                var rendered = SqlNodeRenderer.render(node, item.seed().parameters());
-                checkpoint();
-                notifyListener(listener -> listener.onSql(item.moduleId(), item.seed(), node, rendered));
-                analyzed++;
+                rendered = SqlNodeRenderer.render(node, item.seed().parameters());
             } catch (Exception e) { recover("SQL_RENDERING", item.seed().location().toString(), e); }
+            if (!coveredByExtraction) {
+                // 未求值的动态结构也是有效结果；先保存，监听器失败时调用方仍可取回。
+                var result = new SqlTemplateResult(item.moduleId(), item.seed().location(), node,
+                        Optional.ofNullable(rendered), diagnostics.subList(diagnosticStart, diagnostics.size()));
+                sqlResults.add(result);
+                notifyListener(listener -> listener.onSqlResult(result));
+            }
+            if (rendered != null) {
+                checkpoint();
+                var value = rendered;
+                notifyListener(listener -> listener.onSql(item.moduleId(), item.seed(), node, value));
+                analyzed++;
+            }
+            diagnosticLocation = Optional.empty();
             progress(stage);
         }
         if (program != null) {
@@ -215,6 +247,7 @@ final class AnalysisSession {
     }
 
     private void extract(PendingExtraction request, DataFlowAnalysis flow, ValueTraceAnalyzer tracing) {
+        diagnosticLocation = Optional.of(request.site().location());
         var jointInference = new JointSqlValueInferencer(flow);
         for (var context : flow.contexts(request.site().method())) {
             checkpoint();
@@ -280,8 +313,15 @@ final class AnalysisSession {
             }
             var extraction = new SqlExtraction(request.moduleId(), SqlCallSite.invocation(request.site()),
                     context.context().snapshot(), statements, issues);
-            extractions.add(extraction);
+            sqlResults.add(extraction);
             if (!extraction.complete()) incomplete("SQL_DATA_FLOW_INCOMPLETE", request.site().location().toString());
+            var uncovered = extraction.rawSqls().stream().flatMap(variant -> variant.jointInference().stream())
+                    .filter(joint -> !joint.coverageComplete()).toList();
+            if (!uncovered.isEmpty()) {
+                var reasons = uncovered.stream().flatMap(joint -> java.util.stream.Stream.concat(joint.issues().stream(),
+                        joint.combinations().stream().flatMap(combination -> combination.issues().stream()))).distinct().toList();
+                incomplete("JOINT_ANALYSIS_INCOMPLETE", reasons.isEmpty() ? "Joint analysis did not cover all paths" : String.join("; ", reasons));
+            }
             LOG.info("SQL 提取: module={}, call={}, chain={}, complete={}, issues={}", request.moduleId(),
                     extraction.callSite(), extraction.callChain(), extraction.complete(), extraction.issues());
             for (var statement : statements) {
@@ -295,8 +335,22 @@ final class AnalysisSession {
                     // 同一调用点可能有多条相同文本，使用候选编号关联各自选中的传播分支。
                     variant.trace().ifPresent(trace -> printTrace(label, trace));
                     variant.placeholders().stream().map(RawSql.Placeholder::inference).distinct().forEach(this::printInference);
-                    variant.jointInference().ifPresent(joint -> LOG.info("SQL 联合路径: variant={}, status={}, combinations={}, issues={}",
-                            label, joint.status(), joint.combinations().size(), joint.issues()));
+                    variant.jointInference().ifPresent(joint -> {
+                        if (!LOG.isInfoEnabled()) return;
+                        LOG.info("SQL 联合路径: variant={}, status={}, combinations={}, issues={}",
+                                label, joint.status(), joint.combinations().size(), joint.issues());
+                        // 组合级未知原因与参数值一起输出，避免汇总 issues 为空时无法解释 UNKNOWN。
+                        for (int combinationIndex = 0; combinationIndex < joint.combinations().size(); combinationIndex++) {
+                            var combination = joint.combinations().get(combinationIndex);
+                            LOG.info("SQL 联合组合: variant={}, combination={}, status={}, parameters={}, bindings={}, conditions={}, issues={}",
+                                    label, combinationIndex + 1, combination.status(),
+                                    combination.parameters().entrySet().stream()
+                                            .map(entry -> entry.getKey() + "=" + entry.getValue().value()).toList(),
+                                    combination.bindings().stream()
+                                            .map(binding -> binding.keyValue().value() + "=" + binding.value().value()).toList(),
+                                    combination.conditions().size(), combination.issues());
+                        }
+                    });
                 }
                 statement.sql().ifPresent(trace -> printTrace("sql", trace));
                 for (var binding : statement.bindings()) {
@@ -305,8 +359,9 @@ final class AnalysisSession {
                     printInference(binding.inference());
                 }
             }
-            notifyListener(listener -> listener.onSqlExtraction(extraction));
+            notifyListener(listener -> listener.onSqlResult(extraction));
         }
+        diagnosticLocation = Optional.empty();
     }
 
     private RawSql inferPlaceholders(RawSql raw, ParameterValueInferencer inferencer) {
@@ -329,7 +384,7 @@ final class AnalysisSession {
                                                           ValueTrace trace, String expectedType) {
         try {
             var inferred = inferencer.infer(trace, expectedType);
-            return new ParameterValueInferenceResult(name, inferred.type(), inferred.possibleValues(), inferred.issues());
+            return new ParameterValueInferenceResult(name, inferred.type(), inferred.possibleValues(), inferred.issues(), inferred.truncated());
         } catch (Exception e) {
             // 重演失败不得丢失已保存的参数传播链；取消与监听器异常由 recover 继续向外传播。
             recover("PARAMETER_INFERENCE", trace.variable().toString(), e);
@@ -407,7 +462,7 @@ final class AnalysisSession {
 
     Status failure(Exception error) {
         if (error instanceof Stop stop) {
-            if (stop.status == Status.PARTIAL) diagnostic("TIMEOUT", "Analysis deadline exceeded");
+            if (stop.status == Status.PARTIAL) incomplete("TIMEOUT", "Analysis deadline exceeded");
             return stop.status;
         }
         if (error instanceof InterruptedException) {
@@ -415,7 +470,10 @@ final class AnalysisSession {
             return Status.CANCELLED;
         }
         LOG.error("Analysis failed", error);
-        if (!(error instanceof ListenerFailure)) diagnostic("ANALYSIS_FAILED", error.getMessage());
+        if (!(error instanceof ListenerFailure)) {
+            try { incomplete("ANALYSIS_FAILED", Objects.toString(error.getMessage(), error.getClass().getSimpleName())); }
+            catch (ListenerFailure ignored) { /* notifyListener 已保存回调失败，不再次通知。 */ }
+        }
         return Status.FAILED;
     }
 
@@ -426,10 +484,17 @@ final class AnalysisSession {
             LOG.error("Analysis listener failed", e);
             status = Status.FAILED;
         }
-        return new AnalysisResult(status, extractions);
+        return new AnalysisResult(status, sqlResults, diagnostics);
+    }
+
+    /** 监听器本身失败时直接保存诊断，避免再次回调形成递归失败。 */
+    private void recordListenerFailure(Exception error) {
+        diagnostics.add(new AnalysisDiagnostic("LISTENER_FAILED", stage, diagnosticLocation, true,
+                Objects.toString(error.getMessage(), error.getClass().getSimpleName())));
     }
 
     private record Pending(String moduleId, AnalysisSeed seed) {}
+    private record ExtractionPoint(String moduleId, MethodSignature method, sootup.core.jimple.common.stmt.Stmt statement) {}
     private record PendingExtraction(String moduleId, InvocationSite site, SqlExtractionHandler handler) {}
     private record Registered(String id, List<DiscoveryRegistry.Rule<AnalysisResource>> resources,
                               List<DiscoveryRegistry.Rule<JavaSootMethod>> methods,

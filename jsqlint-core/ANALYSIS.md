@@ -126,8 +126,13 @@ Path 入口将配置和本次输出路径一起交给选中的解析器；common
 
 ## 进度、结果与长任务控制
 
-`AnalysisResult` 包含内部枚举 `Status`、不可变的 `extractions()` 列表，以及直接获取 raw SQL 的 `rawSqls()`。
-SQL 提取结果在输入关闭后仍可读取，不持有 JavaView、方法体或编译目录资源。
+`AnalysisResult` 包含内部枚举 `Status`、不可变的统一结果 `sqlResults()` 和结构化诊断 `diagnostics()`。
+`SqlResult` 的两个实现分别保留字节码传播结果 `SqlExtraction` 和资源/注解模板 `SqlTemplateResult`。
+原有 `extractions()` 继续提供字节码结果视图；`rawSqls()` 汇总已恢复的字节码 SQL 和静态模板 SQL。
+动态模板通过 `templates()` 保存完整节点，尚未展开时不伪造 raw SQL；可使用
+`SqlNodeRenderer.render(template, parameters)` 在分析结束后提供参数渲染样例。
+所有结果均保留模块和来源位置，在输入关闭后仍可读取，不持有 JavaView、方法体或编译目录资源。
+同一 JDBC 调用点同时注册的旧模板事件与完整提取结果不会导致返回列表重复。
 
 | 终态 | 含义 |
 |---|---|
@@ -139,8 +144,14 @@ SQL 提取结果在输入关闭后仍可读取，不持有 JavaView、方法体�
 正常的外部参数在 SQL 中保留为符号值，不会单独导致 PARTIAL；参数推断另外生成带来源标识的样例。
 部分实现尚不支持的分析操作会报告
 PARTIAL，避免把实现能力不足伪装成已完成分析。
-该终态表示 SQL 提取流程的完成情况；样例重演的未知值或数量截断单独通过
-`Statement.inferenceComplete()` 和参数的 `inference.complete()` 检查，不等同于 SQL 提取失败。
+该终态也反映联合路径的覆盖情况：循环等未支持控制流、候选截断或条件求解未完成会返回 PARTIAL，
+并保存带来源位置的 `JOINT_ANALYSIS_INCOMPLETE` 诊断。参数的 `truncated()` 和联合结果的
+`coverageComplete()` 明确表达是否遗漏分析，不从诊断文案推测。未覆盖完整的联合结果不会声称整体无解。
+普通参数未知仍可为 SUCCESS；此时通过 `Statement.inferenceComplete()`、参数的 `complete()`
+及联合组合中的 UNKNOWN 进一步判断样例是否可用。
+
+每条 `AnalysisDiagnostic` 包含代码、分析阶段、可用时的来源位置、是否影响完整性以及说明。
+即使没有注册监听器，也可通过 `result.diagnostics()` 检查诊断；监听器失败时保留已保存结果和失败原因。
 
 ```java
 var cancelled = new java.util.concurrent.atomic.AtomicBoolean();
@@ -151,15 +162,14 @@ var listener = new AnalysisListener() {
     }
 
     @Override
-    public void onSql(String moduleId, AnalysisSeed seed, SqlNode template,
-                      SqlNodeRenderer.RenderedSql sql) {
-        // sql.sql() 仅在完全求值时有值；template/residual 保留动态条件、分支和未知参数。
-        // 可以在这里保存或展示，不需要等最终 AnalysisResult。
+    public void onSqlResult(SqlResult sql) {
+        // 接收的对象已经保存在本次结果中；模板与字节码 SQL 使用同一个入口。
+        System.out.println(sql.location() + " / " + sql.rawSqls());
     }
 
     @Override
-    public void onDiagnostic(String code, String message) {
-        System.err.println(code + ": " + message);
+    public void onDiagnostic(AnalysisDiagnostic diagnostic) {
+        System.err.println(diagnostic.code() + ": " + diagnostic.message());
     }
 };
 var options = AnalysisOptions.defaults()
@@ -169,6 +179,8 @@ analyzer.analyze(project, dependencies, options);
 ```
 
 监听器同步执行，不应长时间阻塞；输出监听器异常使本次分析失败。
+旧 `onSql` 模板事件继续提供渲染结果；`onSqlResult` 默认转发字节码结果到旧 `onSqlExtraction`，
+结构化诊断默认转发到旧 `onDiagnostic(String, String)`。同时重写新旧回调时，由新回调决定是否继续转发。
 阶段为 PREPARING、RESOURCES、CODE、ANALYZING、FINISHED，计数不冒充总体百分比。
 
 取消和超时为协作机制，不会强制杀死正在执行的 Maven/Gradle 构建或单次第三方解析调用；

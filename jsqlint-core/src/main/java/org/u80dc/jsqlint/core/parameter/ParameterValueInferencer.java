@@ -47,7 +47,7 @@ public final class ParameterValueInferencer {
         var values = query.visit(trace.root(), 0).stream().map(value -> new InferredParameterValue(
                 value.value(), new ValueTrace(trace.variable(), trace.callChain(), value.node()),
                 value.initials(), value.issues())).toList();
-        return new ParameterValueInferenceResult(name, trace.variable().type(), values, new ArrayList<>(query.issues));
+        return new ParameterValueInferenceResult(name, trace.variable().type(), values, new ArrayList<>(query.issues), query.truncated);
     }
 
     /** 变量名用于展示和槽位关联，源代码调试信息缺失时保留字节码名称/参数编号。 */
@@ -71,12 +71,16 @@ public final class ParameterValueInferencer {
 
     private final class Query {
         private int steps;
+        private boolean truncated;
         private final Set<String> issues = new LinkedHashSet<>();
         private final Map<Node, List<Evaluation>> cache = new HashMap<>();
 
         List<Evaluation> visit(Node node, int depth) {
             checkpoint.run();
-            if (++steps > MAX_STEPS || depth > MAX_DEPTH) return List.of(unknown(node, "Parameter inference budget exceeded"));
+            if (++steps > MAX_STEPS || depth > MAX_DEPTH) {
+                truncated = true;
+                return List.of(unknown(node, "Parameter inference budget exceeded"));
+            }
             if (cache.containsKey(node)) return cache.get(node);
             List<Evaluation> result = compute(node, depth);
             cache.put(node, result);
@@ -103,7 +107,10 @@ public final class ParameterValueInferencer {
             try {
                 Object value = node.computation().operation() == Operation.NULL ? null
                         : JavaValueOperations.parse(node.computation().text(), node.variable().type());
-                if (value instanceof String text && text.length() > MAX_LENGTH) return unknown(node, "Inferred value length limit exceeded");
+                if (value instanceof String text && text.length() > MAX_LENGTH) {
+                    truncated = true;
+                    return unknown(node, "Inferred value length limit exceeded");
+                }
                 SqlValue known = new SqlValue.Known(value);
                 return new Evaluation(known, node, List.of(new InitialValue(node.variable(), known, false)), List.of(), Map.of());
             } catch (RuntimeException e) { return unknown(node, failure(e)); }
@@ -124,7 +131,7 @@ public final class ParameterValueInferencer {
             ChoiceKey key = choiceKey(node);
             for (int i = 0; i < node.inputs().size(); i++) {
                 for (Evaluation value : visit(node.inputs().get(i), depth + 1)) {
-                    if (result.size() >= MAX_VALUES) { issues.add("Parameter value limit exceeded"); return List.copyOf(result); }
+                    if (result.size() >= MAX_VALUES) { truncated = true; issues.add("Parameter value limit exceeded"); return List.copyOf(result); }
                     var choices = new HashMap<>(value.choices()); choices.put(key, node.inputs().get(i).variable());
                     Evaluation wrapped = wrap(node, List.of(value), choices, value.value());
                     result.add(coerce(wrapped, node.variable().type()));
@@ -148,9 +155,10 @@ public final class ParameterValueInferencer {
                 try {
                     Object evaluated = apply(node, operands);
                     if (evaluated instanceof String text && text.length() > MAX_LENGTH)
-                        throw new IllegalArgumentException("Inferred value length limit exceeded");
+                        throw new InferenceLimitException("Inferred value length limit exceeded");
                     result.add(wrap(node, values, args.choices(), new SqlValue.Known(evaluated)));
                 } catch (RuntimeException e) {
+                    if (e instanceof InferenceLimitException) truncated = true;
                     String message = failure(e); issues.add(message);
                     result.add(withIssue(wrap(node, values, args.choices(), new SqlValue.Unknown(message)), message));
                 }
@@ -174,7 +182,7 @@ public final class ParameterValueInferencer {
                     for (Object value : values) {
                         if (node.computation().text().equals("String.concat")) Objects.requireNonNull(value, "String.concat null operand");
                         String part = String.valueOf(value);
-                        if ((long) text.length() + part.length() > MAX_LENGTH) throw new IllegalArgumentException("Inferred value length limit exceeded");
+                        if ((long) text.length() + part.length() > MAX_LENGTH) throw new InferenceLimitException("Inferred value length limit exceeded");
                         text.append(part);
                     }
                     yield text.toString();
@@ -202,7 +210,7 @@ public final class ParameterValueInferencer {
                         values = List.of(externalArrayElement(node, index, source));
                     } else values = visit(source, depth + 1);
                     for (Evaluation value : values) {
-                        if (result.size() >= MAX_VALUES) { issues.add("Parameter value limit exceeded"); return List.copyOf(result); }
+                        if (result.size() >= MAX_VALUES) { truncated = true; issues.add("Parameter value limit exceeded"); return List.copyOf(result); }
                         Map<ChoiceKey, Variable> choices = merge(index.choices(), value.choices());
                         if (choices == null) continue;
                         choices.put(key, source.variable());
@@ -266,10 +274,10 @@ public final class ParameterValueInferencer {
                 List<Arguments> next = new ArrayList<>();
                 outer: for (Arguments prefix : result) for (Evaluation suffix : input) {
                     checkpoint.run();
-                    if (++steps > MAX_STEPS) { issues.add("Parameter inference budget exceeded"); return List.of(); }
+                    if (++steps > MAX_STEPS) { truncated = true; issues.add("Parameter inference budget exceeded"); return List.of(); }
                     Map<ChoiceKey, Variable> choices = merge(prefix.choices(), suffix.choices());
                     if (choices == null) continue;
-                    if (next.size() >= MAX_VALUES) { issues.add("Parameter value limit exceeded"); break outer; }
+                    if (next.size() >= MAX_VALUES) { truncated = true; issues.add("Parameter value limit exceeded"); break outer; }
                     var values = new ArrayList<>(prefix.values()); values.add(suffix);
                     next.add(new Arguments(List.copyOf(values), choices));
                 }

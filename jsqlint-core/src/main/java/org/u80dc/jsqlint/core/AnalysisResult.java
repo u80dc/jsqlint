@@ -8,24 +8,32 @@ import java.util.List;
  *
  * @author u80dc
  */
-public record AnalysisResult(Status status, List<SqlExtraction> extractions) {
+public record AnalysisResult(Status status, List<SqlResult> sqlResults, List<AnalysisDiagnostic> diagnostics) {
     public AnalysisResult {
         Objects.requireNonNull(status, "status");
-        extractions = List.copyOf(extractions);
+        sqlResults = List.copyOf(sqlResults);
+        diagnostics = List.copyOf(diagnostics);
     }
 
-    public AnalysisResult(Status status) { this(status, List.of()); }
+    public AnalysisResult(Status status) { this(status, List.of(), List.of()); }
+    /** 兼容已有的字节码分析结果构造方式。 */
+    public AnalysisResult(Status status, List<SqlExtraction> extractions) { this(status, List.copyOf(extractions), List.of()); }
+
+    /** 字节码传播分析结果的兼容视图；所有模块结果通过 sqlResults() 读取。 */
+    public List<SqlExtraction> extractions() {
+        return sqlResults.stream().filter(SqlExtraction.class::isInstance).map(SqlExtraction.class::cast).toList();
+    }
 
     /**
      * 直接获取本次分析已产生的全部 raw SQL 候选，包括不完整候选。
      * 按提取结果、语句、分支的顺序展开；相同文本的不同调用点/传播路径不去重。
      * 每个候选通过 parameters() 保存拼接参数推断，通过 bindings() 保存所属语句的绑定参数快照。
      * 参数的推断值和传播链随候选保留；列表不可变，输入关闭后仍可读取。
-     * 从不可变的 extractions 派生，避免两份结果存储不同步；调用点和诊断仍可从 extractions 读取。
+     * 包括资源中的静态 SQL；未展开的动态模板通过 sqlResults().templates() 访问，不伪造文本。
+     * 从统一结果派生，避免监听器与返回结果使用不同数据源。
      */
     public List<RawSql.Variant> rawSqls() {
-        return extractions.stream().flatMap(extraction -> extraction.statements().stream())
-                .flatMap(statement -> statement.rawSql().variants().stream()).toList();
+        return sqlResults.stream().flatMap(result -> result.rawSqls().stream()).toList();
     }
 
     public enum Status {

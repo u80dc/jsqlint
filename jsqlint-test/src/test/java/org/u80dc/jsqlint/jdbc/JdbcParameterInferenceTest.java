@@ -44,6 +44,44 @@ class JdbcParameterInferenceTest {
     }
 
     @Test
+    void stringEqualsReplaysContentCaseNullAndNonStringArguments() throws Exception {
+        var result = analyze("""
+                public class Sample {
+                    public static void main(String[] args) throws Exception { run(null, "age", "AGE", null, 42); }
+                    static void run(java.sql.Connection c, String same, String different, String missing, Object number) throws Exception {
+                        var p = c.prepareStatement("SELECT ?,?,?,?,?");
+                        p.setBoolean(1, "age".equals(same));
+                        p.setBoolean(2, "age".equals(different));
+                        p.setBoolean(3, "age".equals(missing));
+                        p.setBoolean(4, "42".equals(number));
+                        p.setBoolean(5, new String("年龄").equals("年龄"));
+                        p.executeQuery();
+                    }
+                }
+                """);
+        var bindings = bindings(result);
+        assertEquals(Map.of("1", true, "2", false, "3", false, "4", false, "5", true), bindings.entrySet().stream()
+                .collect(Collectors.toMap(Map.Entry::getKey, entry -> known(only(entry.getValue().inference().possibleValues())))));
+        assertTrue(bindings.values().stream().allMatch(binding -> binding.inference().complete()));
+    }
+
+    @Test
+    void stringEqualsOnNullReceiverDoesNotInventFalse() throws Exception {
+        var result = analyze("""
+                public class Sample {
+                    public static void main(String[] args) throws Exception { run(null, null); }
+                    static void run(java.sql.Connection c, String missing) throws Exception {
+                        var p = c.prepareStatement("SELECT ?");
+                        p.setBoolean(1, missing.equals("age")); p.executeQuery();
+                    }
+                }
+                """);
+        var value = only(bindings(result).get("1").inference().possibleValues());
+        assertInstanceOf(SqlValue.Unknown.class, value.value());
+        assertTrue(value.issues().stream().anyMatch(issue -> issue.contains("NullPointerException")), value.issues().toString());
+    }
+
+    @Test
     void randomExternalInputIsReplayedAndReusedForRepeatedReferences() throws Exception {
         var result = analyze("""
                 public class Sample {
@@ -243,7 +281,31 @@ class JdbcParameterInferenceTest {
         var inference = bindings(result).get("1").inference();
         assertEquals(128, inference.possibleValues().size());
         assertFalse(inference.complete());
+        assertTrue(inference.truncated());
+        assertEquals(AnalysisResult.Status.PARTIAL, result.status());
+        assertTrue(result.rawSqls().stream().filter(sql -> !sql.bindings().isEmpty())
+                .allMatch(sql -> !sql.jointInference().orElseThrow().coverageComplete()));
         assertTrue(inference.issues().stream().anyMatch(issue -> issue.contains("limit")));
+    }
+
+    @Test
+    void valueLengthLimitIsDistinctFromAnInvalidJavaOperation() throws Exception {
+        var result = analyze("""
+                public class Sample {
+                    static void run(java.sql.Connection c) throws Exception {
+                        var p = c.prepareStatement("SELECT ?,?");
+                        p.setString(1, "x".repeat(1_000_001));
+                        p.setString(2, "x".repeat(-1));
+                        p.executeQuery();
+                    }
+                }
+                """);
+        var bindings = bindings(result);
+        assertTrue(bindings.get("1").inference().truncated());
+        assertFalse(bindings.get("2").inference().truncated());
+        assertInstanceOf(SqlValue.Unknown.class, only(bindings.get("1").inference().possibleValues()).value());
+        assertInstanceOf(SqlValue.Unknown.class, only(bindings.get("2").inference().possibleValues()).value());
+        assertEquals(AnalysisResult.Status.PARTIAL, result.status());
     }
 
     @Test

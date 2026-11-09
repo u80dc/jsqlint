@@ -17,6 +17,12 @@ public interface AnalysisListener {
     default void onProgress(Progress progress) {}
     /** 接收错误、能力限制及其他分析说明；并非每条诊断都会改变最终状态。 */
     default void onDiagnostic(String code, String message) {}
+    /** 结构化诊断默认转发旧回调；返回结果总会保存诊断，不要求调用方注册监听器。 */
+    default void onDiagnostic(AnalysisDiagnostic diagnostic) { onDiagnostic(diagnostic.code(), diagnostic.message()); }
+    /** 所有 SQL 结果先保存再交付；默认保留原有字节码结果回调。 */
+    default void onSqlResult(SqlResult result) {
+        if (result instanceof SqlExtraction extraction) onSqlExtraction(extraction);
+    }
     /**
      * 在发现阶段接收 SQL 入口方法/调用位置，早于 SQL 提取；SQL 无法求值时仍会发出。
      * 方法声明与实际调用分别报告，core 同时输出 INFO 日志。

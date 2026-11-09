@@ -40,14 +40,14 @@ public final class JointSqlValueInferencer {
         List<Dimension> dimensions = new ArrayList<>();
         Set<String> issues = new LinkedHashSet<>(snapshotIssues);
         for (var parameter : variant.parameters()) {
-            dimensions.add(new Dimension(parameter.name(), -1, false, parameter.possibleValues())); addLimits(issues, parameter.issues());
+            dimensions.add(new Dimension(parameter.name(), -1, false, parameter.possibleValues())); addLimits(issues, parameter);
         }
         var keyInferencer = new ParameterValueInferencer(new RandomExternalValueGenerator(), flow::checkpoint);
         for (int i = 0; i < bindings.size(); i++) {
             var binding = bindings.get(i);
             var keys = keyInferencer.infer(binding.keyTrace());
-            dimensions.add(new Dimension(binding.key(), i, true, keys.possibleValues())); addLimits(issues, keys.issues());
-            dimensions.add(new Dimension(binding.key(), i, false, binding.inference().possibleValues())); addLimits(issues, binding.inference().issues());
+            dimensions.add(new Dimension(binding.key(), i, true, keys.possibleValues())); addLimits(issues, keys);
+            dimensions.add(new Dimension(binding.key(), i, false, binding.inference().possibleValues())); addLimits(issues, binding.inference());
         }
         if (dimensions.size() > 64 || dimensions.stream().anyMatch(d -> d.values().isEmpty()))
             return new JointSqlInferenceResult(Status.UNKNOWN, List.of(), List.of("Joint parameters unavailable or dimension limit exceeded"));
@@ -56,12 +56,15 @@ public final class JointSqlValueInferencer {
         query.enumerate(0, new ArrayList<>());
         Status status = !issues.isEmpty() || query.results.stream().anyMatch(value -> value.status() == Status.UNKNOWN)
                 ? Status.UNKNOWN : query.results.isEmpty() ? Status.UNSATISFIABLE : Status.SATISFIABLE;
-        return new JointSqlInferenceResult(status, query.results, new ArrayList<>(issues));
+        return new JointSqlInferenceResult(status, query.results, new ArrayList<>(issues), query.coverageComplete && issues.isEmpty());
     }
 
-    private static void addLimits(Set<String> issues, List<String> source) {
+    private static void addLimits(Set<String> issues, ParameterValueInferenceResult source) {
         // 原随机样例的重演异常可能被路径模型修正；只有已遗漏候选的截断必须继续影响全局状态。
-        source.stream().filter(issue -> issue.contains("limit") || issue.contains("budget")).forEach(issues::add);
+        if (source.truncated()) {
+            issues.add("Parameter inference candidates were truncated: " + source.name());
+            issues.addAll(source.issues());
+        }
     }
 
     private final class Query {
@@ -75,6 +78,7 @@ public final class JointSqlValueInferencer {
         final List<Combination> results = new ArrayList<>();
         int attempts, prefixChecks;
         boolean stopped;
+        boolean coverageComplete = true;
         Query(RawSql.Variant variant, List<SqlExtraction.Binding> bindings, FlowPoint execution,
               List<Dimension> dimensions, Set<String> issues, List<List<ControlFlowEdge>> histories, List<String> snapshotIssues) {
             this.variant = variant; this.bindings = bindings; this.execution = execution; this.dimensions = dimensions; this.issues = issues;
@@ -134,6 +138,7 @@ public final class JointSqlValueInferencer {
                 if (results.size() >= MAX_COMBINATIONS) { issues.add("Joint parameter combination limit exceeded"); break; }
                 var solution = solver.solve(path.conditions());
                 if (solution.status() == Status.UNSATISFIABLE) continue;
+                if (solution.status() == Status.UNKNOWN) coverageComplete = false;
                 var replay = new ParameterValueInferencer(new RandomExternalValueGenerator(), flow::checkpoint, solution.inputs());
                 List<InferredParameterValue> values = new ArrayList<>();
                 Set<String> localIssues = new LinkedHashSet<>(solution.issues());
@@ -141,6 +146,7 @@ public final class JointSqlValueInferencer {
                 for (var value : selected) {
                     ValueTrace trace = explorer.select(value.propagationPath(), path);
                     var inferred = replay.infer(trace);
+                    if (inferred.truncated()) coverageComplete = false;
                     localIssues.addAll(inferred.issues());
                     if (inferred.possibleValues().size() != 1) {
                         localIssues.add("Joint replay did not resolve a unique selected value"); values.add(value);

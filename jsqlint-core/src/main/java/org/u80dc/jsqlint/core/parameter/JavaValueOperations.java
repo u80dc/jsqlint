@@ -15,6 +15,7 @@ public final class JavaValueOperations {
         String owner = signature.getDeclClassType().toString(), name = signature.getName();
         var types = signature.getParameterTypes().stream().map(Object::toString).toList();
         if (owner.equals("java.lang.String")) return switch (name) {
+            case "equals" -> types.equals(List.of("java.lang.Object")) && signature.getType().toString().equals("boolean");
             case "trim", "strip", "stripLeading", "stripTrailing", "toLowerCase", "toUpperCase", "length", "isEmpty", "isBlank" -> types.isEmpty();
             case "substring" -> types.equals(List.of("int")) || types.equals(List.of("int", "int"));
             case "replace" -> types.equals(List.of("char", "char")) || types.equals(List.of("java.lang.CharSequence", "java.lang.CharSequence"));
@@ -38,6 +39,8 @@ public final class JavaValueOperations {
         if (owner.equals("java.lang.String")) {
             String value = (String) Objects.requireNonNull(operands.getFirst(), "String receiver is null");
             return switch (name) {
+                // 保留 String.equals(Object) 语义：区分大小写，null/非字符串参数为 false；null 接收者仍抛异常。
+                case "equals" -> value.equals(operands.get(1));
                 case "trim" -> value.trim(); case "strip" -> value.strip();
                 case "stripLeading" -> value.stripLeading(); case "stripTrailing" -> value.stripTrailing();
                 case "toLowerCase" -> value.toLowerCase(); case "toUpperCase" -> value.toUpperCase();
@@ -47,7 +50,7 @@ public final class JavaValueOperations {
                 case "charAt" -> value.charAt(integer(operands.get(1)));
                 case "repeat" -> {
                     int count = integer(operands.get(1));
-                    if ((long) value.length() * count > maxLength) throw new IllegalArgumentException("Inferred value length limit exceeded");
+                    if ((long) value.length() * count > maxLength) throw new InferenceLimitException("Inferred value length limit exceeded");
                     yield value.repeat(count);
                 }
                 case "replace" -> method.getParameterTypes().getFirst().toString().equals("char")
@@ -162,7 +165,7 @@ public final class JavaValueOperations {
         if (!target.isEmpty() && replacement.length() > target.length())
             for (int offset = value.indexOf(target); offset >= 0; offset = value.indexOf(target, offset + target.length())) count++;
         if (value.length() + count * (replacement.length() - target.length()) > maxLength)
-            throw new IllegalArgumentException("Inferred value length limit exceeded");
+            throw new InferenceLimitException("Inferred value length limit exceeded");
         return value.replace(target, replacement);
     }
     private static Number number(Object value) {

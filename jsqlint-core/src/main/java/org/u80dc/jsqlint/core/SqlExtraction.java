@@ -10,12 +10,17 @@ import java.util.*;
 
 /** 单个 SQL 调用点在一个调用上下文中的结果；关闭 SootUp 输入后仍可读取。 @author u80dc */
 public record SqlExtraction(String moduleId, SqlCallSite callSite, List<SqlCallSite> callChain,
-                            List<Statement> statements, List<String> issues) {
+                            List<Statement> statements, List<String> issues) implements SqlResult {
     public SqlExtraction {
         Objects.requireNonNull(moduleId); Objects.requireNonNull(callSite); callChain = List.copyOf(callChain);
         statements = List.copyOf(statements); issues = List.copyOf(issues);
     }
     public boolean complete() { return issues.isEmpty() && statements.stream().allMatch(Statement::complete); }
+    public SourceLocation location() { return callSite.location(); }
+    public List<SqlNode> templates() { return statements.stream().map(Statement::template).toList(); }
+    public List<RawSql.Variant> rawSqls() {
+        return statements.stream().flatMap(statement -> statement.rawSql().variants().stream()).toList();
+    }
     public record Statement(Optional<ValueTrace> sql, SqlNode template, List<Binding> bindings,
                             Optional<SourceLocation> batchEntry, List<String> issues, List<String> templateIssues, RawSql rawSql) {
         public Statement {
