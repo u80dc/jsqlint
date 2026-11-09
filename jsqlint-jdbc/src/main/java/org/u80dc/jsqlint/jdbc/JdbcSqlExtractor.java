@@ -79,20 +79,30 @@ final class JdbcSqlExtractor implements SqlExtractionHandler {
         private boolean origin(FlowPoint point, InvocationSite site, ValuePoint origin) {
             return factory(site) && point.value(site.invocation()).equals(origin);
         }
+        /** prepared 与 batch 共用的调用点前置分类；factory 命中时短路别名解析，NONE 别名时才检查外部消费边界。 */
+        private record Classification(InvocationSite site, boolean factory, Alias alias, Optional<String> external) {}
+        private Optional<Classification> classify(FlowPoint point, ValuePoint origin) {
+            return point.invocation(analysis.program().view()).map(site -> {
+                if (origin(point, site, origin)) return new Classification(site, true, Alias.NONE, Optional.empty());
+                Alias alias = receiver(point, site, origin);
+                return new Classification(site, false, alias,
+                        alias == Alias.NONE ? externalConsumer(point, site, origin) : Optional.empty());
+            });
+        }
         List<SqlTraceSource> prepared(FlowPoint call, ValuePoint origin, List<String> initialIssues) {
             List<SqlTraceSource> results = new ArrayList<>();
             analysis.backward(call, new State(Map.of(), false, Optional.empty(), initialIssues), (point, state) -> {
-                var candidate = point.invocation(analysis.program().view());
-                if (candidate.isEmpty()) return Decision.next(state);
-                InvocationSite site = candidate.get();
+                var classified = classify(point, origin);
+                if (classified.isEmpty()) return Decision.next(state);
+                InvocationSite site = classified.get().site();
                 String name = site.invocation().getMethodSignature().getName();
-                if (origin(point, site, origin)) {
+                if (classified.get().factory()) {
                     if (name.equals("prepareStatement") || name.equals("prepareCall"))
                         return Decision.stop(new State(state.bindings(), state.cleared(), Optional.of(point.value(site.invocation().getArg(0))), state.issues()));
                     return Decision.stop(state.issue("No prepared SQL on Statement factory"));
                 }
-                Alias alias = receiver(point, site, origin);
-                if (alias == Alias.NONE) return Decision.next(externalConsumer(point, site, origin).map(state::issue).orElse(state));
+                Alias alias = classified.get().alias();
+                if (alias == Alias.NONE) return Decision.next(classified.get().external().map(state::issue).orElse(state));
                 boolean uncertainReceiver = alias == Alias.MAY;
                 if (uncertainReceiver) state = state.issue("Operation may target another statement: " + site.location());
                 if (name.equals("clearParameters") && site.isDeclaredOnSubtypeOf("java.sql.PreparedStatement"))
@@ -128,12 +138,12 @@ final class JdbcSqlExtractor implements SqlExtractionHandler {
         List<SqlTraceSource> batch(FlowPoint call, ValuePoint origin, List<String> initialIssues) {
             List<SqlTraceSource> results = new ArrayList<>();
             analysis.backward(call, new BatchState(List.of(), initialIssues), (point, state) -> {
-                var candidate = point.invocation(analysis.program().view());
-                if (candidate.isEmpty()) return Decision.next(state);
-                InvocationSite site = candidate.get();
-                if (origin(point, site, origin)) return Decision.stop(state);
-                Alias alias = receiver(point, site, origin);
-                if (alias == Alias.NONE) return Decision.next(externalConsumer(point, site, origin).map(state::issue).orElse(state));
+                var classified = classify(point, origin);
+                if (classified.isEmpty()) return Decision.next(state);
+                InvocationSite site = classified.get().site();
+                if (classified.get().factory()) return Decision.stop(state);
+                Alias alias = classified.get().alias();
+                if (alias == Alias.NONE) return Decision.next(classified.get().external().map(state::issue).orElse(state));
                 String name = site.invocation().getMethodSignature().getName();
                 boolean executed = name.equals("executeBatch") || name.equals("executeLargeBatch");
                 if (!name.equals("clearBatch") && !name.equals("addBatch") && !executed) return Decision.next(state);
@@ -142,7 +152,8 @@ final class JdbcSqlExtractor implements SqlExtractionHandler {
                 // 正常完成的批次执行清空已提交命令；异常边由 core 跳过强更新并附带诊断。
                 if (name.equals("clearBatch") || executed) return alias == Alias.MUST ? Decision.stop(state) : Decision.skipCall(state);
                 List<SqlTraceSource> snapshots = site.invocation().getArgCount() == 1
-                        ? List.of(SqlTraceSource.sql(point.value(site.invocation().getArg(0)))) : prepared(point, origin, initialIssues);
+                        // 接收者来源诊断属于批次历史，由外层 BatchState 合并一次；嵌套快照只报告自身遍历的问题。
+                        ? List.of(SqlTraceSource.sql(point.value(site.invocation().getArg(0)))) : prepared(point, origin, List.of());
                 var copy = new ArrayList<>(state.entries());
                 for (SqlTraceSource source : snapshots) copy.add(new SqlTraceSource(source.sql(), source.bindings(), Optional.of(site.location()), source.issues(), source.controlFlowPaths()));
                 return Decision.skipCall(new BatchState(copy, state.issues()));
