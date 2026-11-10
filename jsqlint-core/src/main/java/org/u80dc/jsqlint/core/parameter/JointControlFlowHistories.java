@@ -7,7 +7,8 @@ import java.util.*;
 final class JointControlFlowHistories {
     private JointControlFlowHistories() {}
 
-    static List<List<ControlFlowEdge>> simplify(List<List<ControlFlowEdge>> histories, Runnable checkpoint) {
+    /** maxSteps 是化简预算，来自 AnalyzerConfig 的联合求解配置；耗尽时回退原始历史。 */
+    static List<List<ControlFlowEdge>> simplify(List<List<ControlFlowEdge>> histories, Runnable checkpoint, int maxSteps) {
         if (histories.isEmpty()) return List.of(List.of());
         // 异常及循环历史继续交给原有未知边界处理，不能用无环正常路径的规则消除它们。
         if (histories.stream().flatMap(Collection::stream).anyMatch(ControlFlowEdge::exceptional)) return histories;
@@ -33,7 +34,7 @@ final class JointControlFlowHistories {
                 for (var cube : cubes) {
                     checkpoint.run();
                     // 化简预算耗尽时回退原始历史，不丢候选，也不额外声称分析不完整。
-                    if (++steps > 20000) return histories;
+                    if (++steps > maxSteps) return histories;
                     if (!cube.containsKey(branch)) continue;
                     var rest = new LinkedHashMap<>(cube); rest.remove(branch);
                     groups.computeIfAbsent(Map.copyOf(rest), ignored -> new HashSet<>()).add(cube.get(branch));

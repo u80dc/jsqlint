@@ -4,6 +4,45 @@
 `jsqlint-mybatis`。core 不依赖这些可选模块，也不引入 Maven/Gradle 编译依赖。
 旧 `jsqlint-analysis` 保持独立，未接入新流程。
 
+## 职责与处理链
+
+| 组件 | 职责 |
+|---|---|
+| `Analyzer` | 输入准备、所有权和结束清理，解析实例配置与单次覆盖 |
+| `AnalysisSession` | 取消、超时、阶段进度、诊断、结果保存与监听器交付 |
+| `SqlDiscovery` | 每次注册模块，共享资源和代码扫描，收集起点及应用调用点 |
+| `ProgramIndex` / `DataFlowAnalysis` | 调用上下文、应用类分派、局部与过程间来源追踪 |
+| `SqlExtractionPipeline` | 组织 raw SQL 恢复、模板投影、参数重演与联合路径推断 |
+| JDBC / MyBatis 适配层 | 定位框架来源，处理绑定、批次、XML 标签和 include 语义 |
+| `SqlSampleRenderer` | 从已保存结果生成统一样例，保留类型、来源、可行性和证据 |
+| `SqlAnalysisLogger` | 展示结果和传播链；关闭 INFO 日志时直接跳过遍历 |
+
+```mermaid
+flowchart LR
+    A[Analyzer 输入准备] --> S[AnalysisSession]
+    S --> D[SqlDiscovery 共享扫描]
+    D -->|代码 SQL| P[SqlExtractionPipeline]
+    P --> F[DataFlowAnalysis / ValueTrace]
+    F --> R[RawSqlBuilder / 模板投影]
+    R --> I[参数重演 / 联合路径]
+    I --> E[SqlExtraction]
+    D -->|资源或注解模板| T[SqlTemplateResult]
+    E --> V[SqlSampleRenderer]
+    T --> V
+    V --> X[SqlSample]
+```
+
+代码提取共用 `DataFlowAnalysis → ValueTrace → RawSqlBuilder`。`SqlTemplateProjection`
+从这些结果派生模板，只折叠已知输入；旧 `onSql` 事件使用同一来源的模板，
+不再运行另一套 SQL 值传播算法。复用按模块、调用位置和实际 SQL 输入匹配，
+同一调用上的其他输入仍单独恢复。未注册完整提取规则的旧 `ValueAt` 起点继续提供模板结果。
+旧 `ValueTraceAnalyzer` 保留构造方式，已标记弃用并改为共享数据流的兼容入口。
+兼容模板按项目内已索引的调用上下文派生：唯一已知文本可以折叠，多个文本仍保留选择节点；
+未解析的入口输入继续保持符号值。完整模板对应这些调用上下文，其路径可行性继续由联合结果判断。
+
+MyBatis 自己校验框架标签、展开 include，然后直接将 DOM 交给通用节点构建器。
+原有 core XML DSL 继续可用；其 `literal`、`value`、`skipBlank` 扩展不属于 MyBatis 语法。
+
 ## 统一入口
 
 ```java
@@ -87,11 +126,12 @@ analyzer.analyze(Path.of("project-c")); // 仍使用五分钟超时和结束清�
 
 | 配置归属 | 内容 |
 |---|---|
-| `AnalyzerConfig` | 默认超时、调用深度、数据依赖深度与节点预算、方法缓存容量、默认结束清理策略、输入扩展配置 |
-| `AnalysisOptions` | 本次超时覆盖、取消信号、监听器、输出标识、结束清理覆盖 |
+| `AnalyzerConfig` | 默认超时、调用深度、数据依赖深度与节点预算、方法缓存容量、默认结束清理策略、输入扩展配置、联合求解预算、推断策略 |
+| `AnalysisOptions` | 本次超时覆盖、取消信号、监听器、输出标识、结束清理覆盖、推断策略覆盖 |
 
 配置优先级为：单次显式覆盖 → Analyzer 实例默认值；`AnalyzerConfig.defaults()` 提供系统默认值：
-不限时、调用深度 32、数据依赖深度 256、单次溯源访问节点数 10000、方法缓存容量 128、保留编译产物。
+不限时、调用深度 32、数据依赖深度 256、单次溯源访问节点数 10000、方法缓存容量 128、保留编译产物、
+联合求解预算见下文。
 `withMaxTraceDepth` 现在只调整数据依赖展开深度，不再改变调用栈预算；调用深度使用 `withMaxCallDepth`。
 旧的四参数、五参数构造器仍将显式传入的共享深度同时用于调用和数据依赖，保持原构造方式的含义。
 `AnalysisOptions.defaults()` 的 timeout 和 cleanupClassOutput 为 null，表示继承实例配置；
@@ -124,6 +164,39 @@ Path 入口将配置和本次输出路径一起交给选中的解析器；common
 不保留双 Path 重载，避免与 `analyze(source, options)` 产生 null 参数歧义。
 原 AnalysisOptions 构造器中的深度和缓存容量移至 AnalyzerConfig，单次选项推荐通过 with 方法设置。
 
+### 推断阶段与样例策略
+
+`InferenceOptions` 由实例配置和单次选项共用，默认模式为 `JOINT`：
+
+| 模式 | 启用的工作 |
+|---|---|
+| `EXTRACT` | 恢复 SQL 和绑定来源、文本结构及已知输入；不生成外部样例或联合解 |
+| `PARAMETERS` | 增加独立参数重演，保存各自的候选值及传播链 |
+| `JOINT` | 增加联合路径求解，使用同一入口模型重演 SQL 槽位、绑定键和值 |
+
+主动关闭的阶段不会令分析返回 `PARTIAL`。来源恢复中的未知操作、预算截断仍会报告；
+`jointInference()` 为空表示没有进行路径求解，独立推断通过 `parameters()` 和 `bindings().inference()` 访问。
+
+```java
+var inference = InferenceOptions.defaults().withRandomSeed(42);
+var analyzer = new Analyzer(AnalyzerConfig.defaults().withInferenceOptions(inference));
+var result = analyzer.analyze(project); // 相同输入、配置及分析环境下可复现样例。
+
+var options = AnalysisOptions.defaults()
+        .withInferenceOptions(inference.withMode(InferenceOptions.Mode.EXTRACT));
+analyzer.analyze(project, options); // 仅本次提取来源与结构。
+```
+
+`AnalyzerConfig.withInferenceOptions(null)` 恢复系统默认策略；
+`AnalysisOptions.withInferenceOptions(null)` 恢复继承实例策略。旧构造方式仍默认启用联合推断。
+种子或工厂会随其他 with 方法及单次配置合并保留。
+
+可以通过 `withGeneratorFactory(() -> generator)` 注入 `ExternalValueGenerator`。
+工厂为每条语句和每次联合重演创建独立实例；相同语句/组合内复用同一入口变量的样例。
+不支持的类型返回 `SqlValue.Unknown`。`withRandomSeed(...)` 使用内置生成器并清除自定义工厂，
+`withGeneratorFactory(...)` 清除种子；直接构造时不能同时指定两者。
+生成器创建或推断异常会保留已恢复 SQL，并记录对应诊断。
+
 ## 进度、结果与长任务控制
 
 `AnalysisResult` 包含内部枚举 `Status`、不可变的统一结果 `sqlResults()` 和结构化诊断 `diagnostics()`。
@@ -133,6 +206,48 @@ Path 入口将配置和本次输出路径一起交给选中的解析器；common
 `SqlNodeRenderer.render(template, parameters)` 在分析结束后提供参数渲染样例。
 所有结果均保留模块和来源位置，在输入关闭后仍可读取，不持有 JavaView、方法体或编译目录资源。
 同一 JDBC 调用点同时注册的旧模板事件与完整提取结果不会导致返回列表重复。
+
+### 统一获取 SQL 样例
+
+```java
+for (var sample : result.samples()) {
+    System.out.println(sample.moduleId() + " / " + sample.location());
+    System.out.println(sample.sql().orElse("<待补参数>"));
+    System.out.println(sample.bindings());    // JDBC 绑定键、Java 类型和值；? 保持原样。
+    System.out.println(sample.feasibility()); // SATISFIABLE、UNVERIFIED、UNKNOWN。
+    System.out.println(sample.assessment());
+    System.out.println(sample.issues());
+    sample.combination().ifPresent(combination -> System.out.println(combination.inputs()));
+}
+
+// 资源/注解模板显式提供参数；结果为 UNVERIFIED。
+var template = (SqlTemplateResult) result.sqlResults().stream()
+        .filter(SqlTemplateResult.class::isInstance).findFirst().orElseThrow();
+var sample = template.sample(Map.of("id", 7));
+```
+
+`SqlResult.samples()` 和 `AnalysisResult.samples()` 使用 `SqlSampleRenderer`，在输入关闭后仍可读取。
+每个样例保留原始 `source()`、`rawSql()`、`combination()` 及可选 `batchEntry()`。
+样例覆盖准备点、执行点和批次加入点；可通过 `sample.source()` 中的调用点选择所需结果。
+相同文本的不同来源或批次分别保留。
+
+代码样例只从单个联合 `Combination` 取出槽位和绑定值，不将独立候选列表再次组合。
+`UNSATISFIABLE` 候选继续保存在 `rawSqls()` 中供核查，不生成样例；
+`UNKNOWN` 保留已有值、残余模板和诊断，包括联合求解没有产生组合的情况。
+关闭联合求解时，样例保留符号槽位和未知绑定，状态为 `UNVERIFIED`。
+模板的显式参数可完成渲染，其路径仍未验证。
+
+统一 `assessment()` 将状态分开描述：
+
+| 字段 | 含义 |
+|---|---|
+| `sourcesComplete` | 来源和绑定数据依赖未遗漏 |
+| `textComplete` | SQL 文本结构已恢复，允许存在未替换的槽位或动态模板 |
+| `valuesComplete` | 当前对象中的参数值已完成重演；样例要求当前槽位和绑定值可用 |
+| `pathCoverageComplete` | 空表示未求解路径，false 表示有遗漏，true 表示覆盖完整 |
+
+完整样例文本通过 `sample.sql()` 判断。`SATISFIABLE` 说明当前组合在支持的模型内可行；
+路径覆盖未完成时，个别可行组合仍可保留，覆盖问题继续体现在 assessment、issues 和分析终态中。
 
 | 终态 | 含义 |
 |---|---|
@@ -299,8 +414,11 @@ for (var extraction : result.extractions()) {
 INFO 日志通过 `rawSql[1]`、`rawSql[2]` 等编号将每条 raw SQL 与其传播树对应；编号作用域为当前 Statement。
 
 `raw.complete()` 仅表示 raw SQL 结构恢复没有未知操作或截断，不表示变量已有运行时取值。
-它与 `sourcesComplete()`、`templateComplete()` 分别记录状态；`statement.complete()` 要求三者均完整。
-因此旧模板求值器尚不支持的表达式仍可能已经具有完整的 raw SQL。
+它与 `sourcesComplete()`、`templateComplete()` 分别记录状态；`statement.complete()`
+要求来源和 raw SQL 完整。模板是派生视图，其投影失败保留在 `templateIssues()` 中，
+不再否定已经恢复成功的来源和原文；参数值与路径覆盖通过 `assessment()` 单独读取。
+手工从传播链恢复结果可以使用 `SqlExtraction.Statement.fromTrace(...)`，
+已有 raw SQL 时通过显式构造器传入。隐式启动恢复的旧 Statement 构造器保留并标记弃用。
 
 `variant.template()` 可以将该候选转为通用动态 SQL 节点，并通过 `SqlNodeRenderer` 填入样例值。
 这里的样例值代表槽位 `source` 所描述转换**之后**的文本，不自动执行 Java 方法或转义/添加引号。
@@ -313,7 +431,7 @@ INFO 日志通过 `rawSql[1]`、`rawSql[2]` 等编号将每条 raw SQL 与其传
 
 通用推断逻辑位于 core 的 `parameter` 包。JDBC 只提供绑定变量和使用位置的声明类型，
 同一套推断器也可以供后续 MyBatis/JPA 适配使用。
-`Analyzer` 在生成提取结果时自动推断，关闭输入或清理编译输出后，推断对象仍然可读。
+`Analyzer` 在启用 `PARAMETERS` 或 `JOINT` 时自动推断，关闭输入或清理编译输出后，推断对象仍然可读。
 
 ```java
 for (var extraction : result.extractions()) {
@@ -371,14 +489,14 @@ for (var sql : result.rawSqls()) {
 `name=null` 拼接为文本后再 `.replace("l", "L")` 得到 `"nuLL"`，与直接对 null 调用 replace 的异常区分。
 本阶段只保存结果，不自动执行 SQL，也不将 JDBC `?` 与拼接槽位混合替换。
 
-需要可复现或自定义输入时，可以直接对保存的链使用
+Analyzer 内可通过 `InferenceOptions` 设置可复现或自定义输入；独立使用时也可以对保存的链调用
 `new ParameterValueInferencer(new RandomExternalValueGenerator(42)).infer(binding.value())`，
 或实现 `ExternalValueGenerator`。推断器实例缓存入口样例，适合单条语句/调用上下文使用，
 不应作为跨项目的共享全局对象。
 
 ### SQL 与多个参数的联合路径约束
 
-Analyzer 会为每个 raw SQL 候选填充 `sql.jointInference()`。原有 `parameters()`、`bindings()`
+Analyzer 默认在 `JOINT` 模式下为每个 raw SQL 候选填充 `sql.jointInference()`。原有 `parameters()`、`bindings()`
 继续提供独立候选列表；需要成组模拟 SQL 时使用 `combinations()`，不能再对独立列表做笛卡尔积：
 
 ```java
@@ -439,10 +557,26 @@ for (var sql : result.rawSqls()) {
 当前精确检查普通无环控制流、局部到达定义、跨调用上下文、if/else 与 switch（含 default）、
 布尔/byte/short/char/int/long 与常量的比较和区间冲突、null 条件；long 比较识别 JVM 的 cmp。
 其余已建模的纯值表达式通过有界模型搜索验证，整数计算保留 Java 溢出语义。
-搜索未找到模型时不会据此宣称无解。每个 SQL 最多检查 4,096 个参数前缀、尝试 512 组完整参数来源、
-保留 128 组联合候选；每个调用帧最多探索 4,000 步、保留 64 条路径，条件依赖闭包也受 4,000 步
-和 64 组选择限制，模型搜索最多 2,048 步。截断都有诊断，取消/超时继续生效。
-历史化简超过 20,000 步时直接使用原历史，不丢候选；真实独立分支仍可能触发枚举预算。
+搜索未找到模型时不会据此宣称无解。联合分析的搜索预算集中在 `AnalyzerConfig.jointBudgets()`
+（`JointBudgets` record，均可通过 with 方法单项调整）：
+
+| `JointBudgets` 字段 | 默认值 | 含义 |
+|---|---|---|
+| `combinations` | 128 | 每条 SQL 保留的联合候选组合数 |
+| `attempts` | 512 | 每条 SQL 尝试的完整参数来源组数 |
+| `prefixChecks` | 4096 | 参数前缀相容性矛盾检查次数 |
+| `framePaths` | 64 | 每个调用帧保留的控制路径与条件选择组数 |
+| `frameSteps` | 4000 | 每个调用帧的控制流探索与条件依赖闭包步数 |
+| `historySteps` | 20000 | 框架快照历史化简的步数 |
+| `modelSteps` | 2048 | 条件模型搜索的步数 |
+
+```java
+var budgets = JointBudgets.defaults().withCombinations(512).withFramePaths(128);
+var analyzer = new Analyzer(AnalyzerConfig.defaults().withJointBudgets(budgets));
+```
+
+截断都有诊断，取消/超时继续生效。
+历史化简预算耗尽时直接使用原历史，不丢候选；真实独立分支仍可能触发枚举预算。
 
 循环展开、异常路径、堆别名、未知外部调用和完整浮点/引用身份约束
 尚未建模，按 UNKNOWN 保留。SATISFIABLE 是受支持控制条件和值语义下的模型，
@@ -486,7 +620,8 @@ core 的 `dataflow` 包对 JDBC 没有依赖：`ProgramIndex` 使用应用类层
 
 `Statement.sourcesComplete()` 表示数据来源/关联完整性；`templateComplete()` 表示模板恢复未遇到
 不支持的结构，相关诊断保存在该条结果的 `templateIssues()`，与来源诊断 `issues()` 分开。
-`Statement.complete()` 同时要求来源、模板及 raw SQL 恢复完整，`SqlExtraction.complete()` 汇总所有语句。
+`Statement.complete()` 要求来源及 raw SQL 恢复完整，`SqlExtraction.complete()` 汇总所有语句。
+派生模板的投影状态继续通过 `templateComplete()` 读取。
 `ValueTrace.complete()` 仍仅表示来源完整性。这些状态并不表示入口参数已有运行时取值，
 也不保证 CHA 候选路径在实际运行时一定可行。受支持条件之间的相关性由联合结果另外给出，精确堆 points-to 尚未实现。
 字段读取保存项目中的候选字段写入及其上游依赖，并标记别名/写入顺序不确定；
@@ -530,7 +665,8 @@ SQL 调用点: module=jdbc, kind=INVOCATION, class=java.sql.Statement, method=<j
 调用点在发现阶段输出，即使后续 SQL/Provider 无法解析也不会被吞掉。
 调用点数与 SQL 提取起点数不相等，例如无参 `PreparedStatement.execute()` 可以是调用点，
 SQL 字符串来自先前的 `prepareStatement(sql)`；JDBC 的过程间提取会关联二者并保存参数快照。
-`Progress.discovered/analyzed` 继续统计 SQL 提取起点和结果，不统计调用点。
+`Progress.discovered` 统计 SQL 提取起点，`Progress.analyzed` 统计已交付的 `SqlResult`。
+同一起点的不同调用上下文分别产生结果，兼容 `onSql` 模板事件不重复计数；调用点单独统计。
 
 调用者代码只扫描 Application 输入，不以 main/Controller 可达性过滤；Library 输入用于类型解析。
 目标签名来自字节码的静态类型，尚未推断运行时多态分派、反射或动态代理的实际实现。
@@ -590,8 +726,8 @@ core 负责通用 SQL 提取、值与参数溯源、保守推断和节点渲染�
   支持继承方法、重复注解及重载签名；XML 按方法名绑定，无法区分重载，因此保留全部候选签名。
   default/static 辅助方法不作为映射 SQL 入口，其内部调用仍正常扫描。Provider 可以作为调用点被发现，
   但 Provider SQL 内容仍需后续适配。直接调用 SqlSession 的字符串 statementId 入口尚未适配。
-- core 值追踪：常量、控制流到达定义、已索引的参数调用来源、静态/特殊调用返回值、
-  Java StringConcatFactory 连接和 String.concat。不同调用的参数上下文分别处理；
+- core 值追踪：常量、控制流到达定义、已索引的参数调用来源、项目内返回值及保守虚调用分派、
+  可解析数组元素、Java StringConcatFactory 连接和 String.concat。不同调用的参数上下文分别处理；
   分支保留为符号选择，不取第一个结果。
 - 已知参数可以通过 AnalysisSeed.parameters() 提供，core 渲染分析样例。
   基于传播链的参数推断独立保存外部输入生成的随机样例及其来源；SQL 文本和样例均不作为数据库执行入口。

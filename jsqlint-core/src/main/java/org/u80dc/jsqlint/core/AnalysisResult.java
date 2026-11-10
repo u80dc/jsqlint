@@ -36,6 +36,9 @@ public record AnalysisResult(Status status, List<SqlResult> sqlResults, List<Ana
         return sqlResults.stream().flatMap(result -> result.rawSqls().stream()).toList();
     }
 
+    /** 统一获取代码和资源的样例；已证明无解的 raw 候选保留在 rawSqls() 中供审计。 */
+    public List<SqlSample> samples() { return sqlResults.stream().flatMap(result -> result.samples().stream()).toList(); }
+
     public enum Status {
         /** 已完成约定范围的分析；没有发现 SQL 也属于成功。 */
         SUCCESS,

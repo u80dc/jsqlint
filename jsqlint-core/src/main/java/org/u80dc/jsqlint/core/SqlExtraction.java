@@ -2,6 +2,7 @@ package org.u80dc.jsqlint.core;
 
 import org.u80dc.jsqlint.core.dataflow.ValueTrace;
 import org.u80dc.jsqlint.core.dataflow.RawSqlBuilder;
+import org.u80dc.jsqlint.core.dataflow.SqlTemplateProjection;
 import org.u80dc.jsqlint.core.node.SqlNode;
 import org.u80dc.jsqlint.core.spi.*;
 import org.u80dc.jsqlint.core.parameter.ParameterValueInferenceResult;
@@ -21,6 +22,11 @@ public record SqlExtraction(String moduleId, SqlCallSite callSite, List<SqlCallS
     public List<RawSql.Variant> rawSqls() {
         return statements.stream().flatMap(statement -> statement.rawSql().variants().stream()).toList();
     }
+    public SqlAssessment assessment() {
+        return new SqlAssessment(issues.isEmpty() && statements.stream().allMatch(Statement::sourcesComplete),
+                !rawSqls().isEmpty() && statements.stream().allMatch(statement -> statement.rawSql().complete()),
+                statements.stream().allMatch(Statement::inferenceComplete), SqlAssessment.pathCoverage(rawSqls()));
+    }
     public record Statement(Optional<ValueTrace> sql, SqlNode template, List<Binding> bindings,
                             Optional<SourceLocation> batchEntry, List<String> issues, List<String> templateIssues, RawSql rawSql) {
         public Statement {
@@ -29,6 +35,15 @@ public record SqlExtraction(String moduleId, SqlCallSite callSite, List<SqlCallS
             // Statement 是绑定快照的来源，确保顶层 rawSqls 和逐语句访问得到相同的 SQL/参数关联。
             rawSql = rawSql.withBindings(bindings);
         }
+        /** 显式从传播结果恢复 raw SQL 与模板，不进行参数重演或路径求解。 */
+        public static Statement fromTrace(ValueTrace sql, List<Binding> bindings, Optional<SourceLocation> batchEntry,
+                                          List<String> issues, Runnable checkpoint) {
+            RawSql raw = RawSqlBuilder.build(sql, checkpoint);
+            return new Statement(Optional.of(sql), SqlTemplateProjection.template(raw, checkpoint), bindings,
+                    batchEntry, issues, raw.issues(), raw);
+        }
+        /** @deprecated 使用显式 rawSql 的构造器，避免在结果组装时隐式启动恢复。 */
+        @Deprecated
         public Statement(Optional<ValueTrace> sql, SqlNode template, List<Binding> bindings,
                          Optional<SourceLocation> batchEntry, List<String> issues, List<String> templateIssues) {
             this(sql, template, bindings, batchEntry, issues, templateIssues,
@@ -36,6 +51,7 @@ public record SqlExtraction(String moduleId, SqlCallSite callSite, List<SqlCallS
                             .orElseGet(() -> new RawSql(List.of(), List.of("SQL source is unavailable"))));
         }
         /** 兼容调用方已自行构造完整模板的入口。 */
+        @Deprecated
         public Statement(Optional<ValueTrace> sql, SqlNode template, List<Binding> bindings,
                          Optional<SourceLocation> batchEntry, List<String> issues) {
             this(sql, template, bindings, batchEntry, issues, List.of());
@@ -49,8 +65,11 @@ public record SqlExtraction(String moduleId, SqlCallSite callSite, List<SqlCallS
                     && rawSql.variants().stream().flatMap(variant -> variant.parameters().stream())
                     .allMatch(ParameterValueInferenceResult::complete);
         }
-        /** SQL 提取完整性要求来源、旧模板和 raw SQL 均完成；样例重演另见 inferenceComplete。 */
-        public boolean complete() { return sourcesComplete() && templateComplete() && rawSql.complete(); }
+        /** 主分析完整性由来源和 raw SQL 决定；模板为派生视图，样例重演另见 inferenceComplete。 */
+        public boolean complete() { return sourcesComplete() && rawSql.complete(); }
+        public SqlAssessment assessment() {
+            return new SqlAssessment(sourcesComplete(), rawSql.complete(), inferenceComplete(), SqlAssessment.pathCoverage(rawSql.variants()));
+        }
     }
     public record Binding(String key, ValueTrace keyTrace, ValueTrace value, SourceLocation location, ParameterValueInferenceResult inference) {
         public Binding { Objects.requireNonNull(key); Objects.requireNonNull(keyTrace); Objects.requireNonNull(value); Objects.requireNonNull(location); Objects.requireNonNull(inference); }

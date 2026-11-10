@@ -18,4 +18,9 @@ public sealed interface SqlResult permits SqlExtraction, SqlTemplateResult {
     List<SqlNode> templates();
 
     List<RawSql.Variant> rawSqls();
+
+    SqlAssessment assessment();
+
+    /** 从已保存结果派生样例，不重新访问代码模型或任意组合参数候选。 */
+    default List<SqlSample> samples() { return SqlSampleRenderer.render(this); }
 }

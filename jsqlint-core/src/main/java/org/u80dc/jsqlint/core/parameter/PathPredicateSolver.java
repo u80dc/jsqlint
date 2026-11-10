@@ -10,7 +10,7 @@ import static org.u80dc.jsqlint.core.parameter.JointSqlInferenceResult.*;
 
 /** 有界条件求解：精确收缩整数/布尔区间和 null 条件，复杂表达式仅在找到可验证模型时判为可满足。 @author u80dc */
 final class PathPredicateSolver {
-    private static final int MAX_MODELS = 2048;
+    private final int maxModels;
     private enum Unknown { VALUE }
     private record Expression(String operator, String type, Object value, List<Expression> inputs) {}
     private record Predicate(Expression expression, boolean expected) {}
@@ -18,7 +18,14 @@ final class PathPredicateSolver {
     record Solution(Status status, Map<Variable, SqlValue> inputs, List<String> issues) {}
     private final Runnable checkpoint;
 
-    PathPredicateSolver(Runnable checkpoint) { this.checkpoint = checkpoint; }
+    PathPredicateSolver(Runnable checkpoint) { this(checkpoint, 2048); }
+
+    /** 模型搜索步数来自 AnalyzerConfig 的联合求解预算；独立使用时保持默认上限。 */
+    PathPredicateSolver(Runnable checkpoint, int maxModels) {
+        this.checkpoint = Objects.requireNonNull(checkpoint);
+        if (maxModels < 1) throw new IllegalArgumentException("Joint model budget must be positive");
+        this.maxModels = maxModels;
+    }
 
     Solution solve(List<Condition> conditions) {
         Problem problem = prepare(conditions);
@@ -65,7 +72,7 @@ final class PathPredicateSolver {
     private Map<Variable, Object> search(List<Predicate> predicates, List<Variable> variables, List<List<Object>> candidates,
                                          int index, Map<Variable, Object> model, int[] count) {
         checkpoint.run();
-        if (++count[0] > MAX_MODELS) return null;
+        if (++count[0] > maxModels) return null;
         for (Predicate predicate : predicates) {
             Object value = evaluate(predicate.expression(), model);
             if (value instanceof Boolean truth && truth != predicate.expected()) return null;
@@ -78,7 +85,7 @@ final class PathPredicateSolver {
             model.put(variables.get(index), value);
             var found = search(predicates, variables, candidates, index + 1, model, count);
             if (found != null) return found;
-            if (count[0] > MAX_MODELS) break;
+            if (count[0] > maxModels) break;
         }
         model.remove(variables.get(index));
         return null;

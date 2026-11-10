@@ -98,6 +98,65 @@ class AnalyzerTest {
     }
 
     @Test
+    void instanceReturnsAndArrayReadsProduceConsistentLegacyAndUnifiedResults() throws Exception {
+        Path classes = compile("Sample", """
+                public class Sample {
+                    String sql(String table) { return "SELECT * FROM " + table; }
+                    public void query(java.sql.Connection c) throws Exception {
+                        c.prepareStatement(sql("users"));
+                        String[] sql = {"SELECT 2"};
+                        c.createStatement().executeQuery(sql[0]);
+                    }
+                }
+                """);
+        Capture capture = new Capture();
+        var result = jdbc().analyze(classes, options(capture));
+        assertEquals(SUCCESS, result.status(), result.diagnostics().toString());
+        assertEquals(List.of("SELECT * FROM users", "SELECT 2"), capture.completeSql());
+        assertEquals(capture.completeSql(), result.sqlResults().stream().flatMap(value -> value.templates().stream())
+                .flatMap(template -> SqlNodeRenderer.render(template, Map.of()).sql().stream()).toList());
+        assertEquals(List.of("SELECT * FROM ${table}", "SELECT 2"), result.rawSqls().stream().map(RawSql.Variant::text).toList(),
+                "原始候选继续保留拼接槽位，已知值只在派生模板中折叠");
+        assertEquals(2, result.sqlResults().size(), "兼容回调不重复保存分析结果");
+        assertTrue(result.extractions().stream().allMatch(SqlExtraction::complete));
+        assertTrue(capture.diagnostics.isEmpty());
+    }
+
+    @Test
+    void overlappingExtractionRulesEmitOneLegacyEventPerSeed() throws Exception {
+        Path classes = compile("Sample", """
+                public class Sample {
+                    static void send(String first, String second) {}
+                    public void query() { send("SELECT 1", "SELECT 2"); }
+                }
+                """);
+        var module = new SqlAnalysisModule() {
+            public String id() { return "custom"; }
+            public void register(DiscoveryRegistry registry) {
+                registry.invocation(signature -> signature.getName().equals("send"), (site, seeds) -> {
+                    for (int i = 0; i < 2; i++) {
+                        int argument = i;
+                        seeds.accept(new AnalysisSeed() {
+                            public SourceLocation location() { return site.location(); }
+                            public SqlInput input() { return new SqlInput.ValueAt(site.method(), site.statement(), site.invocation().getArg(argument)); }
+                        });
+                    }
+                });
+                SqlExtractionHandler extraction = (point, flow) -> List.of(SqlTraceSource.sql(point.value(
+                        point.statement().asInvokableStmt().getInvokeExpr().orElseThrow().getArg(0))));
+                registry.extraction(site -> site.invocation().getMethodSignature().getName().equals("send"), extraction);
+                registry.extraction(site -> site.invocation().getMethodSignature().getName().equals("send"), extraction);
+            }
+        };
+        Capture capture = new Capture();
+        var result = new Analyzer(List.of(module), List.of()).analyze(classes, options(capture));
+        assertEquals(SUCCESS, result.status());
+        assertEquals(2, result.extractions().size(), "提取规则分别保留自己的结果");
+        assertEquals(List.of("SELECT 1", "SELECT 2"), capture.completeSql(), "旧事件只按原始 seed 报告一次，不混入另一个 SQL 输入");
+        assertEquals(3, capture.results.size(), "未被完整提取规则覆盖的第二个输入仍保留自己的模板结果");
+    }
+
+    @Test
     void bothControlFlowBranchesAreRetained() throws Exception {
         Path classes = compile("Sample", """
                 public class Sample {

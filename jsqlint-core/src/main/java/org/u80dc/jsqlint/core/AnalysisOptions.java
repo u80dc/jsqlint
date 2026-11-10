@@ -8,7 +8,7 @@ import java.util.Objects;
 import java.util.function.BooleanSupplier;
 
 /**
- * 单次调用的不可变选项。timeout 和 cleanupClassOutput 为 null 时继承 AnalyzerConfig，
+ * 单次调用的不可变选项。timeout、cleanupClassOutput 和 inferenceOptions 为 null 时继承 AnalyzerConfig，
  * 显式的 Duration.ZERO 表示不限时，false 表示保留编译产物。
  * 取消信号和监听器仅用于本次调用；取消和超时均在工作边界协作检查。
  * classOutputId 仅用于 Path 入口的源码编译，表示系统临时目录下 .jsqlint 中的单个目录名。
@@ -16,7 +16,8 @@ import java.util.function.BooleanSupplier;
  * @author u80dc
  */
 public record AnalysisOptions(@Nullable Duration timeout, BooleanSupplier cancelled, AnalysisListener listener,
-                              @Nullable String classOutputId, @Nullable Boolean cleanupClassOutput) {
+                              @Nullable String classOutputId, @Nullable Boolean cleanupClassOutput,
+                              @Nullable InferenceOptions inferenceOptions) {
     public AnalysisOptions {
         if (timeout != null) AnalyzerConfig.validateTimeout(timeout);
         Objects.requireNonNull(cancelled, "cancelled");
@@ -32,27 +33,38 @@ public record AnalysisOptions(@Nullable Duration timeout, BooleanSupplier cancel
         }
     }
 
+    /** 兼容旧构造器，未指定推断覆盖项。 */
+    public AnalysisOptions(@Nullable Duration timeout, BooleanSupplier cancelled, AnalysisListener listener,
+                           @Nullable String classOutputId, @Nullable Boolean cleanupClassOutput) {
+        this(timeout, cancelled, listener, classOutputId, cleanupClassOutput, null);
+    }
+
     /** 覆盖本次超时时间；传入 null 恢复继承实例默认值，零表示本次不限时。 */
     public AnalysisOptions withTimeout(@Nullable Duration timeout) {
-        return new AnalysisOptions(timeout, cancelled, listener, classOutputId, cleanupClassOutput);
+        return new AnalysisOptions(timeout, cancelled, listener, classOutputId, cleanupClassOutput, inferenceOptions);
     }
 
     public AnalysisOptions withCancelled(BooleanSupplier cancelled) {
-        return new AnalysisOptions(timeout, cancelled, listener, classOutputId, cleanupClassOutput);
+        return new AnalysisOptions(timeout, cancelled, listener, classOutputId, cleanupClassOutput, inferenceOptions);
     }
 
     public AnalysisOptions withListener(AnalysisListener listener) {
-        return new AnalysisOptions(timeout, cancelled, listener, classOutputId, cleanupClassOutput);
+        return new AnalysisOptions(timeout, cancelled, listener, classOutputId, cleanupClassOutput, inferenceOptions);
     }
 
     /** 指定本次编译输出标识；传入 null 恢复每次调用生成随机标识的行为。 */
     public AnalysisOptions withClassOutputId(@Nullable String id) {
-        return new AnalysisOptions(timeout, cancelled, listener, id, cleanupClassOutput);
+        return new AnalysisOptions(timeout, cancelled, listener, id, cleanupClassOutput, inferenceOptions);
     }
 
     /** 覆盖本次结束清理策略；传入 null 恢复继承实例默认值，失败、取消或超时也按此策略清理。 */
     public AnalysisOptions withCleanupClassOutput(@Nullable Boolean cleanup) {
-        return new AnalysisOptions(timeout, cancelled, listener, classOutputId, cleanup);
+        return new AnalysisOptions(timeout, cancelled, listener, classOutputId, cleanup, inferenceOptions);
+    }
+
+    /** 覆盖本次推断策略；null 恢复继承 AnalyzerConfig。 */
+    public AnalysisOptions withInferenceOptions(@Nullable InferenceOptions options) {
+        return new AnalysisOptions(timeout, cancelled, listener, classOutputId, cleanupClassOutput, options);
     }
 
     /** 未指定覆盖项；实际的超时和清理策略在调用时从 AnalyzerConfig 获取。 */
@@ -63,6 +75,7 @@ public record AnalysisOptions(@Nullable Duration timeout, BooleanSupplier cancel
     /** 合并为本次调用独有的配置快照，保持 Analyzer 上的默认配置不变。 */
     AnalyzerConfig resolveAgainst(AnalyzerConfig config) {
         return config.withTimeout(timeout == null ? config.timeout() : timeout)
-                .withCleanupClassOutput(cleanupClassOutput == null ? config.cleanupClassOutput() : cleanupClassOutput);
+                .withCleanupClassOutput(cleanupClassOutput == null ? config.cleanupClassOutput() : cleanupClassOutput)
+                .withInferenceOptions(inferenceOptions == null ? config.inferenceOptions() : inferenceOptions);
     }
 }

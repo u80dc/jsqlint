@@ -31,8 +31,8 @@ class JdbcDataFlowTest {
                     static String query(String table, String id) { return "SELECT * FROM " + table + " WHERE id=" + id; }
                 }
                 """);
-        // 既有 SQL 文本求值器尚不能求 main 数组实参；新的数据依赖追踪仍须完整到达入口。
-        assertEquals(PARTIAL, result.status());
+        // 外部数组元素保留为符号槽位；模板视图与数据流共用结果，不再误报恢复失败。
+        assertEquals(SUCCESS, result.status());
         var calls = calls(result, "execute");
         assertEquals(2, calls.size());
         Set<Set<String>> tables = new HashSet<>();
@@ -662,7 +662,7 @@ class JdbcDataFlowTest {
     }
 
     @Test
-    void sqlTemplateFailureIsAttachedToItsStatement() throws Exception {
+    void arraySqlRecoveryAndTemplateShareSuccessfulResults() throws Exception {
         var result = analyze("""
                 public class Sample {
                     public void entry(java.sql.Connection c) throws Exception {
@@ -672,15 +672,18 @@ class JdbcDataFlowTest {
                 }
                 """);
         var executions = calls(result, "executeQuery");
-        var failed = only(executions.getFirst().statements());
-        assertTrue(failed.sql().orElseThrow().complete(), "SQL 来源已经完整，模板恢复状态应单独记录");
-        assertFalse(failed.complete());
-        assertFalse(failed.templateIssues().isEmpty());
-        assertTrue(failed.sourcesComplete());
-        assertFalse(failed.templateComplete());
+        var first = only(executions.getFirst().statements());
+        assertTrue(first.sql().orElseThrow().complete());
+        assertTrue(first.complete());
+        assertTrue(first.templateIssues().isEmpty());
+        assertTrue(first.sourcesComplete());
+        assertTrue(first.templateComplete());
+        assertEquals(Set.of("SELECT 1"), renderedSql(executions.getFirst()));
+        assertEquals("SELECT 1", only(first.rawSql().variants()).text());
+        assertEquals(Set.of("SELECT 2"), renderedSql(executions.getLast()));
         assertTrue(only(executions.getLast().statements()).templateComplete());
         assertTrue(executions.getLast().complete(), "前一条 SQL 的诊断不能污染后续结果");
-        assertEquals(PARTIAL, result.status());
+        assertEquals(SUCCESS, result.status());
     }
 
     @Test

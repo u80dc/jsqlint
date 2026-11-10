@@ -14,7 +14,7 @@ import static org.u80dc.jsqlint.core.parameter.JointSqlInferenceResult.Condition
 
 /** 按调用帧检查一组传播链是否能出现在同一条控制流路径上。循环、异常边和预算截断保守返回未知。 @author u80dc */
 final class JointPathExplorer {
-    private static final int MAX_PATHS = 64, MAX_STEPS = 4000;
+    private final int maxPaths, maxSteps;
     record Frame(MethodSignature method, List<SqlCallSite> context) {
         Frame { context = List.copyOf(context); }
         static Frame of(Variable variable) { return new Frame(variable.method(), variable.callContext()); }
@@ -41,7 +41,11 @@ final class JointPathExplorer {
         @Override protected boolean removeEldestEntry(Map.Entry<ConditionKey, ValueTrace> entry) { return size() > 1024; }
     };
 
-    JointPathExplorer(DataFlowAnalysis flow) { this.flow = flow; solver = new PathPredicateSolver(flow::checkpoint); }
+    /** 预算来自 AnalyzerConfig 的联合求解配置；路径与步数分别对应每帧保留的候选与处理的工作量。 */
+    JointPathExplorer(DataFlowAnalysis flow, int maxPaths, int maxSteps, int modelSteps) {
+        this.flow = flow; this.maxPaths = maxPaths; this.maxSteps = maxSteps;
+        solver = new PathPredicateSolver(flow::checkpoint, modelSteps);
+    }
 
     Result explore(FlowPoint execution, List<Node> roots, List<ControlFlowEdge> history) {
         if (history.stream().anyMatch(ControlFlowEdge::exceptional))
@@ -95,7 +99,7 @@ final class JointPathExplorer {
         int steps = 0;
         while (!pending.isEmpty()) {
             flow.checkpoint();
-            if (++steps > MAX_STEPS || selections.size() >= MAX_PATHS || pending.size() > MAX_STEPS) {
+            if (++steps > maxSteps || selections.size() >= maxPaths || pending.size() > maxSteps) {
                 issues.add("Joint condition dependency/path limit exceeded"); break;
             }
             Search state = pending.removeLast();
@@ -227,7 +231,7 @@ final class JointPathExplorer {
                          Map<DispatchKey, Optional<MethodSignature>> dispatches) {
         flow.checkpoint();
         if (!seen.add(node)) return;
-        if (seen.size() > MAX_STEPS) { issues.add("Joint trace inspection limit exceeded"); return; }
+        if (seen.size() > maxSteps) { issues.add("Joint trace inspection limit exceeded"); return; }
         add(node.variable(), required);
         // 符号槽位可以携带尚未选定的分支，不能要求这些互斥来源同时执行。
         if (node.computation().operation() == Operation.ALTERNATIVES && node.inputs().size() > 1) return;
@@ -272,7 +276,7 @@ final class JointPathExplorer {
         int steps = 0;
         while (!pending.isEmpty()) {
             flow.checkpoint();
-            if (++steps > MAX_STEPS || found.size() >= MAX_PATHS) { issues.add("Joint control-flow exploration limit exceeded"); break; }
+            if (++steps > maxSteps || found.size() >= maxPaths) { issues.add("Joint control-flow exploration limit exceeded"); break; }
             State state = pending.removeLast();
             int index = positions.get(state.statement());
             if (state.order().contains(index)) { issues.add("Joint loop path requires unrolling"); continue; }

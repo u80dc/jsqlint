@@ -79,11 +79,7 @@ public final class SqlNodeBuilder {
                 }
             });
             Element root = builder.parse(new InputSource(new StringReader(xml))).getDocumentElement();
-            if (!"script".equals(root.getTagName())) {
-                throw new IllegalArgumentException("Expected a script root element");
-            }
-            attributes(root, Set.of());
-            return new ParseResult(source, Optional.of(contents(root, 0)), List.of());
+            return new ParseResult(source, Optional.of(fromScriptElement(root)), List.of());
         } catch (SAXParseException e) {
             int column = wrapped && e.getLineNumber() == 1
                     ? Math.max(1, e.getColumnNumber() - 8) : e.getColumnNumber();
@@ -94,6 +90,17 @@ public final class SqlNodeBuilder {
         } catch (Exception e) {
             return failure(source, "XML_PARSE_ERROR", e.getMessage());
         }
+    }
+
+    /**
+     * 将已解析的通用 script DOM 转成节点，不序列化或再次解析 XML。
+     * 框架适配层应先完成自己的标签校验和语义转换；此方法不修改输入 DOM。
+     */
+    public static SqlNode fromScriptElement(Element root) {
+        Objects.requireNonNull(root, "root");
+        if (!"script".equals(root.getTagName())) throw new IllegalArgumentException("Expected a script root element");
+        attributes(root, Set.of());
+        return contents(root, 0);
     }
 
     private static ParseResult failure(String source, String code, String message) {

@@ -40,8 +40,9 @@ public interface AnalysisListener {
     enum Stage { PREPARING, RESOURCES, CODE, ANALYZING, FINISHED }
 
     /**
-     * 会话累计计数：已枚举的不同资源、已扫描方法、已发现起点，以及成功交给监听器的结果。
+     * 会话累计计数：已枚举的不同资源、已扫描方法、已发现起点，以及成功交给监听器的 SqlResult。
      * 同一起点被多个模块发现时分别计数；方法扫描计数不会随模块数量重复累加。
+     * 不同调用上下文分别产生结果；兼容 onSql 模板事件不重复增加 analyzed。
      */
     record Progress(Stage stage, long resources, long methods, long discovered, long analyzed) {}
 }

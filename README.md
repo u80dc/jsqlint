@@ -14,6 +14,24 @@
 | `jsqlint-test` | 集中存放所有模块的测试代码与测试资源（[使用说明](jsqlint-test/README.md)） |
 | `shared-test-resources` | 可独立构建和运行的分析目标样例（[样例列表](shared-test-resources/README.md)） |
 
+## Analyzer 与 SQL 样例
+
+引入 core 和所需的 JDBC/MyBatis 模块后，通过统一入口分析；源码或项目输入还需 commons。
+
+```java
+var analyzer = new Analyzer(AnalyzerConfig.defaults()
+        .withInferenceOptions(InferenceOptions.defaults().withRandomSeed(42)));
+var result = analyzer.analyze(Path.of("target/classes"));
+for (var sample : result.samples()) {
+    System.out.println(sample.sql());
+    System.out.println(sample.bindings());
+    System.out.println(sample.feasibility() + " / " + sample.assessment());
+}
+```
+
+样例保留来源、类型、批次和联合路径证据。处理链、阶段开关和模板参数用法见
+[分析器说明](jsqlint-core/ANALYSIS.md)。
+
 ## 构建
 
 需要 JDK 21 或更高版本。项目提供 Maven Wrapper，无需单独安装 Maven。

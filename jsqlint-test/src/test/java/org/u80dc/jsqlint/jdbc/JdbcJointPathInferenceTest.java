@@ -306,6 +306,30 @@ class JdbcJointPathInferenceTest {
         assertEquals(5,known(only(joint.combinations()).bindings().getFirst().value()));
     }
 
+    @Test
+    void jointBudgetsAreHonoredFromAnalyzerConfiguration() throws Exception {
+        Path source = Files.writeString(temporary.resolve("Sample.java"), """
+                public class Sample {
+                    static void run(java.sql.Connection c, boolean f1, boolean f2) throws Exception {
+                        var p = c.prepareStatement("SELECT ?,?");
+                        int a = f1 ? 1 : 2; int b = f2 ? 3 : 4;
+                        p.setInt(1, a); p.setInt(2, b); p.executeQuery();
+                    }
+                }
+                """);
+        Path classes = Files.createDirectory(temporary.resolve("classes"));
+        assertEquals(0, ToolProvider.getSystemJavaCompiler().run(null,null,null,"-proc:none","-g","-d",classes.toString(),source.toString()));
+        // 两个独立条件有 4 条互不矛盾的可行路径；每帧只保留 1 条时，探索必须截断并报告，
+        // 证明 framePaths 确实来自 AnalyzerConfig 而不是硬编码。
+        var config = AnalyzerConfig.defaults().withMaxTraceDepth(64)
+                .withJointBudgets(JointBudgets.defaults().withFramePaths(1));
+        var result = new Analyzer(config, List.of(new JdbcAnalysisModule()),List.of()).analyze(classes);
+        assertNotEquals(AnalysisResult.Status.FAILED,result.status());
+        var joint = only(executedSqls(result)).jointInference().orElseThrow();
+        assertTrue(joint.issues().stream().anyMatch(issue -> issue.contains("control-flow exploration limit")),
+                joint.issues().toString());
+    }
+
     private List<RawSql.Variant> analyze(String methods) throws Exception {
         return executedSqls(analyzeResult(methods));
     }

@@ -134,7 +134,9 @@ class JdbcUserQueryAnalysisTest {
                 .allMatch(v -> v.initialValues().stream().anyMatch(input -> input.value().equals(new SqlValue.Known("O'Neil")))));
 
         // 模拟值来自同一个联合组合，直接代入转换后的槽位；不重新做笛卡尔积或二次转义。
-        Set<String> simulatedSqls = samples.stream().flatMap(sample -> sample.rendered().sql().stream()).collect(Collectors.toSet());
+        Set<String> simulatedSqls = result.samples().stream().flatMap(sample -> sample.sql().stream()).collect(Collectors.toSet());
+        assertEquals(samples.stream().flatMap(sample -> sample.rendered().sql().stream()).collect(Collectors.toSet()),
+                simulatedSqls, "统一样例接口应在编译输出清理后保留同一联合组合的 SQL");
         assertTrue(simulatedSqls.contains("INSERT INTO app_users (id, username, email, age, active) VALUES "
                 + "(1, 'alice', 'alice@example.test', 24, true)"));
         assertTrue(simulatedSqls.contains("INSERT INTO app_users (id, username, email, age, active) VALUES "
@@ -148,16 +150,19 @@ class JdbcUserQueryAnalysisTest {
         assertTrue(samples.stream().anyMatch(sample -> sample.status() == JointSqlInferenceResult.Status.UNKNOWN),
                 "未知路径的样例仍可供人工核查，但不能标成已证明可行");
 
-        // public 方法仍允许来自样例 main 以外的调用，不能用已知实参覆盖掉所有未知参数。
-        for (String method : List.of("insert", "findById", "findUsers", "update", "deleteById")) {
+        // 兼容模板与完整提取共享项目内调用上下文；多个文本保留选择节点，唯一已知文本可以折叠。
+        for (String method : List.of("insert", "findById", "findUsers")) {
             var sql = byMethod.get(method);
             assertTrue(sql.template().isDynamic(), method + " 应保留参数或条件节点");
-            assertTrue(sql.rendered().sql().isEmpty(), method + " 不应伪造完整 SQL");
+            assertTrue(sql.rendered().sql().isEmpty(), method + " 不应从多个候选中任取一个完整 SQL");
         }
+        assertEquals("UPDATE app_users SET email = 'bob.updated@example.test', age = 33, active = true WHERE id = 2",
+                byMethod.get("update").rendered().sql().orElseThrow());
+        assertEquals("DELETE FROM app_users WHERE id = 1", byMethod.get("deleteById").rendered().sql().orElseThrow());
         var finished = capture.progress.getLast();
         assertEquals(AnalysisListener.Stage.FINISHED, finished.stage());
         assertEquals(6, finished.discovered());
-        assertEquals(6, finished.analyzed());
+        assertEquals(result.sqlResults().size(), finished.analyzed(), "进度统计已交付结果，不重复计数兼容模板事件");
     }
 
     /** 打印每条静态候选及对应参数；保留准备点、执行点和不同调用路径，便于核对分析结果。 */
