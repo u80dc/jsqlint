@@ -39,7 +39,7 @@ final class SqlDiscovery {
             var registry = new DiscoveryRegistry();
             module.register(registry);
             modules.add(new Registered(module.id(), registry.resources(), registry.methods(), registry.invocations(),
-                    registry.sqlMethods(), registry.sqlInvocations(), registry.extractions(), registry.isCallIndexRequired()));
+                    registry.sqlMethods(), registry.sqlInvocations(), registry.extractions(), registry.definitions(), registry.isCallIndexRequired()));
         }
         JavaView view = new JavaView(new ArrayList<>(request.locations()));
         progress(Stage.RESOURCES);
@@ -122,6 +122,12 @@ final class SqlDiscovery {
                 }
             } catch (Exception e) { errors.recover("CODE_DISCOVERY", "Cannot enumerate application classes", e); }
         }
+        for (Registered module : modules) for (var handler : module.definitions()) {
+            checkpoint.run();
+            try { handler.discover(seed -> accept(module.id(), seed)); }
+            catch (Exception e) { errors.recover("MODULE_DEFINITIONS", module.id(), e); }
+        }
+        progress(Stage.CODE);
         return new Plan(view, classes, calls, seeds, extractions);
     }
 
@@ -143,14 +149,15 @@ final class SqlDiscovery {
         for (var rule : rules) {
             checkpoint.run();
             try {
-                if (rule.matches().test(input)) rule.handler().discover(input, seed -> {
-                    checkpoint.run();
-                    Objects.requireNonNull(seed, "seed");
-                    Objects.requireNonNull(seed.location(), "seed.location");
-                    seeds.add(new Pending(moduleId, seed));
-                });
+                if (rule.matches().test(input)) rule.handler().discover(input, seed -> accept(moduleId, seed));
             } catch (Exception e) { errors.recover("MODULE_DISCOVERY", moduleId + ": " + input, e); }
         }
+    }
+
+    private void accept(String moduleId, AnalysisSeed seed) {
+        checkpoint.run();
+        Objects.requireNonNull(seed, "seed"); Objects.requireNonNull(seed.location(), "seed.location");
+        seeds.add(new Pending(moduleId, seed));
     }
 
     record Progress(Stage stage, long resources, long methods, long candidates) {}
@@ -168,5 +175,6 @@ final class SqlDiscovery {
                               List<DiscoveryRegistry.Rule<InvocationSite>> invocations,
                               List<BiPredicate<JavaSootMethod, JavaView>> sqlMethods,
                               List<Predicate<InvocationSite>> sqlInvocations,
-                              List<DiscoveryRegistry.ExtractionRule> extractions, boolean callIndexRequired) {}
+                              List<DiscoveryRegistry.ExtractionRule> extractions,
+                              List<DiscoveryRegistry.DefinitionHandler> definitions, boolean callIndexRequired) {}
 }

@@ -13,6 +13,13 @@ JUnit 依赖由本模块声明，版本由父 POM 的 JUnit BOM 管理。
 在本模块添加对应的测试范围依赖。业务模块无需反向依赖本模块。
 当前还以 test scope 引入 jdbc、mybatis，验证统一分析入口、SPI、字节码与源码输入、
 资源筛选、框架起点、值传播、取消、超时和输入关闭约定。
+
+`SqlNodeBoundRendererTest` 验证参数化 SQL 的有序绑定、未知值、作用域回滚和渲染预算。
+`MethodParameterMetadataTest` 验证 class/JAR 的参数名称、可见/不可见注解与完整重载签名。
+`MybatisDefinitionTest`、`MybatisExtractionTest` 验证定义索引、databaseId、include、继承、重复定义、
+@Param/argN/paramN、特殊参数跳过、标量跨方法追踪、混合 JDBC、会话和取消语义。
+`MybatisSqlSemanticsTest` 与真实 MyBatis BoundSql/OGNL 对照绑定和纯表达式行为；参数命名规则在
+`MybatisExtractionTest` 中与 ParamNameResolver 对照验证。
 `JdbcDataFlowTest` 验证 SQL/绑定变量追到 main 或顶层方法、跨方法工厂返回与绑定、接口调用、
 局部及字段别名、覆盖/清空、分支、批次快照、命名参数和 setNull；递归及不确定来源应保留并标为不完整。
 回归用例还覆盖数组元素及跨方法写入、覆盖顺序、默认值、不确定别名/下标、批处理的可能别名清理与加入、
@@ -106,3 +113,15 @@ UNKNOWN 样例标明尚未证明可行，无解候选不生成模拟 SQL。未�
 Gradle 集成测试可以通过 `'-Djsqlint.test.gradle.home=C:\path\to\gradle'` 指定已有 Gradle 安装，
 否则使用 Tooling API 的默认发行版，首次运行可能下载。其余基于临时项目的 Maven 输出目录测试使用离线模式，
 依赖当前构建已解析的编译插件。详细输入行为见 [commons 使用说明](../jsqlint-commons/README.md)。
+
+## MyBatis 共享样例分析
+
+`MybatisUserQueryAnalysisTest` 将 `shared-test-resources/mybatis-user-query` Maven 项目直接交给 Analyzer，
+验证 8 条 XML/注解定义、7 个 Mapper 调用、跨层标量实参、include、set、bind/if/where 和 `${}`/`#{}` 的联合样例。
+测试不执行目标程序或访问数据库，并在编译目录清理后读取保存的来源和绑定快照。
+XML 条件尚未加入联合求解，对应样例应保留 UNKNOWN、路径覆盖 false 和 PARTIAL 诊断。
+报告保存到 `target/mybatis-user-query-sql-report.txt`。
+
+```powershell
+.\mvnw.cmd -pl jsqlint-test -am '-Dmaven.test.skip=false' '-DskipTests=false' '-Dtest=Mybatis*Test' '-Dsurefire.failIfNoSpecifiedTests=false' test
+```

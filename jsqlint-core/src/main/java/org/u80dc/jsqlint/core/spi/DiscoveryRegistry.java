@@ -25,6 +25,7 @@ public final class DiscoveryRegistry {
     private final List<BiPredicate<JavaSootMethod, JavaView>> sqlMethods = new ArrayList<>();
     private final List<Predicate<InvocationSite>> sqlInvocations = new ArrayList<>();
     private final List<ExtractionRule> extractions = new ArrayList<>();
+    private final List<DefinitionHandler> definitions = new ArrayList<>();
     private boolean callIndexRequired;
 
     /**
@@ -89,6 +90,12 @@ public final class DiscoveryRegistry {
     public record ExtractionRule(Predicate<InvocationSite> matches, SqlExtractionHandler handler) {
         public ExtractionRule { Objects.requireNonNull(matches); Objects.requireNonNull(handler); }
     }
+
+    /** 全部资源和代码元数据就绪后统一发出定义，适合跨文件引用、变体筛选和重复定义检测。 */
+    public void afterDiscovery(DefinitionHandler handler) { definitions.add(Objects.requireNonNull(handler)); }
+    public List<DefinitionHandler> definitions() { return List.copyOf(definitions); }
+    @FunctionalInterface
+    public interface DefinitionHandler { void discover(Consumer<AnalysisSeed> seeds) throws Exception; }
 
     public List<Rule<AnalysisResource>> resources() {
         return List.copyOf(resources);

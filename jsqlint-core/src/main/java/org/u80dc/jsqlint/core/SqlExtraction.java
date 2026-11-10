@@ -7,6 +7,7 @@ import org.u80dc.jsqlint.core.node.SqlNode;
 import org.u80dc.jsqlint.core.spi.*;
 import org.u80dc.jsqlint.core.parameter.ParameterValueInferenceResult;
 import org.u80dc.jsqlint.core.parameter.ParameterValueInferencer;
+import org.u80dc.jsqlint.core.parameter.JointSqlInferenceResult;
 import java.util.*;
 
 /** 单个 SQL 调用点在一个调用上下文中的结果；关闭 SootUp 输入后仍可读取。 @author u80dc */
@@ -23,17 +24,27 @@ public record SqlExtraction(String moduleId, SqlCallSite callSite, List<SqlCallS
         return statements.stream().flatMap(statement -> statement.rawSql().variants().stream()).toList();
     }
     public SqlAssessment assessment() {
+        var coverage = statements.stream().map(statement -> statement.assessment().pathCoverageComplete()).toList();
         return new SqlAssessment(issues.isEmpty() && statements.stream().allMatch(Statement::sourcesComplete),
-                !rawSqls().isEmpty() && statements.stream().allMatch(statement -> statement.rawSql().complete()),
-                statements.stream().allMatch(Statement::inferenceComplete), SqlAssessment.pathCoverage(rawSqls()));
+                !statements.isEmpty() && statements.stream().allMatch(statement -> statement.assessment().textComplete()),
+                statements.stream().allMatch(Statement::inferenceComplete),
+                coverage.isEmpty() || coverage.stream().anyMatch(Optional::isEmpty) ? Optional.empty()
+                        : Optional.of(coverage.stream().allMatch(value -> value.orElseThrow())));
     }
     public record Statement(Optional<ValueTrace> sql, SqlNode template, List<Binding> bindings,
-                            Optional<SourceLocation> batchEntry, List<String> issues, List<String> templateIssues, RawSql rawSql) {
+                            Optional<SourceLocation> batchEntry, List<String> issues, List<String> templateIssues, RawSql rawSql,
+                            Optional<SqlDefinition> definition, Optional<TemplateInferenceResult> templateInference) {
         public Statement {
             Objects.requireNonNull(sql); Objects.requireNonNull(template); bindings = List.copyOf(bindings);
             Objects.requireNonNull(batchEntry); issues = List.copyOf(issues); templateIssues = List.copyOf(templateIssues); Objects.requireNonNull(rawSql);
-            // Statement 是绑定快照的来源，确保顶层 rawSqls 和逐语句访问得到相同的 SQL/参数关联。
-            rawSql = rawSql.withBindings(bindings);
+            Objects.requireNonNull(definition); Objects.requireNonNull(templateInference);
+            // 动态模板的不同模型可以产生不同绑定顺序，保留各 variant 的快照。
+            if (definition.isEmpty()) rawSql = rawSql.withBindings(bindings);
+            if (templateInference.isPresent() && definition.isEmpty()) throw new IllegalArgumentException("Template inference requires a definition");
+        }
+        public Statement(Optional<ValueTrace> sql, SqlNode template, List<Binding> bindings, Optional<SourceLocation> batchEntry,
+                         List<String> issues, List<String> templateIssues, RawSql rawSql) {
+            this(sql, template, bindings, batchEntry, issues, templateIssues, rawSql, Optional.empty(), Optional.empty());
         }
         /** 显式从传播结果恢复 raw SQL 与模板，不进行参数重演或路径求解。 */
         public static Statement fromTrace(ValueTrace sql, List<Binding> bindings, Optional<SourceLocation> batchEntry,
@@ -56,23 +67,38 @@ public record SqlExtraction(String moduleId, SqlCallSite callSite, List<SqlCallS
                          Optional<SourceLocation> batchEntry, List<String> issues) {
             this(sql, template, bindings, batchEntry, issues, List.of());
         }
-        public boolean sourcesComplete() { return issues.isEmpty() && sql.isPresent() && sql.get().complete() && bindings.stream().allMatch(Binding::complete); }
+        public boolean sourcesComplete() {
+            if (definition.isPresent()) return issues.isEmpty() && definition.get().complete()
+                    && templateInference.map(TemplateInferenceResult::sourcesComplete).orElse(true);
+            return issues.isEmpty() && sql.isPresent() && sql.get().complete() && bindings.stream().allMatch(Binding::complete);
+        }
         /** 完整表示恢复过程未遗漏支持范围内的结构，不要求外部参数已有运行时取值。 */
         public boolean templateComplete() { return templateIssues.isEmpty(); }
         /** 参数重演单独判断；没有绑定值或拼接槽位时无需推断。 */
         public boolean inferenceComplete() {
+            if (templateInference.isPresent()) return templateInference.get().valuesComplete();
             return bindings.stream().allMatch(binding -> binding.inference().complete())
                     && rawSql.variants().stream().flatMap(variant -> variant.parameters().stream())
                     .allMatch(ParameterValueInferenceResult::complete);
         }
         /** 主分析完整性由来源和 raw SQL 决定；模板为派生视图，样例重演另见 inferenceComplete。 */
-        public boolean complete() { return sourcesComplete() && rawSql.complete(); }
+        public boolean complete() { return sourcesComplete() && (definition.isPresent() ? templateComplete() : rawSql.complete()); }
         public SqlAssessment assessment() {
+            if (definition.isPresent()) return new SqlAssessment(sourcesComplete(), templateComplete(), inferenceComplete(),
+                    templateInference.flatMap(TemplateInferenceResult::jointInference).map(org.u80dc.jsqlint.core.parameter.JointSqlInferenceResult::coverageComplete));
             return new SqlAssessment(sourcesComplete(), rawSql.complete(), inferenceComplete(), SqlAssessment.pathCoverage(rawSql.variants()));
         }
+        public List<JointSqlInferenceResult> jointInferences() {
+            if (templateInference.isPresent()) return templateInference.get().jointInference().stream().toList();
+            return rawSql.variants().stream().flatMap(variant -> variant.jointInference().stream()).toList();
+        }
     }
-    public record Binding(String key, ValueTrace keyTrace, ValueTrace value, SourceLocation location, ParameterValueInferenceResult inference) {
-        public Binding { Objects.requireNonNull(key); Objects.requireNonNull(keyTrace); Objects.requireNonNull(value); Objects.requireNonNull(location); Objects.requireNonNull(inference); }
+    public record Binding(String key, ValueTrace keyTrace, ValueTrace value, SourceLocation location,
+                          ParameterValueInferenceResult inference, String options) {
+        public Binding { Objects.requireNonNull(key); Objects.requireNonNull(keyTrace); Objects.requireNonNull(value); Objects.requireNonNull(location); Objects.requireNonNull(inference); Objects.requireNonNull(options); }
+        public Binding(String key, ValueTrace keyTrace, ValueTrace value, SourceLocation location, ParameterValueInferenceResult inference) {
+            this(key, keyTrace, value, location, inference, "");
+        }
         public Binding(String key, ValueTrace keyTrace, ValueTrace value, SourceLocation location) {
             this(key, keyTrace, value, location, new ParameterValueInferenceResult(ParameterValueInferencer.variableName(value.root()),
                     value.variable().type(), List.of(), List.of("Parameter not inferred")));

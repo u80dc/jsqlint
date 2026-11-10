@@ -13,13 +13,28 @@ public final class SqlSampleRenderer {
         Objects.requireNonNull(source);
         return switch (source) {
             case SqlExtraction extraction -> render(extraction);
-            case SqlTemplateResult template -> List.of(template(template,
-                    template.rendered().orElseGet(() -> SqlNodeRenderer.render(template.template(), Map.of()))));
+            case SqlTemplateResult template -> template.definition().isPresent() ? List.of(render(template, Map.of()))
+                    : List.of(template(template, template.rendered().orElseGet(() -> SqlNodeRenderer.render(template.template(), Map.of()))));
         };
     }
 
     /** 模板参数由调用方提供；完成渲染不提升为已验证 Java 路径。 */
     public static SqlSample render(SqlTemplateResult source, Map<String, ?> parameters) {
+        if (source.definition().isPresent()) {
+            var definition = source.definition().get();
+            var bound = definition.render(parameters);
+            var issues = new LinkedHashSet<>(definition.issues());
+            source.diagnostics().forEach(diagnostic -> issues.add(diagnostic.code() + ": " + diagnostic.message()));
+            bound.rendered().diagnostics().forEach(diagnostic -> issues.add(diagnostic.code() + ": " + diagnostic.message()));
+            var bindings = bound.bindings().stream().map(slot -> new SqlSample.Binding(Integer.toString(slot.position()),
+                    slot.type().isEmpty() ? "java.lang.Object" : slot.type(), new SqlValue.Known(slot.position()), slot.value(),
+                    definition.location(), slot.options(), Optional.empty())).toList();
+            boolean sources = source.assessment().sourcesComplete();
+            return new SqlSample(source, Optional.empty(), bound.rendered(), bindings,
+                    sources ? SqlSample.Feasibility.UNVERIFIED : SqlSample.Feasibility.UNKNOWN,
+                    new SqlAssessment(sources, source.assessment().textComplete(), bound.valuesComplete(), Optional.empty()),
+                    new ArrayList<>(issues), Optional.empty(), Optional.empty(), source.definition());
+        }
         return template(source, SqlNodeRenderer.render(source.template(), parameters));
     }
 
@@ -37,6 +52,10 @@ public final class SqlSampleRenderer {
     private static List<SqlSample> render(SqlExtraction source) {
         List<SqlSample> samples = new ArrayList<>();
         for (var statement : source.statements()) {
+            if (statement.templateInference().isPresent()) {
+                for (var model : statement.templateInference().get().models()) samples.add(templateSample(source, statement, model));
+                continue;
+            }
             if (statement.rawSql().variants().isEmpty()) {
                 samples.add(sample(source, statement, Optional.empty(), Optional.empty(), Map.of(),
                         unknownBindings(statement, "SQL source is unavailable"), SqlSample.Feasibility.UNKNOWN,
@@ -68,7 +87,7 @@ public final class SqlSampleRenderer {
                         if (i < combination.bindings().size()) {
                             var value = combination.bindings().get(i);
                             bindings.add(new SqlSample.Binding(binding.key(), binding.inference().type(),
-                                    value.keyValue().value(), value.value().value(), binding.location()));
+                                    value.keyValue().value(), value.value().value(), binding.location(), binding.options(), Optional.of(value.value().propagationPath())));
                         } else bindings.add(unknownBinding(binding, "Joint binding value is unavailable"));
                     }
                     samples.add(sample(source, statement, Optional.of(variant), Optional.of(combination), parameters, bindings,
@@ -78,6 +97,36 @@ public final class SqlSampleRenderer {
             }
         }
         return List.copyOf(samples);
+    }
+
+    private static SqlSample templateSample(SqlExtraction source, SqlExtraction.Statement statement,
+                                             TemplateInferenceResult.BoundModel model) {
+        var saved = statement.templateInference().orElseThrow();
+        var rendered = model.bound().rendered();
+        var issues = new LinkedHashSet<>(source.issues());
+        issues.addAll(statement.issues()); issues.addAll(statement.templateIssues()); issues.addAll(saved.issues());
+        issues.addAll(model.issues()); model.combination().ifPresent(value -> issues.addAll(value.issues()));
+        rendered.diagnostics().forEach(diagnostic -> issues.add(diagnostic.code() + ": " + diagnostic.message()));
+        List<SqlSample.Binding> bindings = new ArrayList<>();
+        for (int i = 0; i < model.bound().bindings().size(); i++) {
+            var slot = model.bound().bindings().get(i); var evidence = model.bindings().get(i);
+            bindings.add(new SqlSample.Binding(evidence.key(), evidence.inference().type(), new SqlValue.Known(slot.position()),
+                    slot.value(), evidence.location(), slot.options(), Optional.of(evidence.value())));
+        }
+        boolean sources = source.issues().isEmpty() && statement.sourcesComplete();
+        boolean values = model.bound().valuesComplete() && model.combination().map(value -> value.parameters().values()
+                .stream().allMatch(InferredParameterValue::complete)).orElse(saved.parameters().isEmpty());
+        var feasibility = model.combination().map(value -> value.status() == JointSqlInferenceResult.Status.SATISFIABLE
+                ? SqlSample.Feasibility.SATISFIABLE : SqlSample.Feasibility.UNKNOWN)
+                .orElse(saved.jointInference().isPresent() ? SqlSample.Feasibility.UNKNOWN : SqlSample.Feasibility.UNVERIFIED);
+        if (!sources || !statement.templateComplete() || feasibility == SqlSample.Feasibility.SATISFIABLE && !values)
+            feasibility = SqlSample.Feasibility.UNKNOWN;
+        var assessment = new SqlAssessment(sources, statement.templateComplete(), values,
+                saved.jointInference().map(JointSqlInferenceResult::coverageComplete));
+        var raw = statement.rawSql().variants().stream().filter(variant -> rendered.sql().filter(variant.text()::equals).isPresent()
+                && variant.bindings().equals(model.bindings())).findFirst();
+        return new SqlSample(source, statement.batchEntry(), rendered, bindings, feasibility, assessment,
+                new ArrayList<>(issues), raw, model.combination(), statement.definition());
     }
 
     private static SqlSample sample(SqlExtraction source, SqlExtraction.Statement statement,
@@ -110,6 +159,6 @@ public final class SqlSampleRenderer {
 
     private static SqlSample.Binding unknownBinding(SqlExtraction.Binding binding, String reason) {
         return new SqlSample.Binding(binding.key(), binding.inference().type(),
-                new SqlValue.Unknown(reason), new SqlValue.Unknown(reason), binding.location());
+                new SqlValue.Unknown(reason), new SqlValue.Unknown(reason), binding.location(), binding.options(), Optional.of(binding.value()));
     }
 }

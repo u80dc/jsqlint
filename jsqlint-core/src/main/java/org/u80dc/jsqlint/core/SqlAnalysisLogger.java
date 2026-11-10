@@ -16,6 +16,13 @@ final class SqlAnalysisLogger {
         LOG.info("SQL 提取: module={}, call={}, chain={}, complete={}, issues={}", extraction.moduleId(),
                 extraction.callSite(), extraction.callChain(), extraction.complete(), extraction.issues());
         for (var statement : extraction.statements()) {
+            statement.definition().ifPresent(definition -> LOG.info("SQL 定义: id={}, location={}, metadata={}, issues={}",
+                    definition.id(), definition.location(), definition.metadata(), definition.issues()));
+            statement.templateInference().ifPresent(inference -> {
+                LOG.info("模板实参: aliases={}, fallback={}, models={}", inference.aliases(), inference.fallback(), inference.models().size());
+                inference.sources().forEach((name, trace) -> printTrace("templateInput[" + name + "]", trace));
+                inference.parameters().values().forEach(this::printInference);
+            });
             LOG.info("SQL 来源: batch={}, bindings={}, issues={}, templateComplete={}, templateIssues={}",
                     statement.batchEntry(), statement.bindings().size(), statement.issues(), statement.templateComplete(), statement.templateIssues());
             for (int i = 0; i < statement.rawSql().variants().size(); i++) {

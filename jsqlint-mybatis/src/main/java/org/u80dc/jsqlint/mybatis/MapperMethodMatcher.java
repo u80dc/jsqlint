@@ -60,6 +60,31 @@ final class MapperMethodMatcher {
         });
     }
 
+    Optional<JavaSootMethod> resolveMethod(InvocationSite site) {
+        var signature = site.invocation().getMethodSignature();
+        var method = interfaceMethods(signature.getDeclClassType(), site.view()).get(signature.getSubSignature());
+        return method != null && method.isAbstract() ? Optional.of(method) : Optional.empty();
+    }
+
+    /** 依次尝试调用接口与真实声明所在的继承链，保持 MyBatis 的映射查找边界。 */
+    List<String> definitionIds(InvocationSite site, JavaSootMethod method) {
+        var result = new LinkedHashSet<String>();
+        definitionIds(site.invocation().getMethodSignature().getDeclClassType(), method, site.view(), new HashSet<>(), result);
+        return List.copyOf(result);
+    }
+    private void definitionIds(ClassType type, JavaSootMethod method, JavaView view, Set<ClassType> visited, Set<String> ids) {
+        if (!visited.add(type)) return;
+        ids.add(type + "." + method.getName());
+        if (type.equals(method.getDeclClassType())) return;
+        var clazz = view.getClass(type);
+        if (clazz.isEmpty()) return;
+        for (ClassType parent : clazz.get().getInterfaces()) {
+            var inherited = interfaceMethods(parent, view).get(method.getSubSignature());
+            if (inherited != null && inherited.getSignature().equals(method.getSignature()))
+                definitionIds(parent, method, view, visited, ids);
+        }
+    }
+
     private boolean hasXmlStatement(ClassType type, JavaSootMethod method, JavaView view, Set<ClassType> visited) {
         if (!visited.add(type)) return false;
         if (statements.getOrDefault(type.toString(), Set.of()).contains(method.getName())) return true;

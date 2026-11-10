@@ -51,6 +51,17 @@ public final class JointSqlValueInferencer {
     }
 
     private record Dimension(String name, int binding, boolean key, List<InferredParameterValue> values) {}
+    /** 联合重演通用输入，不创建虚构的 SQL 文本或 SQL 传播树。 */
+    public JointSqlInferenceResult inferParameters(Collection<ParameterValueInferenceResult> parameters, FlowPoint execution,
+                                                   List<List<ControlFlowEdge>> histories, List<String> snapshotIssues) {
+        List<Dimension> dimensions = new ArrayList<>();
+        Set<String> issues = new LinkedHashSet<>(snapshotIssues);
+        for (var parameter : parameters) {
+            dimensions.add(new Dimension(parameter.name(), -1, false, parameter.possibleValues()));
+            addLimits(issues, parameter);
+        }
+        return solve(Optional.empty(), List.of(), execution, histories, snapshotIssues, dimensions, issues);
+    }
     private JointSqlInferenceResult infer(RawSql.Variant variant, List<SqlExtraction.Binding> bindings, FlowPoint execution,
                                          List<List<ControlFlowEdge>> histories, List<String> snapshotIssues) {
         List<Dimension> dimensions = new ArrayList<>();
@@ -65,9 +76,15 @@ public final class JointSqlValueInferencer {
             dimensions.add(new Dimension(binding.key(), i, true, keys.possibleValues())); addLimits(issues, keys);
             dimensions.add(new Dimension(binding.key(), i, false, binding.inference().possibleValues())); addLimits(issues, binding.inference());
         }
+        return solve(variant.trace(), bindings, execution, histories, snapshotIssues, dimensions, issues);
+    }
+
+    private JointSqlInferenceResult solve(Optional<ValueTrace> sql, List<SqlExtraction.Binding> bindings, FlowPoint execution,
+                                         List<List<ControlFlowEdge>> histories, List<String> snapshotIssues,
+                                         List<Dimension> dimensions, Set<String> issues) {
         if (dimensions.size() > 64 || dimensions.stream().anyMatch(d -> d.values().isEmpty()))
             return new JointSqlInferenceResult(Status.UNKNOWN, List.of(), List.of("Joint parameters unavailable or dimension limit exceeded"));
-        var query = new Query(variant, bindings, execution, dimensions, issues,
+        var query = new Query(sql, bindings, execution, dimensions, issues,
                 JointControlFlowHistories.simplify(histories, flow::checkpoint, budgets.historySteps()), snapshotIssues);
         query.enumerate(0, new ArrayList<>());
         Status status = !issues.isEmpty() || query.results.stream().anyMatch(value -> value.status() == Status.UNKNOWN)
@@ -84,7 +101,7 @@ public final class JointSqlValueInferencer {
     }
 
     private final class Query {
-        final RawSql.Variant variant;
+        final Optional<ValueTrace> sql;
         final List<SqlExtraction.Binding> bindings;
         final FlowPoint execution;
         final List<Dimension> dimensions;
@@ -95,9 +112,9 @@ public final class JointSqlValueInferencer {
         int attempts, prefixChecks;
         boolean stopped;
         boolean coverageComplete = true;
-        Query(RawSql.Variant variant, List<SqlExtraction.Binding> bindings, FlowPoint execution,
+        Query(Optional<ValueTrace> sql, List<SqlExtraction.Binding> bindings, FlowPoint execution,
               List<Dimension> dimensions, Set<String> issues, List<List<ControlFlowEdge>> histories, List<String> snapshotIssues) {
-            this.variant = variant; this.bindings = bindings; this.execution = execution; this.dimensions = dimensions; this.issues = issues;
+            this.sql = sql; this.bindings = bindings; this.execution = execution; this.dimensions = dimensions; this.issues = issues;
             this.histories = histories; this.snapshotIssues = snapshotIssues;
         }
         void enumerate(int index, List<InferredParameterValue> selected) {
@@ -142,7 +159,7 @@ public final class JointSqlValueInferencer {
 
         List<ValueTrace.Node> roots(List<InferredParameterValue> selected) {
             List<ValueTrace.Node> roots = new ArrayList<>();
-            variant.trace().ifPresent(trace -> roots.add(trace.root()));
+            sql.ifPresent(trace -> roots.add(trace.root()));
             selected.forEach(value -> roots.add(value.propagationPath().root()));
             return roots;
         }

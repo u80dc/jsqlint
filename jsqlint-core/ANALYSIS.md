@@ -13,6 +13,7 @@
 | `SqlDiscovery` | 每次注册模块，共享资源和代码扫描，收集起点及应用调用点 |
 | `ProgramIndex` / `DataFlowAnalysis` | 调用上下文、应用类分派、局部与过程间来源追踪 |
 | `SqlExtractionPipeline` | 组织 raw SQL 恢复、模板投影、参数重演与联合路径推断 |
+| `TemplateExtractionPipeline` | 将资源定义与实参关联，共用值传播和联合推断，保存参数化 SQL 模型 |
 | JDBC / MyBatis 适配层 | 定位框架来源，处理绑定、批次、XML 标签和 include 语义 |
 | `SqlSampleRenderer` | 从已保存结果生成统一样例，保留类型、来源、可行性和证据 |
 | `SqlAnalysisLogger` | 展示结果和传播链；关闭 INFO 日志时直接跳过遍历 |
@@ -40,7 +41,9 @@ flowchart LR
 兼容模板按项目内已索引的调用上下文派生：唯一已知文本可以折叠，多个文本仍保留选择节点；
 未解析的入口输入继续保持符号值。完整模板对应这些调用上下文，其路径可行性继续由联合结果判断。
 
-MyBatis 自己校验框架标签、展开 include，然后直接将 DOM 交给通用节点构建器。
+MyBatis 自己校验框架标签、展开 include，将 XML/注解转换为 core 的不可变 SqlDefinition。
+Mapper 调用通过 TemplateSqlInput 关联真实实参，由 core 统一溯源、联合重演和参数化渲染。
+字节码参数名称与注解的读取位于 core，@Param 等框架规则由 MyBatis 模块解释。
 原有 core XML DSL 继续可用；其 `literal`、`value`、`skipBlank` 扩展不属于 MyBatis 语法。
 
 ## 统一入口
@@ -227,7 +230,8 @@ var sample = template.sample(Map.of("id", 7));
 ```
 
 `SqlResult.samples()` 和 `AnalysisResult.samples()` 使用 `SqlSampleRenderer`，在输入关闭后仍可读取。
-每个样例保留原始 `source()`、`rawSql()`、`combination()` 及可选 `batchEntry()`。
+每个样例保留原始 `source()`、`rawSql()`、`combination()`、可选 `batchEntry()` 和 `definition()`。
+绑定值另保留适配层 `options()` 和可选传播证据 `trace()`。
 样例覆盖准备点、执行点和批次加入点；可通过 `sample.source()` 中的调用点选择所需结果。
 相同文本的不同来源或批次分别保留。
 
@@ -430,7 +434,7 @@ INFO 日志通过 `rawSql[1]`、`rawSql[2]` 等编号将每条 raw SQL 与其传
 ### 参数初始值与传播链重演
 
 通用推断逻辑位于 core 的 `parameter` 包。JDBC 只提供绑定变量和使用位置的声明类型，
-同一套推断器也可以供后续 MyBatis/JPA 适配使用。
+MyBatis 定义来源通过同一套推断器追踪实参；其他框架也可使用该通用能力。
 `Analyzer` 在启用 `PARAMETERS` 或 `JOINT` 时自动推断，关闭输入或清理编译输出后，推断对象仍然可读。
 
 ```java
@@ -705,7 +709,15 @@ registry.sqlInvocation(site -> /* 框架实际调用判断 */ false);
 处理器同步发出 AnalysisSeed，core 在发现阶段结束后读取其 SqlInput：
 
 - Template：模块已经转换好的通用 SQL 节点。
+- Definition：模块适配后的不可变 SqlDefinition，保留定义 id、位置、表达式求值器和元数据。
 - ValueAt：某个方法及语句位置上的值，由 core 追踪。
+
+需要在全部资源和代码元数据就绪后筛选定义的模块，可注册 `registry.afterDiscovery(seeds -> ...)`。
+该回调统一发出 AnalysisSeed，适合跨文件引用、变体筛选和重复定义检查。
+调用提取通过 `SqlTraceSource.template(TemplateSqlInput, issues)` 关联定义、命名实参、单值回退和常量。
+core 合并同源别名，保存 TemplateInferenceResult 的来源、推断和模型；联合推断通过
+`JointSqlValueInferencer.inferParameters(...)` 执行，无需伪造 Java SQL 字符串来源。
+模板模型下的 SQL 和绑定快照均在分析阶段保存，后续样例展示不访问代码输入。
 
 方法级处理器产生 ValueAt 起点时应调用 `registry.requireCallIndex()`，
 使 core 建立共享调用者索引。`invocation` 提取规则自动启用此能力，`sqlInvocation` 识别规则则不启用。
@@ -722,7 +734,9 @@ core 负责通用 SQL 提取、值与参数溯源、保守推断和节点渲染�
   executeLargeUpdate/addBatch 和 Statement 的 executeBatch/executeLargeBatch 调用。
   支持已解析的实现类/子类型，不以 Controller 或 main 可达性限制发现范围。
 - MyBatis：Mapper XML 语句、可唯一确定的跨文件 include、Select/Insert/Update/Delete SQL 注解；
-  动态标签转换为现有通用节点。通过 namespace/id 和 SQL/Provider 注解识别接口方法声明与调用，
+  支持 databaseId 筛选、include 属性替换和重复定义诊断，动态标签转换为现有通用节点。
+  Mapper 标量实参通过 @Param、实际参数名称、paramN 和单值回退接入统一参数化 SQL 样例。
+  通过 namespace/id 和 SQL/Provider 注解识别接口方法声明与调用，
   支持继承方法、重复注解及重载签名；XML 按方法名绑定，无法区分重载，因此保留全部候选签名。
   default/static 辅助方法不作为映射 SQL 入口，其内部调用仍正常扫描。Provider 可以作为调用点被发现，
   但 Provider SQL 内容仍需后续适配。直接调用 SqlSession 的字符串 statementId 入口尚未适配。
@@ -733,9 +747,11 @@ core 负责通用 SQL 提取、值与参数溯源、保守推断和节点渲染�
   基于传播链的参数推断独立保存外部输入生成的随机样例及其来源；SQL 文本和样例均不作为数据库执行入口。
 
 尚未完整迁移旧 analysis 的框架能力：StringBuilder 等可变对象建模、复杂虚调用/字段传播、
-精确堆别名、Spring JDBC、MyBatis Provider、动态 include 属性、
+精确堆别名、Spring JDBC、MyBatis Provider、无法确定的动态 include 属性、
 selectKey 与 JPA 等仍需后续扩展。遇到已发现起点中不支持的结构，会保留未知节点并报告
 PARTIAL；没有启用相应框架模块的代码不属于本次框架识别范围。
 
-MyBatis 适配沿用 core 动态节点的空白及作用域语义，尚不保证逐字符复刻 MyBatis
-运行时的隐式空格及全部 OGNL 行为。完整运行时 SQL 集合也无法通过任意静态分析穷举。
+MyBatis 适配处理 root 与 trim 上下文的不同空白连接规则，常用模板与 MyBatis 3.5.19 BoundSql 对照验证。
+OGNL 使用无副作用的受限 AST 解释器。DTO/集合完整追踪、SqlSession 和 XML 条件联合求解仍未覆盖；
+if/choose/foreach 的调用样例保留 UNKNOWN 与不完整路径覆盖，不把一个模型当作所有动态分支。
+详细范围与配置见 [MyBatis 使用说明](../jsqlint-mybatis/README.md)。

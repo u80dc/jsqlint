@@ -16,13 +16,18 @@ import java.util.Optional;
  */
 public record SqlTemplateResult(String moduleId, SourceLocation location, SqlNode template,
                                 Optional<RenderedSql> rendered,
-                                List<AnalysisDiagnostic> diagnostics) implements SqlResult {
+                                List<AnalysisDiagnostic> diagnostics, Optional<SqlDefinition> definition) implements SqlResult {
     public SqlTemplateResult {
         Objects.requireNonNull(moduleId);
         Objects.requireNonNull(location);
         Objects.requireNonNull(template);
         Objects.requireNonNull(rendered);
         diagnostics = List.copyOf(diagnostics);
+        Objects.requireNonNull(definition);
+    }
+    public SqlTemplateResult(String moduleId, SourceLocation location, SqlNode template,
+                             Optional<RenderedSql> rendered, List<AnalysisDiagnostic> diagnostics) {
+        this(moduleId, location, template, rendered, diagnostics, Optional.empty());
     }
 
     public List<SqlNode> templates() {
@@ -30,12 +35,19 @@ public record SqlTemplateResult(String moduleId, SourceLocation location, SqlNod
     }
 
     public List<RawSql.Variant> rawSqls() {
+        if (definition.isPresent()) return definition.get().render(Map.of()).rendered().sql().stream()
+                .map(text -> new RawSql.Variant(text, List.of())).toList();
         // 尚未枚举动态模板分支时，通过 templates() 访问完整结构，不编造文本候选。
         if (template.isDynamic()) return List.of();
         return rendered.flatMap(RenderedSql::sql).stream().map(text -> new RawSql.Variant(text, List.of())).toList();
     }
 
     public SqlAssessment assessment() {
+        if (definition.isPresent()) {
+            var bound = definition.get().render(Map.of());
+            boolean sources = definition.get().complete() && diagnostics.stream().noneMatch(AnalysisDiagnostic::incomplete);
+            return new SqlAssessment(sources, sources, bound.valuesComplete(), Optional.empty());
+        }
         boolean complete = rendered.map(RenderedSql::complete).orElse(false);
         boolean sources = diagnostics.stream().noneMatch(AnalysisDiagnostic::incomplete);
         return new SqlAssessment(sources, sources, complete, Optional.empty());

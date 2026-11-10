@@ -1,6 +1,7 @@
 package org.u80dc.jsqlint.core.spi;
 
 import org.u80dc.jsqlint.core.node.SqlNode;
+import org.u80dc.jsqlint.core.SqlDefinition;
 import sootup.core.jimple.common.Value;
 import sootup.core.jimple.common.stmt.Stmt;
 import sootup.java.core.JavaSootMethod;
@@ -13,6 +14,10 @@ import java.util.Objects;
  * @author u80dc
  */
 public sealed interface SqlInput {
+    /** 有独立来源与标识的模板定义；不要求存在 Java SQL 字符串。 */
+    record Definition(SqlDefinition definition) implements SqlInput {
+        public Definition { Objects.requireNonNull(definition, "definition"); }
+    }
     /**
      * 框架语义已转换为通用节点，可直接进入参数求值及渲染。
      */

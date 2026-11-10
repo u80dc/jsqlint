@@ -12,6 +12,11 @@
     <packaging>jar</packaging>
 
     <dependencies>
+        <!-- 通用字节码元数据读取，不加载或执行目标项目的类。 -->
+        <dependency>
+            <groupId>org.ow2.asm</groupId>
+            <artifactId>asm</artifactId>
+        </dependency>
         <!-- SootUp 及其传递依赖的版本统一由父 POM 导入的 BOM 管理。 -->
         <!-- Java 程序模型 -->
         <dependency>

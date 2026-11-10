@@ -12,6 +12,12 @@
     <packaging>jar</packaging>
     <description>MyBatis SQL 分析模块</description>
     <dependencies>
+        <!-- OGNL 的解析与纯标量运算仅属于 MyBatis 适配层。 -->
+        <dependency>
+            <groupId>org.mybatis</groupId>
+            <artifactId>mybatis</artifactId>
+            <version>3.5.19</version>
+        </dependency>
         <dependency>
             <groupId>org.u80dc.jsqlint</groupId>
             <artifactId>jsqlint-core</artifactId>

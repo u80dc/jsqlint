@@ -15,4 +15,7 @@ public interface SqlExpressionEvaluator {
     }
 
     SqlValue evaluate(String expression, Map<String, ?> parameters);
+
+    /** 绑定路径可使用与动态表达式不同的语法；默认沿用普通表达式规则。 */
+    default SqlValue evaluateParameter(String expression, Map<String, ?> parameters) { return evaluate(expression, parameters); }
 }

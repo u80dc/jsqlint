@@ -100,6 +100,7 @@ final class AnalysisSession {
             diagnosticLocation = Optional.of(item.seed().location());
             int diagnosticStart = diagnostics.size();
             SqlNode template;
+            Optional<SqlDefinition> definition = Optional.empty();
             try {
                 SqlInput input = item.seed().input();
                 if (input instanceof SqlInput.ValueAt value) {
@@ -111,15 +112,17 @@ final class AnalysisSession {
                         continue;
                     }
                 }
+                if (input instanceof SqlInput.Definition source) definition = Optional.of(source.definition());
                 template = switch (input) {
                     case SqlInput.Template source -> source.node();
+                    case SqlInput.Definition source -> source.definition().template();
                     case SqlInput.ValueAt source -> pipeline.template(source);
                 };
             } catch (Exception e) {
                 recover("SQL_EXTRACTION", item.seed().location().toString(), e);
                 template = ValueSqlNode.raw("unresolvedSql");
             }
-            publishTemplate(item, template, diagnosticStart);
+            publishTemplate(item, template, diagnosticStart, definition);
             diagnosticLocation = Optional.empty();
             progress(stage);
         }
@@ -171,9 +174,17 @@ final class AnalysisSession {
     }
 
     private void publishTemplate(Pending item, SqlNode template, int diagnosticStart) {
-        var rendered = render(item, template);
+        publishTemplate(item, template, diagnosticStart, Optional.empty());
+    }
+
+    private void publishTemplate(Pending item, SqlNode template, int diagnosticStart, Optional<SqlDefinition> definition) {
+        definition.ifPresent(source -> source.issues().forEach(issue -> incomplete("SQL_DEFINITION", issue)));
+        SqlNodeRenderer.RenderedSql rendered;
+        try { rendered = SqlNodeRenderer.render(template, item.seed().parameters(),
+                definition.map(SqlDefinition::evaluator).orElseGet(SqlExpressionEvaluator::simple)); }
+        catch (Exception e) { recover("SQL_RENDERING", item.seed().location().toString(), e, false); rendered = null; }
         var result = new SqlTemplateResult(item.moduleId(), item.seed().location(), template,
-                Optional.ofNullable(rendered), diagnostics.subList(diagnosticStart, diagnostics.size()));
+                Optional.ofNullable(rendered), diagnostics.subList(diagnosticStart, diagnostics.size()), definition);
         sqlResults.add(result);
         notifyListener(listener -> listener.onSqlResult(result));
         analyzed++;
@@ -194,7 +205,7 @@ final class AnalysisSession {
     private void publishExtraction(SqlExtraction extraction) {
         sqlResults.add(extraction);
         if (!extraction.complete()) incomplete("SQL_DATA_FLOW_INCOMPLETE", extraction.location().toString());
-        var uncovered = extraction.rawSqls().stream().flatMap(variant -> variant.jointInference().stream())
+        var uncovered = extraction.statements().stream().flatMap(statement -> statement.jointInferences().stream())
                 .filter(joint -> !joint.coverageComplete()).toList();
         if (!uncovered.isEmpty()) {
             var reasons = uncovered.stream().flatMap(joint -> java.util.stream.Stream.concat(joint.issues().stream(),

@@ -146,14 +146,39 @@ class SqlSampleTest {
         assertEquals(2, samples.stream().map(SqlSample::batchEntry).distinct().count());
     }
 
+    @Test
+    void genericTemplateRenderLimitMakesTheSessionPartialAndKeepsItsSource() throws Exception {
+        var location = new SourceLocation(URI.create("memory:/generic.sql"), "generic.query");
+        var definition = new SqlDefinition("generic.query", location,
+                new MixedSqlNode(Collections.nCopies(10001, ValueSqlNode.parameter("p"))));
+        var module = new org.u80dc.jsqlint.core.spi.SqlAnalysisModule() {
+            public String id() { return "generic-template"; }
+            public void register(org.u80dc.jsqlint.core.spi.DiscoveryRegistry registry) {
+                registry.extraction(site -> site.invocation().getMethodSignature().getName().equals("execute"),
+                        (point, flow) -> List.of(org.u80dc.jsqlint.core.spi.SqlTraceSource.template(
+                                new org.u80dc.jsqlint.core.spi.TemplateSqlInput(definition, Map.of(), Optional.empty(), Optional.empty(), Map.of("p", 7)), List.of())));
+            }
+        };
+        var result = new Analyzer(List.of(module), List.of()).analyze(compile("public void run() { execute(); } void execute() {}"));
+        assertEquals(AnalysisResult.Status.PARTIAL, result.status());
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("SQL_RENDER_LIMIT")));
+        var sample = only(result.samples());
+        assertSame(definition, sample.definition().orElseThrow()); assertTrue(sample.sql().isEmpty());
+        assertEquals(Optional.of(false), sample.assessment().pathCoverageComplete());
+        assertTrue(sample.assessment().sourcesComplete());
+    }
+
     private AnalysisResult analyze(String methods, AnalyzerConfig config) throws Exception {
+        var result = new Analyzer(config, List.of(new JdbcAnalysisModule()), List.of()).analyze(compile(methods));
+        assertNotEquals(AnalysisResult.Status.FAILED, result.status(), result.diagnostics().toString());
+        return result;
+    }
+    private Path compile(String methods) throws Exception {
         Path root = Files.createDirectory(temporary.resolve(UUID.randomUUID().toString()));
         Path source = Files.writeString(root.resolve("Sample.java"), "public class Sample {" + methods + "}");
         Path classes = Files.createDirectory(root.resolve("classes"));
         assertEquals(0, ToolProvider.getSystemJavaCompiler().run(null, null, null, "-proc:none", "-g", "-d", classes.toString(), source.toString()));
-        var result = new Analyzer(config, List.of(new JdbcAnalysisModule()), List.of()).analyze(classes);
-        assertNotEquals(AnalysisResult.Status.FAILED, result.status(), result.diagnostics().toString());
-        return result;
+        return classes;
     }
 
     private static <T> T only(List<T> values) { assertEquals(1, values.size(), values.toString()); return values.getFirst(); }

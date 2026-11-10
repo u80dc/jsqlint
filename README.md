@@ -10,7 +10,7 @@
 | `jsqlint-commons` | 统一 SootUp 输入，支持字节码、Java 源码及 Maven/Gradle 项目自动编译（[使用说明](jsqlint-commons/README.md)） |
 | `jsqlint-core` | 统一分析入口、资源与模块 SPI、SQL 值追踪及动态节点渲染（[分析器说明](jsqlint-core/ANALYSIS.md)） |
 | `jsqlint-jdbc` | 可选 JDBC 调用点与 SQL 参数适配 |
-| `jsqlint-mybatis` | 可选 MyBatis XML、include 和 SQL 注解适配 |
+| `jsqlint-mybatis` | MyBatis SQL 定义、Mapper 实参和参数化样例适配（[使用说明](jsqlint-mybatis/README.md)） |
 | `jsqlint-test` | 集中存放所有模块的测试代码与测试资源（[使用说明](jsqlint-test/README.md)） |
 | `shared-test-resources` | 可独立构建和运行的分析目标样例（[样例列表](shared-test-resources/README.md)） |
 

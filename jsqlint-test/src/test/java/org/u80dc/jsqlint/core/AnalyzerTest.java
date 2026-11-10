@@ -281,7 +281,7 @@ class AnalyzerTest {
         var unresolved = assertInstanceOf(SqlTemplateResult.class, result.sqlResults().getFirst());
         assertTrue(unresolved.template().isDynamic());
         var diagnostic = unresolved.diagnostics().getFirst();
-        assertEquals("SQL_EXTRACTION", diagnostic.code());
+        assertEquals("SQL_DEFINITION", diagnostic.code());
         assertEquals(Optional.of(unresolved.location()), diagnostic.location());
         assertEquals(AnalysisListener.Stage.ANALYZING, diagnostic.stage());
         assertTrue(diagnostic.incomplete());
@@ -679,7 +679,7 @@ class AnalyzerTest {
         assertEquals(2, capture.sql.size());
         assertEquals(List.of("SELECT 13"), capture.completeSql());
         assertEquals(2, result.sqlResults().size());
-        assertEquals(List.of("SELECT 13"), result.rawSqls().stream().map(RawSql.Variant::text).toList());
+        assertEquals(Set.of("SELECT 13", "SELECT ?"), result.rawSqls().stream().map(RawSql.Variant::text).collect(java.util.stream.Collectors.toSet()));
         assertTrue(result.sqlResults().stream().allMatch(SqlTemplateResult.class::isInstance));
     }
 

@@ -25,7 +25,12 @@ public final class ValueSqlNode implements SqlNode {
      * 保留模板中的绑定选项，供适配层解释；core 的样例渲染不执行类型处理器。
      */
     private final String bindingOptions;
+    /** 使用位置提供的 Java 类型提示；空字符串表示由输入值或传播结果确定。 */
+    private final String valueType;
     private ValueSqlNode(String expression, Kind kind, String nullText, String bindingOptions) {
+        this(expression, kind, nullText, bindingOptions, "");
+    }
+    private ValueSqlNode(String expression, Kind kind, String nullText, String bindingOptions, String valueType) {
         if (expression == null || expression.isBlank()) {
             throw new IllegalArgumentException("expression must not be blank");
         }
@@ -33,6 +38,7 @@ public final class ValueSqlNode implements SqlNode {
         this.kind = kind;
         this.nullText = Objects.requireNonNull(nullText, "nullText");
         this.bindingOptions = Objects.requireNonNull(bindingOptions, "bindingOptions");
+        this.valueType = Objects.requireNonNull(valueType, "valueType");
     }
 
     public static ValueSqlNode raw(String expression) {
@@ -52,6 +58,9 @@ public final class ValueSqlNode implements SqlNode {
 
     public static ValueSqlNode parameter(String expression, String bindingOptions) {
         return new ValueSqlNode(expression, Kind.PARAMETER, "NULL", bindingOptions);
+    }
+    public static ValueSqlNode parameter(String expression, String bindingOptions, String valueType) {
+        return new ValueSqlNode(expression, Kind.PARAMETER, "NULL", bindingOptions, valueType);
     }
 
     @Override

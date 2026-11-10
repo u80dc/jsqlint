@@ -4,6 +4,7 @@ import org.u80dc.jsqlint.core.node.SqlNodeRenderer.RenderedSql;
 import org.u80dc.jsqlint.core.node.SqlValue;
 import org.u80dc.jsqlint.core.parameter.JointSqlInferenceResult.Combination;
 import org.u80dc.jsqlint.core.spi.SourceLocation;
+import org.u80dc.jsqlint.core.dataflow.ValueTrace;
 
 import java.util.*;
 
@@ -14,11 +15,18 @@ import java.util.*;
  */
 public record SqlSample(SqlResult source, Optional<SourceLocation> batchEntry, RenderedSql rendered,
                         List<Binding> bindings, Feasibility feasibility, SqlAssessment assessment,
-                        List<String> issues, Optional<RawSql.Variant> rawSql, Optional<Combination> combination) {
+                        List<String> issues, Optional<RawSql.Variant> rawSql, Optional<Combination> combination,
+                        Optional<SqlDefinition> definition) {
     public SqlSample {
         Objects.requireNonNull(source); Objects.requireNonNull(batchEntry); Objects.requireNonNull(rendered);
         bindings = List.copyOf(bindings); Objects.requireNonNull(feasibility); Objects.requireNonNull(assessment);
         issues = List.copyOf(issues); Objects.requireNonNull(rawSql); Objects.requireNonNull(combination);
+        Objects.requireNonNull(definition);
+    }
+    public SqlSample(SqlResult source, Optional<SourceLocation> batchEntry, RenderedSql rendered,
+                     List<Binding> bindings, Feasibility feasibility, SqlAssessment assessment,
+                     List<String> issues, Optional<RawSql.Variant> rawSql, Optional<Combination> combination) {
+        this(source, batchEntry, rendered, bindings, feasibility, assessment, issues, rawSql, combination, Optional.empty());
     }
     public String moduleId() { return source.moduleId(); }
     public SourceLocation location() { return source.location(); }
@@ -28,10 +36,15 @@ public record SqlSample(SqlResult source, Optional<SourceLocation> batchEntry, R
     public enum Feasibility { SATISFIABLE, UNVERIFIED, UNKNOWN }
 
     /** keyValue 为实际位置/名称，key 保留来源标识；已知 null 与 Unknown 均原样保存。 */
-    public record Binding(String key, String type, SqlValue keyValue, SqlValue value, SourceLocation location) {
+    public record Binding(String key, String type, SqlValue keyValue, SqlValue value, SourceLocation location,
+                          String options, Optional<ValueTrace> trace) {
         public Binding {
             Objects.requireNonNull(key); Objects.requireNonNull(type); Objects.requireNonNull(keyValue);
             Objects.requireNonNull(value); Objects.requireNonNull(location);
+            Objects.requireNonNull(options); Objects.requireNonNull(trace);
+        }
+        public Binding(String key, String type, SqlValue keyValue, SqlValue value, SourceLocation location) {
+            this(key, type, keyValue, value, location, "", Optional.empty());
         }
     }
 }

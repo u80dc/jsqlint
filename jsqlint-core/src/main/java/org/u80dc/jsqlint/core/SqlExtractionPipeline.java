@@ -38,6 +38,7 @@ final class SqlExtractionPipeline {
         List<SqlExtraction> extracted = new ArrayList<>();
         var mode = config.inferenceOptions().mode();
         var joint = mode.jointEnabled() ? new JointSqlValueInferencer(flow, config.jointBudgets(), this::externalGenerator) : null;
+        var templates = new TemplateExtractionPipeline(flow, checkpoint, this::reportTraceLimits, errors, this::inferParameter, incomplete);
         for (var context : flow.contexts(site.method())) {
             checkpoint.run();
             List<SqlExtraction.Statement> statements = new ArrayList<>();
@@ -51,6 +52,10 @@ final class SqlExtractionPipeline {
                     Optional<ValueTrace> sql = source.sql().map(flow::trace);
                     // 同一语句共享入口值；其他调用上下文和批次使用独立的推断状态。
                     var inference = mode.parametersEnabled() ? new ParameterValueInferencer(externalGenerator(), checkpoint) : null;
+                    if (source.templateInput().isPresent()) {
+                        statements.add(templates.extract(source, point, inference, joint, sourceIssues));
+                        continue;
+                    }
                     List<SqlExtraction.Binding> bindings = new ArrayList<>();
                     for (var binding : source.bindings()) {
                         var value = flow.trace(binding.value());

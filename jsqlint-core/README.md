@@ -97,6 +97,21 @@ XML 模式支持 `if`、`choose/when/otherwise`、`foreach`、`where`、`set`、
 
 ## 渲染与未知值
 
+通用模板的 `render` 保留字面量预览语义。参数化输出使用 `renderBound`：
+
+```java
+var node = SqlNodeBuilder.templateText("SELECT * FROM users WHERE id=#{id}");
+var bound = SqlNodeRenderer.renderBound(node, Map.of("id", 7), SqlExpressionEvaluator.simple());
+assert bound.rendered().sql().orElseThrow().equals("SELECT * FROM users WHERE id=?");
+assert bound.bindings().getFirst().value().equals(new SqlValue.Known(7));
+```
+
+未知绑定值仍输出 `?` 并记录诊断，`BoundSql.valuesComplete()` 单独判断参数是否可用。
+绑定表达式、位置、类型提示及适配层选项分别保存；`SqlExpressionEvaluator.evaluateParameter`
+允许适配层为绑定路径指定不同于动态表达式的语法。
+参数化渲染接受 checkpoint，使用有界节点/循环预算，未完成的控制结构不会泄露绑定快照。
+`MixedSqlNode.separator` 默认空串，适配层可显式指定各层文本的连接方式。
+
 ```java
 SqlNode node = SqlNodeBuilder.buildScript(
         "SELECT * FROM users <if test='enabled'>WHERE id=#{id}</if>");
