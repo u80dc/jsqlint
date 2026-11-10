@@ -1,6 +1,7 @@
 package org.u80dc.jsqlint.core.dataflow;
 
 import org.u80dc.jsqlint.core.spi.InvocationSite;
+import org.u80dc.jsqlint.core.spi.SqlCallSite;
 import sootup.core.jimple.common.expr.*;
 import sootup.core.jimple.common.stmt.*;
 import sootup.core.jimple.common.ref.JFieldRef;
@@ -21,6 +22,7 @@ public final class ProgramIndex {
     private final Runnable checkpoint;
     private final Map<Dispatch, CallResolution> targets = new HashMap<>();
     private final Map<MethodSignature, List<InvocationSite>> callers = new LinkedHashMap<>();
+    private final Map<SqlCallSite, InvocationSite> invocations = new LinkedHashMap<>();
     private final Map<ClassType, Set<ClassType>> ancestors = new HashMap<>();
     private final Map<FieldSignature, List<FlowPoint>> writes = new HashMap<>();
     private boolean fieldsIndexed;
@@ -29,6 +31,7 @@ public final class ProgramIndex {
         this.view = view; this.classes = List.copyOf(classes); this.checkpoint = checkpoint;
         for (InvocationSite call : calls) {
             checkpoint.run();
+            invocations.put(SqlCallSite.invocation(call), call);
             Set<MethodSignature> signatures = new LinkedHashSet<>();
             signatures.add(call.invocation().getMethodSignature());
             targets(call).forEach(method -> signatures.add(method.getSignature()));
@@ -49,12 +52,21 @@ public final class ProgramIndex {
         fieldsIndexed = true;
     }
     public JavaView view() { return view; }
+    /** 保存框架声明的隐式调用，仅用于本次分析，不改变目标字节码或实际调用者索引。 */
+    public void registerImplicitInvocation(InvocationSite site) { invocations.put(SqlCallSite.invocation(site), site); }
+    public Optional<InvocationSite> invocation(SqlCallSite site) { return Optional.ofNullable(invocations.get(site)); }
+    public Optional<InvocationSite> invocation(MethodSignature caller, int statement, MethodSignature target) {
+        return invocations.values().stream().filter(site -> site.method().getSignature().equals(caller)
+                && site.statementIndex() == statement && site.invocation().getMethodSignature().equals(target)).findFirst();
+    }
     public Map<MethodSignature, List<InvocationSite>> callers() { return Collections.unmodifiableMap(callers); }
     public List<FlowPoint> writes(FieldSignature field) { indexFields(); return List.copyOf(writes.getOrDefault(field, List.of())); }
 
     public List<JavaSootMethod> targets(InvocationSite site) {
         return resolution(site).applicationTargets();
     }
+    /** 只按已确定的接收者类型解析，不扩展到其他 CHA 实现。 */
+    public Optional<JavaSootMethod> resolveMethod(ClassType receiver, MethodSubSignature signature) { return resolve(receiver, signature); }
 
     /** 可分析目标与外部边界分开保留，避免“有一个已知实现”被当作“已知全部实现”。 */
     public CallResolution resolution(InvocationSite site) {

@@ -20,7 +20,7 @@ record HeapExposure(List<Root> roots, List<Store> stores, boolean externalCall, 
         boolean external = externalCall;
         int at = position + 1;
         var site = point.invocation(analysis.program().view());
-        if (collectCalls && site.isPresent() && analysis.program().resolution(site.get()).hasExternalTargets()) {
+        if (collectCalls && site.isPresent() && analysis.resolution(site.get(), point.context()).hasExternalTargets()) {
             external = true;
             var arguments = new ArrayList<>(site.get().invocation().getArgs());
             if (site.get().invocation() instanceof AbstractInstanceInvokeExpr instance) arguments.add(instance.getBase());

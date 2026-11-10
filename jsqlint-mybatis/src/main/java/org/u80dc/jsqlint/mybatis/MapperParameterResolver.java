@@ -11,6 +11,7 @@ import sootup.java.core.views.JavaView;
 
 import java.io.IOException;
 import java.util.*;
+import java.util.function.IntFunction;
 
 /** MyBatis ParamNameResolver 规则与通用 ValuePoint 之间的适配，不承担 Java 值传播。 @author u80dc */
 final class MapperParameterResolver {
@@ -22,14 +23,19 @@ final class MapperParameterResolver {
     MapperParameterResolver(MybatisOptions options) { this.options = options; }
 
     SqlTraceSource resolve(SqlDefinition definition, JavaSootMethod method, InvocationSite site, FlowPoint point) {
+        return resolve(definition, method, site.view(), index -> new TemplateSqlInput.Parameter(
+                point.value(site.invocation().getArg(index)), method.getParameterType(index).toString()));
+    }
+    SqlTraceSource resolve(SqlDefinition definition, JavaSootMethod method, JavaView view,
+                           IntFunction<TemplateSqlInput.Parameter> values) {
         List<String> issues = new ArrayList<>();
-        var info = parameters(method, site.view(), issues);
+        var info = parameters(method, view, issues);
         List<Argument> arguments = new ArrayList<>();
         boolean annotated = false;
         for (int i = 0; i < method.getParameterCount(); i++) {
             String type = method.getParameterType(i).toString();
-            if (subtype(type, "org.apache.ibatis.session.RowBounds", site.view())
-                    || subtype(type, "org.apache.ibatis.session.ResultHandler", site.view())) continue;
+            if (subtype(type, "org.apache.ibatis.session.RowBounds", view)
+                    || subtype(type, "org.apache.ibatis.session.ResultHandler", view)) continue;
             String name = null;
             for (var annotation : info.parameters().get(i).annotations()) {
                 if (annotation.type().equals("org.apache.ibatis.annotations.Param")) {
@@ -39,7 +45,7 @@ final class MapperParameterResolver {
             }
             if (name == null) name = options.useActualParamName() ? info.parameters().get(i).name().orElse("arg" + i)
                     : Integer.toString(arguments.size());
-            arguments.add(new Argument(name, new TemplateSqlInput.Parameter(point.value(site.invocation().getArg(i)), type)));
+            arguments.add(new Argument(name, values.apply(i)));
         }
         Map<String, TemplateSqlInput.Parameter> aliases = new LinkedHashMap<>();
         Optional<TemplateSqlInput.Parameter> fallback = Optional.empty(); Optional<String> parameterMapName = Optional.empty();
@@ -64,7 +70,7 @@ final class MapperParameterResolver {
         return SqlTraceSource.template(new TemplateSqlInput(definition, aliases, fallback, parameterMapName, constants), issues);
     }
 
-    private MethodParameterMetadata parameters(JavaSootMethod method, JavaView view, List<String> issues) {
+    MethodParameterMetadata parameters(JavaSootMethod method, JavaView view, List<String> issues) {
         if (method.getParameterCount() == 0) return new MethodParameterMetadata(List.of());
         var cached = metadata.get(method.getSignature()); if (cached != null) return cached;
         try {
@@ -74,9 +80,14 @@ final class MapperParameterResolver {
             return new MethodParameterMetadata(Collections.nCopies(method.getParameterCount(), new MethodParameterMetadata.Parameter(Optional.empty(), List.of())));
         }
     }
-    private static boolean subtype(String name, String target, JavaView view) {
+    static boolean subtype(String name, String target, JavaView view) {
         if (name.equals(target)) return true;
-        if (SCALARS.contains(name) || name.endsWith("[]")) return false;
+        if (Set.of("void", "null", "boolean", "byte", "char", "short", "int", "long", "float", "double").contains(name)) return false;
+        if (target.equals("java.lang.Object")) return true;
+        if (target.equals("java.lang.CharSequence") && Set.of("java.lang.String", "java.lang.StringBuilder", "java.lang.StringBuffer").contains(name)) return true;
+        if (name.equals("org.apache.ibatis.binding.MapperMethod$ParamMap")
+                && Set.of("java.util.Map", "java.util.HashMap", "java.util.AbstractMap", "java.io.Serializable", "java.lang.Cloneable").contains(target)) return true;
+        if (name.endsWith("[]")) return Set.of("java.lang.Cloneable", "java.io.Serializable").contains(target);
         Deque<ClassType> pending = new ArrayDeque<>(); Set<ClassType> visited = new HashSet<>();
         pending.add(view.getIdentifierFactory().getClassType(name));
         while (!pending.isEmpty()) {

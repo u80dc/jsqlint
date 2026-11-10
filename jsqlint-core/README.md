@@ -14,6 +14,10 @@ JDBC 字符串拼接 ──转换───────┘
 
 `jsqlint-jdbc` 识别 SQL 参数位置，通用拼接值追踪与节点构造由 core 执行；
 `jsqlint-mybatis` 适配 mapper、include 等框架上下文。`core` 接收转换结果，也允许直接构造节点。
+Provider 的隐式方法调用和 Java 返回值通过 `ValueFlowModel` 接入通用追踪，框架只提供参数与对象语义。
+`ComputedDefinition` 在共享程序索引就绪后计算未调用定义；冻结的来源可由 `TraceSqlExpressionEvaluator` 重演。
+`TemplateSqlInput` 可同时保存真实 Java SQL 来源和命名参数来源，渲染仍使用统一参数化节点。
+Map 快照、对象逃逸历史和控制流选择均使用通用模型；core 不解释 Provider 注解或 MyBatis SQL 子句。
 节点采用密封接口、不可变列表及构造校验，不需要为不同来源建立平行的节点继承体系。
 
 ## 节点数据模型
@@ -109,7 +113,11 @@ assert bound.bindings().getFirst().value().equals(new SqlValue.Known(7));
 未知绑定值仍输出 `?` 并记录诊断，`BoundSql.valuesComplete()` 单独判断参数是否可用。
 绑定表达式、位置、类型提示及适配层选项分别保存；`SqlExpressionEvaluator.evaluateParameter`
 允许适配层为绑定路径指定不同于动态表达式的语法。
-参数化渲染接受 checkpoint，使用有界节点/循环预算，未完成的控制结构不会泄露绑定快照。
+`BoundParameter.origin()` 保存输入、字面量或派生表达式来源。`evaluateWithReferences` 默认通过只读
+Map 的实际访问跟踪依赖；适配求值器也可返回自身语言的结构化引用。core 根据这些引用关联 Java
+传播证据，保留 bind 转换和 foreach 元素来源；值与来源遵守同一局部作用域和回滚规则。
+字面量和参数化渲染均接受 checkpoint，使用 10000 步的节点/循环预算。预算耗尽时返回
+`RENDER_LIMIT`，回滚当前渲染的绑定和局部值，残余节点配合原始参数可重新渲染。
 `MixedSqlNode.separator` 默认空串，适配层可显式指定各层文本的连接方式。
 
 ```java

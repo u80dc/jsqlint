@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.u80dc.jsqlint.core.*;
 import org.u80dc.jsqlint.core.node.SqlValue;
+import org.u80dc.jsqlint.core.dataflow.ValueTrace;
 import org.u80dc.jsqlint.jdbc.JdbcAnalysisModule;
 
 import javax.tools.ToolProvider;
@@ -102,6 +103,44 @@ class MybatisExtractionTest {
         xml(classes, "<select id='query'>SELECT #{param1},#{param2},#{id}</select>");
         assertEquals(List.of(new SqlValue.Known(7), new SqlValue.Known(7), new SqlValue.Known(8)),
                 values(onlyCalls(analyze(classes, AnalyzerConfig.defaults(), MybatisOptions.defaults()))));
+    }
+
+    @Test void scalarFallbackBindsKeepEachTransformInThePropagationEvidence() throws Exception {
+        Path classes = compile("""
+                interface Mapper {
+                    @Select("<script><bind name='pattern' value='_parameter + &quot;!&quot;'/><bind name='next' value='pattern + &quot;?&quot;'/>SELECT #{next},#{_parameter}</script>")
+                    Object query(String value);
+                }
+                public class Sample { public void run(Mapper mapper) { mapper.query("abc"); } }
+                """, false);
+        var sample = onlyCalls(analyze(classes, AnalyzerConfig.defaults(), MybatisOptions.defaults()));
+        assertEquals(List.of(new SqlValue.Known("abc!?"), new SqlValue.Known("abc")), values(sample));
+        var trace = sample.bindings().getFirst().trace().orElseThrow();
+        assertEquals(ValueTrace.Kind.EXPRESSION, trace.root().kind());
+        assertEquals("pattern + \"?\"", trace.root().computation().text());
+        var firstTransform = trace.root().inputs().getFirst();
+        assertEquals(ValueTrace.Kind.EXPRESSION, firstTransform.kind());
+        assertEquals("_parameter + \"!\"", firstTransform.computation().text());
+        assertEquals(ValueTrace.Operation.LITERAL, firstTransform.inputs().getFirst().computation().operation());
+        assertEquals("abc", firstTransform.inputs().getFirst().computation().text());
+        assertEquals(ValueTrace.Kind.CONSTANT, sample.bindings().getLast().trace().orElseThrow().root().kind());
+    }
+
+    @Test void bindsShadowOnlyTheirOwnNameAndDoNotAcquireUnrelatedArgumentSources() throws Exception {
+        Path classes = compile("""
+                interface Mapper {
+                    @Select("<script><bind name='name' value='name + &quot;!&quot;'/>SELECT #{name},#{param1},#{_parameter.name}</script>")
+                    Object query(@Param("name") String name, @Param("unused") int unused);
+                }
+                public class Sample { public void run(Mapper mapper) { mapper.query("abc", 9); } }
+                """, false);
+        var sample = onlyCalls(analyze(classes, AnalyzerConfig.defaults(), MybatisOptions.defaults()));
+        assertEquals(List.of(new SqlValue.Known("abc!"), new SqlValue.Known("abc"), new SqlValue.Known("abc")), values(sample));
+        var transformed = sample.bindings().getFirst().trace().orElseThrow().root();
+        assertEquals(ValueTrace.Kind.EXPRESSION, transformed.kind()); assertEquals(1, transformed.inputs().size());
+        assertEquals("abc", transformed.inputs().getFirst().computation().text());
+        assertEquals(ValueTrace.Kind.CONSTANT, sample.bindings().get(1).trace().orElseThrow().root().kind());
+        assertTrue(sample.assessment().sourcesComplete()); assertTrue(sample.assessment().valuesComplete());
     }
 
     @Test void extractAndParameterModesRetainSymbolicBindingsWithoutCombiningIndependentCandidates() throws Exception {

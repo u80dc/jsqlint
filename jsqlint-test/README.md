@@ -14,12 +14,17 @@ JUnit 依赖由本模块声明，版本由父 POM 的 JUnit BOM 管理。
 当前还以 test scope 引入 jdbc、mybatis，验证统一分析入口、SPI、字节码与源码输入、
 资源筛选、框架起点、值传播、取消、超时和输入关闭约定。
 
-`SqlNodeBoundRendererTest` 验证参数化 SQL 的有序绑定、未知值、作用域回滚和渲染预算。
+`SqlNodeBoundRendererTest` 验证参数化 SQL 的有序绑定、未知值、派生来源、作用域回滚和渲染预算。
+`SqlDefinitionSnapshotTest` 验证 seed 参数快照、默认读取不求值、显式样例隔离、旧构造器兼容、
+定义预算在分析返回前报告，以及渲染中的取消检查。
 `MethodParameterMetadataTest` 验证 class/JAR 的参数名称、可见/不可见注解与完整重载签名。
 `MybatisDefinitionTest`、`MybatisExtractionTest` 验证定义索引、databaseId、include、继承、重复定义、
 @Param/argN/paramN、特殊参数跳过、标量跨方法追踪、混合 JDBC、会话和取消语义。
+同时验证连续 bind 的转换证据、同名绑定遮蔽与无关参数来源隔离。
 `MybatisSqlSemanticsTest` 与真实 MyBatis BoundSql/OGNL 对照绑定和纯表达式行为；参数命名规则在
 `MybatisExtractionTest` 中与 ParamNameResolver 对照验证。
+`MybatisProviderTest` 覆盖四类 Provider、默认/继承方法选择、Map/命名参数、ProviderContext、返回分支、
+SQL 构造器、真实 ProviderSqlSource 对照、目标代码不执行，以及错误声明、对象逃逸、预算和取消。
 `JdbcDataFlowTest` 验证 SQL/绑定变量追到 main 或顶层方法、跨方法工厂返回与绑定、接口调用、
 局部及字段别名、覆盖/清空、分支、批次快照、命名参数和 setNull；递归及不确定来源应保留并标为不完整。
 回归用例还覆盖数组元素及跨方法写入、覆盖顺序、默认值、不确定别名/下标、批处理的可能别名清理与加入、
@@ -27,6 +32,8 @@ JUnit 依赖由本模块声明，版本由父 POM 的 JUnit BOM 管理。
 依赖库测试将辅助类单独编译并作为依赖输入，避免误把库方法当作项目方法分析。
 还验证依赖接口/抽象类的开放分派边界、String 构造参数与未知对象内容、嵌套容器/静态字段逃逸、
 连续批次的正常与异常执行、参数绑定保留，以及每条 SQL 的来源完整性与模板恢复诊断隔离。
+签名回归覆盖标准重载、工厂协变返回和 SQLType setter；扩展工厂、setter、清除和批次重载
+不会误用标准语义，项目包装方法仍可追踪到内部标准调用。
 `JdbcRawSqlTest` 验证基于传播链的 raw SQL 恢复：变量命名和重复位置、原始文本保真、跨方法 SQL 参数转发、
 String.concat 与 quote 辅助方法、分支/数组、JDBC `?` 独立绑定、未知操作、同名及转换后变量隔离、
 null/字符/布尔转换、缺少调试信息时的参数名称，以及候选数量和字符串扩张的预算限制。
@@ -117,7 +124,8 @@ Gradle 集成测试可以通过 `'-Djsqlint.test.gradle.home=C:\path\to\gradle'`
 ## MyBatis 共享样例分析
 
 `MybatisUserQueryAnalysisTest` 将 `shared-test-resources/mybatis-user-query` Maven 项目直接交给 Analyzer，
-验证 8 条 XML/注解定义、7 个 Mapper 调用、跨层标量实参、include、set、bind/if/where 和 `${}`/`#{}` 的联合样例。
+验证 13 条 XML/直接 SQL 注解/Provider 定义、11 个 Mapper 调用、跨层实参、include、set、bind/if/where 和 `${}`/`#{}` 的联合样例。
+四类 Provider 覆盖静态/实例方法、默认方法解析器、Map/命名参数、ProviderContext 和局部/链式/匿名 SQL 构造器。
 测试不执行目标程序或访问数据库，并在编译目录清理后读取保存的来源和绑定快照。
 XML 条件尚未加入联合求解，对应样例应保留 UNKNOWN、路径覆盖 false 和 PARTIAL 诊断。
 报告保存到 `target/mybatis-user-query-sql-report.txt`。

@@ -43,7 +43,7 @@ final class TemplateExtractionPipeline {
         Map<String, ParameterValueInferenceResult> parameters = new LinkedHashMap<>();
         keys.forEach((parameter, name) -> {
             checkpoint.run();
-            var trace = flow.trace(parameter.value()); traceLimits.accept(trace);
+            var trace = parameter.trace(flow); traceLimits.accept(trace);
             traces.put(name, trace);
             parameters.put(name, inferParameter.infer(inference, name, trace, parameter.type()));
         });
@@ -94,11 +94,11 @@ final class TemplateExtractionPipeline {
         var savedJoint = jointResult;
         List<RawSql.Variant> variants = new ArrayList<>();
         for (var model : models) model.bound().rendered().sql().ifPresent(text -> variants.add(
-                new RawSql.Variant(text, List.of(), Optional.empty(), model.bindings(), savedJoint)));
+                new RawSql.Variant(text, List.of(), input.sqlSource(), model.bindings(), savedJoint)));
         var saved = new TemplateInferenceResult(traces, parameters, aliases, fallback, input.parameterMapName(), input.constants(),
                 jointResult, models, jointResult.map(JointSqlInferenceResult::issues).orElse(List.of()));
         var bindings = models.stream().flatMap(model -> model.bindings().stream()).distinct().toList();
-        return new SqlExtraction.Statement(Optional.empty(), definition.template(), bindings, source.batchEntry(), sourceIssues,
+        return new SqlExtraction.Statement(input.sqlSource(), definition.template(), bindings, source.batchEntry(), sourceIssues,
                 definition.issues(), new RawSql(variants, definition.issues()), Optional.of(definition), Optional.of(saved));
     }
 
@@ -109,19 +109,20 @@ final class TemplateExtractionPipeline {
     private TemplateInferenceResult.BoundModel render(SqlDefinition definition, TemplateInferenceResult state, FlowPoint point,
                                                       Optional<JointSqlInferenceResult.Combination> combination, List<String> issues) {
         var selected = combination.map(JointSqlInferenceResult.Combination::parameters).orElse(Map.of());
-        var bound = definition.render(state.environment(selected), checkpoint);
+        var environment = state.environment(selected);
+        var bound = definition.render(environment, reference -> inputOrigin(state, environment, reference), checkpoint);
+        var sources = new TemplateSources(state, selected, point);
         List<SqlExtraction.Binding> bindings = new ArrayList<>();
         List<JointSqlInferenceResult.BindingValue> values = new ArrayList<>();
         for (var slot : bound.bindings()) {
             checkpoint.run();
-            String name = sourceKey(state, slot.expression());
-            String type = !slot.type().isEmpty() ? slot.type() : name != null ? state.parameters().get(name).type()
-                    : slot.value() instanceof SqlValue.Known known && known.value() != null ? known.value().getClass().getName() : "java.lang.Object";
-            var trace = expressionTrace(state, selected, point, slot.expression(), type);
+            var names = sources.keys(slot.origin());
+            String type = bindingType(state, slot, names);
+            var trace = sources.trace(slot.origin(), type, 0);
+            traceLimits.accept(trace);
             var keyTrace = positionTrace(point, slot.position());
-            var selectedValue = name == null ? null : selected.get(name);
             var inferred = new InferredParameterValue(slot.value(), trace,
-                    selectedValue != null ? selectedValue.initialValues() : selected.values().stream()
+                    names.stream().map(selected::get).filter(Objects::nonNull)
                         .flatMap(value -> value.initialValues().stream()).distinct().toList(),
                     slot.value() instanceof SqlValue.Unknown unknown ? List.of(unknown.reason()) : List.of());
             String key = Integer.toString(slot.position());
@@ -136,27 +137,114 @@ final class TemplateExtractionPipeline {
         return new TemplateInferenceResult.BoundModel(bound, bindings, enriched, issues);
     }
 
-    private static @Nullable String sourceKey(TemplateInferenceResult state, String expression) {
-        String path = expression.strip();
-        if (state.parameterMapName().isPresent() && path.startsWith(state.parameterMapName().get() + "."))
-            path = path.substring(state.parameterMapName().get().length() + 1);
-        String root = path.split("[.\\[]", 2)[0];
-        if (state.aliases().containsKey(root)) return state.aliases().get(root);
-        if (expression.strip().matches("[\\p{L}_$][\\p{L}\\p{N}_$]*") && !state.constants().containsKey(root))
-            return state.fallback().orElse(null);
-        return null;
+    private static SqlValueOrigin inputOrigin(TemplateInferenceResult state, Map<String, Object> environment,
+                                              SqlExpressionEvaluator.Reference reference) {
+        String name = reference.name(); var path = reference.path();
+        String key = state.aliases().get(name);
+        boolean parameterMap = state.parameterMapName().filter(name::equals).isPresent();
+        if (key == null && parameterMap && !path.isEmpty() && path.getFirst() instanceof String property) {
+            key = state.aliases().get(property); path = path.subList(1, path.size());
+        }
+        SqlValueOrigin origin;
+        if (key != null) origin = new SqlValueOrigin.Input(key);
+        else if (state.constants().containsKey(name)) {
+            Object value = state.constants().get(name);
+            origin = new SqlValueOrigin.Literal(value instanceof SqlValue sqlValue ? sqlValue : new SqlValue.Known(value));
+        } else if (parameterMap) {
+            origin = new SqlValueOrigin.Expression("Named template parameters", state.sources().keySet().stream()
+                    .map(input -> (SqlValueOrigin) new SqlValueOrigin.Input(input)).toList());
+        } else if (state.fallback().isPresent() && environment.containsKey(name)) origin = new SqlValueOrigin.Input(state.fallback().get());
+        else origin = new SqlValueOrigin.Literal(new SqlValue.Unknown("Unmapped template input: " + name));
+        if (path.isEmpty()) return origin;
+        var inputs = new ArrayList<SqlValueOrigin>(); inputs.add(origin);
+        path.forEach(property -> inputs.add(new SqlValueOrigin.Literal(new SqlValue.Known(property))));
+        return new SqlValueOrigin.Expression("Template property access", inputs);
     }
 
-    private static ValueTrace expressionTrace(TemplateInferenceResult state, Map<String, InferredParameterValue> selected,
-                                               FlowPoint point, String expression, String type) {
-        String name = sourceKey(state, expression);
-        if (name != null && (state.aliases().containsKey(expression.strip()) || expression.strip().matches("[\\p{L}_$][\\p{L}\\p{N}_$]*")))
-            return selected.containsKey(name) ? selected.get(name).propagationPath() : state.sources().get(name);
-        var variable = variable(point, "template:" + expression, type);
-        var inputs = state.sources().entrySet().stream().map(entry -> selected.containsKey(entry.getKey())
-                ? selected.get(entry.getKey()).propagationPath().root() : entry.getValue().root()).toList();
-        return new ValueTrace(variable, point.context().snapshot(), new ValueTrace.Node(variable, ValueTrace.Kind.EXPRESSION,
-                "Rendered template expression: " + expression, inputs));
+    private static String bindingType(TemplateInferenceResult state, SqlNodeRenderer.BoundParameter slot, List<String> names) {
+        if (!slot.type().isEmpty()) return slot.type();
+        if (slot.origin() instanceof SqlValueOrigin.Input input && state.parameters().containsKey(input.name()))
+            return state.parameters().get(input.name()).type();
+        if (slot.value() instanceof SqlValue.Known known && known.value() != null) {
+            String actual = known.value().getClass().getName();
+            return names.stream().map(state.parameters()::get).filter(Objects::nonNull).map(ParameterValueInferenceResult::type)
+                    .filter(type -> boxed(type).equals(actual)).findFirst().orElse(actual);
+        }
+        return "java.lang.Object";
+    }
+    private static String boxed(String type) {
+        return switch (type) {
+            case "boolean" -> "java.lang.Boolean"; case "byte" -> "java.lang.Byte"; case "short" -> "java.lang.Short";
+            case "char" -> "java.lang.Character"; case "int" -> "java.lang.Integer"; case "long" -> "java.lang.Long";
+            case "float" -> "java.lang.Float"; case "double" -> "java.lang.Double"; default -> type;
+        };
+    }
+
+    /** 只连接渲染器返回的结构化来源，不按绑定表达式猜测 Java 参数。 */
+    private final class TemplateSources {
+        private final TemplateInferenceResult state;
+        private final Map<String, InferredParameterValue> selected;
+        private final ValueTrace.Variable position;
+        private final Map<SqlValueOrigin, Map<String, ValueTrace>> traces = new IdentityHashMap<>();
+        private final Map<SqlValueOrigin, List<String>> inputs = new IdentityHashMap<>();
+        private int nodes;
+        private TemplateSources(TemplateInferenceResult state, Map<String, InferredParameterValue> selected, FlowPoint point) {
+            this.state = state; this.selected = selected;
+            position = TemplateExtractionPipeline.variable(point, "template-value", "java.lang.Object");
+        }
+        private List<String> keys(SqlValueOrigin origin) {
+            return inputs.computeIfAbsent(origin, ignored -> {
+                var result = new LinkedHashSet<String>(); var pending = new ArrayDeque<SqlValueOrigin>(); pending.add(origin);
+                Set<SqlValueOrigin> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+                int steps = 0;
+                while (!pending.isEmpty() && ++steps <= 10000) {
+                    checkpoint.run(); var value = pending.removeFirst(); if (!seen.add(value)) continue;
+                    if (value instanceof SqlValueOrigin.Input input) result.add(input.name());
+                    else if (value instanceof SqlValueOrigin.Expression expression) pending.addAll(expression.inputs());
+                }
+                return List.copyOf(result);
+            });
+        }
+        private ValueTrace trace(SqlValueOrigin origin, String type, int depth) {
+            checkpoint.run();
+            var cachedByType = traces.get(origin);
+            var cached = cachedByType == null ? null : cachedByType.get(type); if (cached != null) return cached;
+            ValueTrace result;
+            if (depth > 128 || ++nodes > 10000) result = leaf("template-value-limit", type, ValueTrace.Kind.LIMIT,
+                    "Template value origin budget exceeded", new ValueTrace.Computation(ValueTrace.Operation.OPAQUE, ""));
+            else result = switch (origin) {
+                case SqlValueOrigin.Input input -> selected.containsKey(input.name()) ? selected.get(input.name()).propagationPath()
+                        : state.sources().containsKey(input.name()) ? state.sources().get(input.name())
+                        : leaf("template-input:" + input.name(), type, ValueTrace.Kind.UNRESOLVED, "Unmapped template input: " + input.name(),
+                            new ValueTrace.Computation(ValueTrace.Operation.OPAQUE, ""));
+                case SqlValueOrigin.Literal literal -> literal(literal.value());
+                case SqlValueOrigin.Expression expression -> {
+                    var variable = variable("template:" + expression.expression(), type);
+                    var children = expression.inputs().stream().map(input -> trace(input, "java.lang.Object", depth + 1).root()).toList();
+                    yield new ValueTrace(variable, position.callContext(), new ValueTrace.Node(variable, ValueTrace.Kind.EXPRESSION,
+                            "Rendered template expression: " + expression.expression(), children,
+                            new ValueTrace.Computation(ValueTrace.Operation.OPAQUE, expression.expression())));
+                }
+            };
+            traces.computeIfAbsent(origin, ignored -> new HashMap<>()).put(type, result); return result;
+        }
+        private ValueTrace literal(SqlValue value) {
+            if (value instanceof SqlValue.Unknown unknown) return leaf("template-literal", "java.lang.Object", ValueTrace.Kind.UNRESOLVED,
+                    unknown.reason(), new ValueTrace.Computation(ValueTrace.Operation.OPAQUE, ""));
+            Object raw = ((SqlValue.Known) value).value();
+            boolean scalar = raw == null || raw instanceof Number || raw instanceof String || raw instanceof Character || raw instanceof Boolean;
+            String text = raw == null ? "null" : scalar ? raw.toString() : "Template constant snapshot";
+            return leaf("template-literal", raw == null ? "java.lang.Object" : raw.getClass().getName(), ValueTrace.Kind.CONSTANT,
+                    "Template literal: " + text, new ValueTrace.Computation(raw == null ? ValueTrace.Operation.NULL
+                        : scalar ? ValueTrace.Operation.LITERAL : ValueTrace.Operation.OPAQUE, text));
+        }
+        private ValueTrace leaf(String expression, String type, ValueTrace.Kind kind, String detail, ValueTrace.Computation computation) {
+            var variable = variable(expression, type);
+            return new ValueTrace(variable, position.callContext(), new ValueTrace.Node(variable, kind, detail, List.of(), computation));
+        }
+        private ValueTrace.Variable variable(String expression, String type) {
+            return new ValueTrace.Variable(position.method(), position.statementIndex(), expression, type, position.callContext());
+        }
     }
 
     private static ValueTrace positionTrace(FlowPoint point, int position) {

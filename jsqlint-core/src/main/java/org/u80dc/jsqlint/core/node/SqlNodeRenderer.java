@@ -2,6 +2,7 @@ package org.u80dc.jsqlint.core.node;
 
 import java.lang.reflect.Array;
 import java.util.*;
+import java.util.function.Function;
 
 /**
  * 部分求值的 SQL 模板渲染器。render 提供字面量预览，renderBound 分离 SQL 与绑定值。
@@ -18,9 +19,13 @@ public final class SqlNodeRenderer {
     }
 
     public static RenderedSql render(SqlNode node, Map<String, ?> parameters, SqlExpressionEvaluator evaluator) {
+        return render(node, parameters, evaluator, () -> {});
+    }
+
+    public static RenderedSql render(SqlNode node, Map<String, ?> parameters, SqlExpressionEvaluator evaluator, Runnable checkpoint) {
         Objects.requireNonNull(node, "node");
-        Context context = new Context(parameters, evaluator);
-        Fragment fragment = visit(node, context);
+        Context context = new Context(parameters, evaluator, false, SqlNodeRenderer::inputOrigin, new RenderBudget(checkpoint));
+        Fragment fragment = renderFragment(node, context);
         return new RenderedSql(fragment.complete ? Optional.of(flatText(fragment.node)) : Optional.empty(),
                 fragment.node, context.values, List.copyOf(context.diagnostics));
     }
@@ -31,17 +36,26 @@ public final class SqlNodeRenderer {
     }
 
     public static BoundSql renderBound(SqlNode node, Map<String, ?> parameters, SqlExpressionEvaluator evaluator, Runnable checkpoint) {
+        return renderBound(node, parameters, evaluator, SqlNodeRenderer::inputOrigin, checkpoint);
+    }
+
+    /** 适配后的输入引用由调用方关联到通用来源；局部 bind/foreach 来源由渲染器记录。 */
+    public static BoundSql renderBound(SqlNode node, Map<String, ?> parameters, SqlExpressionEvaluator evaluator,
+                                      Function<SqlExpressionEvaluator.Reference, SqlValueOrigin> inputs, Runnable checkpoint) {
         Objects.requireNonNull(node);
-        Context context = new Context(parameters, evaluator, true, new RenderBudget(checkpoint));
-        Fragment fragment;
-        try { fragment = visit(node, context); }
-        catch (RenderLimit limit) {
-            context.diagnostics.add(new SqlDiagnostic("RENDER_LIMIT", "SQL template rendering budget exceeded"));
-            fragment = new Fragment(node, false);
-            context.bindings.clear();
-        }
+        Context context = new Context(parameters, evaluator, true, inputs, new RenderBudget(checkpoint));
+        Fragment fragment = renderFragment(node, context);
         return new BoundSql(new RenderedSql(fragment.complete ? Optional.of(flatText(fragment.node)) : Optional.empty(),
                 fragment.node, context.values, List.copyOf(context.diagnostics)), context.bindings);
+    }
+
+    private static Fragment renderFragment(SqlNode node, Context context) {
+        try { return visit(node, context); }
+        catch (RenderLimit limit) {
+            context.diagnostics.add(new SqlDiagnostic("RENDER_LIMIT", "SQL template rendering budget exceeded"));
+            context.bindings.clear(); context.origins.clear(); context.values.clear(); context.values.putAll(context.initial);
+            return new Fragment(node, false);
+        }
     }
 
     public record BoundSql(RenderedSql rendered, List<BoundParameter> bindings) {
@@ -51,10 +65,14 @@ public final class SqlNodeRenderer {
         }
     }
     /** 位置按模板实际输出顺序编号；表达式、类型提示及模块绑定选项原样保留。 */
-    public record BoundParameter(int position, String expression, String type, String options, SqlValue value) {
+    public record BoundParameter(int position, String expression, String type, String options, SqlValue value, SqlValueOrigin origin) {
         public BoundParameter {
             if (position < 1) throw new IllegalArgumentException("Binding positions start at one");
             Objects.requireNonNull(expression); Objects.requireNonNull(type); Objects.requireNonNull(options); Objects.requireNonNull(value);
+            Objects.requireNonNull(origin);
+        }
+        public BoundParameter(int position, String expression, String type, String options, SqlValue value) {
+            this(position, expression, type, options, value, new SqlValueOrigin.Input(expression));
         }
     }
 
@@ -82,9 +100,13 @@ public final class SqlNodeRenderer {
             }
             case ChooseSqlNode choose -> choose(choose, context);
             case BindSqlNode bind -> {
-                SqlValue value = context.evaluate(bind.expression());
+                var evaluated = context.evaluated(bind.expression(), false);
+                SqlValue value = evaluated.value();
                 if (value instanceof SqlValue.Known known) {
                     context.values.put(bind.name(), known.value());
+                    var inputs = evaluated.origin() instanceof SqlValueOrigin.Expression expression
+                            && expression.expression().equals(bind.expression()) ? expression.inputs() : List.of(evaluated.origin());
+                    context.origins.put(bind.name(), new SqlValueOrigin.Expression(bind.expression(), inputs));
                     yield literal("");
                 }
                 yield unresolved(node, context, bind.expression(), value);
@@ -188,7 +210,8 @@ public final class SqlNodeRenderer {
     }
 
     private static Fragment foreach(ForEachSqlNode foreach, Context context) {
-        SqlValue collection = context.evaluate(foreach.collection());
+        var evaluated = context.evaluated(foreach.collection(), false);
+        SqlValue collection = evaluated.value();
         if (collection instanceof SqlValue.Unknown) {
             return unresolved(foreach, context, foreach.collection(), collection);
         }
@@ -223,9 +246,12 @@ public final class SqlNodeRenderer {
             Context child = loop.copy();
             if (!foreach.index().isEmpty()) {
                 child.values.put(foreach.index(), item.getKey());
+                child.origins.put(foreach.index(), new SqlValueOrigin.Literal(new SqlValue.Known(item.getKey())));
             }
             // Bind the item last so an explicitly shared name resolves to the element value.
             child.values.put(foreach.item(), item.getValue());
+            child.origins.put(foreach.item(), new SqlValueOrigin.Expression("foreach element",
+                    List.of(evaluated.origin(), new SqlValueOrigin.Literal(new SqlValue.Known(item.getKey())))));
             Fragment fragment = visit(foreach.contents(), child);
             loop.absorb(child, false, fragment.complete); // Iteration variables and binds are local to each iteration.
             if (!fragment.complete) {
@@ -254,10 +280,11 @@ public final class SqlNodeRenderer {
     }
 
     private static Fragment value(ValueSqlNode node, Context context) {
-        SqlValue value = context.evaluate(node.getExpression(), node.getKind() == ValueSqlNode.Kind.PARAMETER);
+        var evaluated = context.evaluated(node.getExpression(), node.getKind() == ValueSqlNode.Kind.PARAMETER);
+        SqlValue value = evaluated.value();
         if (context.parameterized && node.getKind() == ValueSqlNode.Kind.PARAMETER) {
             context.bindings.add(new BoundParameter(context.bindings.size() + 1, node.getExpression(),
-                    node.getValueType(), node.getBindingOptions(), value));
+                    node.getValueType(), node.getBindingOptions(), value, evaluated.origin()));
             if (value instanceof SqlValue.Unknown unknown)
                 context.diagnostics.add(new SqlDiagnostic("UNKNOWN_PARAMETER", node.getExpression() + ": " + unknown.reason()));
             return literal("?");
@@ -305,6 +332,18 @@ public final class SqlNodeRenderer {
     private record Fragment(SqlNode node, boolean complete) {
     }
 
+    private record Evaluated(SqlValue value, SqlValueOrigin origin) {}
+
+    private static SqlValueOrigin inputOrigin(SqlExpressionEvaluator.Reference reference) {
+        return accessed(new SqlValueOrigin.Input(reference.name()), reference.path());
+    }
+    private static SqlValueOrigin accessed(SqlValueOrigin origin, List<Object> path) {
+        if (path.isEmpty()) return origin;
+        var inputs = new ArrayList<SqlValueOrigin>(); inputs.add(origin);
+        path.forEach(key -> inputs.add(new SqlValueOrigin.Literal(new SqlValue.Known(key))));
+        return new SqlValueOrigin.Expression("Template property access", inputs);
+    }
+
     /**
      * sql 为空表示尚未得到完整 SQL。residual 可配合 parameters 和补充参数重新渲染；
      * diagnostics 解释未完成原因，真实 null 可以保留在 parameters 中。
@@ -328,22 +367,24 @@ public final class SqlNodeRenderer {
         private final LinkedHashSet<SqlDiagnostic> diagnostics = new LinkedHashSet<>();
         private final SqlExpressionEvaluator evaluator;
         private final List<BoundParameter> bindings = new ArrayList<>();
+        private final Map<String, SqlValueOrigin> origins = new LinkedHashMap<>();
+        private final Function<SqlExpressionEvaluator.Reference, SqlValueOrigin> inputs;
         private final boolean parameterized;
         private final RenderBudget budget;
         private final Map<String, ?> initial;
 
-        private Context(Map<String, ?> values, SqlExpressionEvaluator evaluator) {
-            this(values, evaluator, false, null);
-        }
-        private Context(Map<String, ?> values, SqlExpressionEvaluator evaluator, boolean parameterized, RenderBudget budget) {
+        private Context(Map<String, ?> values, SqlExpressionEvaluator evaluator, boolean parameterized,
+                        Function<SqlExpressionEvaluator.Reference, SqlValueOrigin> inputs, RenderBudget budget) {
             this.values.putAll(Objects.requireNonNull(values, "parameters"));
             this.evaluator = Objects.requireNonNull(evaluator, "evaluator");
             this.initial = values; this.parameterized = parameterized; this.budget = budget;
+            this.inputs = Objects.requireNonNull(inputs);
         }
 
         private Context copy() {
-            var copy = new Context(initial, evaluator, parameterized, budget);
+            var copy = new Context(initial, evaluator, parameterized, inputs, budget);
             copy.values.clear(); copy.values.putAll(values); copy.bindings.addAll(bindings);
+            copy.origins.putAll(origins);
             return copy;
         }
 
@@ -353,6 +394,7 @@ public final class SqlNodeRenderer {
             if (commitValues) {
                 values.clear();
                 values.putAll(child.values);
+                origins.clear(); origins.putAll(child.origins);
             }
         }
 
@@ -360,6 +402,9 @@ public final class SqlNodeRenderer {
             return evaluate(expression, false);
         }
         private SqlValue evaluate(String expression, boolean parameter) {
+            return evaluated(expression, parameter).value();
+        }
+        private Evaluated evaluated(String expression, boolean parameter) {
             try {
                 Map<String, Object> overlay = new AbstractMap<>() {
                     @Override public Set<Entry<String, Object>> entrySet() { return values.entrySet(); }
@@ -367,10 +412,21 @@ public final class SqlNodeRenderer {
                     @Override public Object get(Object key) { return values.containsKey(key) ? values.get(key) : initial.get(key); }
                 };
                 var environment = Collections.unmodifiableMap(overlay);
-                return Objects.requireNonNull(parameter ? evaluator.evaluateParameter(expression, environment)
-                        : evaluator.evaluate(expression, environment), "Evaluator returned null");
+                if (!parameterized) {
+                    var value = Objects.requireNonNull(parameter ? evaluator.evaluateParameter(expression, environment)
+                            : evaluator.evaluate(expression, environment), "Evaluator returned null");
+                    return new Evaluated(value, new SqlValueOrigin.Literal(value));
+                }
+                var evaluation = evaluator.evaluateWithReferences(expression, environment, parameter);
+                var references = evaluation.references().stream().map(reference -> origins.containsKey(reference.name())
+                        ? accessed(origins.get(reference.name()), reference.path())
+                        : Objects.requireNonNull(inputs.apply(reference), "Input origin is unavailable")).toList();
+                SqlValueOrigin origin = references.isEmpty() ? new SqlValueOrigin.Literal(evaluation.value())
+                        : evaluation.directReference() ? references.getFirst() : new SqlValueOrigin.Expression(expression, references);
+                return new Evaluated(evaluation.value(), origin);
             } catch (RuntimeException e) {
-                return new SqlValue.Unknown("Evaluation failed: " + e.getMessage());
+                var value = new SqlValue.Unknown("Evaluation failed: " + e.getMessage());
+                return new Evaluated(value, new SqlValueOrigin.Literal(value));
             }
         }
         private void checkpoint() { if (budget != null) budget.checkpoint(); }

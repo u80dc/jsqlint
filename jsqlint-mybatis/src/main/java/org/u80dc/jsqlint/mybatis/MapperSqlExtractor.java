@@ -13,8 +13,10 @@ final class MapperSqlExtractor implements SqlExtractionHandler {
     private final MapperMethodMatcher methods;
     private final MapperParameterResolver parameters;
     private final MybatisOptions options;
+    private final ProviderSqlExtractor providers;
     MapperSqlExtractor(MybatisDefinitionIndex index, MapperMethodMatcher methods, MybatisOptions options) {
         this.index = index; this.methods = methods; this.options = options; parameters = new MapperParameterResolver(options);
+        providers = new ProviderSqlExtractor(options);
     }
     @Override public List<SqlTraceSource> extract(FlowPoint point, DataFlowAnalysis flow) {
         var site = point.invocation(flow.program().view()).orElseThrow();
@@ -23,6 +25,9 @@ final class MapperSqlExtractor implements SqlExtractionHandler {
                 .orElseGet(() -> new SqlDefinition(site.invocation().getMethodSignature().getDeclClassType() + "." + method.getName(),
                         site.location(), ValueSqlNode.raw("missingSqlDefinition"), new MybatisExpressionEvaluator(options), Map.of(),
                         List.of("No active MyBatis statement for " + site.invocation().getMethodSignature())));
-        return List.of(parameters.resolve(definition, method, site, point));
+        var input = parameters.resolve(definition, method, site, point);
+        if (definition.metadata().getOrDefault("command", "").endsWith("provider") && definition.complete())
+            return providers.extract(definition, method, input, point, flow);
+        return List.of(input);
     }
 }

@@ -13,29 +13,40 @@ public final class SqlSampleRenderer {
         Objects.requireNonNull(source);
         return switch (source) {
             case SqlExtraction extraction -> render(extraction);
-            case SqlTemplateResult template -> template.definition().isPresent() ? List.of(render(template, Map.of()))
-                    : List.of(template(template, template.rendered().orElseGet(() -> SqlNodeRenderer.render(template.template(), Map.of()))));
+            case SqlTemplateResult template -> template.definition().isPresent()
+                    ? List.of(definition(template, template.bound().orElseGet(() -> new SqlNodeRenderer.BoundSql(unavailable(template), List.of()))))
+                    : List.of(template(template, template.rendered().orElseGet(() -> unavailable(template))));
         };
     }
 
     /** 模板参数由调用方提供；完成渲染不提升为已验证 Java 路径。 */
     public static SqlSample render(SqlTemplateResult source, Map<String, ?> parameters) {
         if (source.definition().isPresent()) {
-            var definition = source.definition().get();
-            var bound = definition.render(parameters);
-            var issues = new LinkedHashSet<>(definition.issues());
-            source.diagnostics().forEach(diagnostic -> issues.add(diagnostic.code() + ": " + diagnostic.message()));
-            bound.rendered().diagnostics().forEach(diagnostic -> issues.add(diagnostic.code() + ": " + diagnostic.message()));
-            var bindings = bound.bindings().stream().map(slot -> new SqlSample.Binding(Integer.toString(slot.position()),
-                    slot.type().isEmpty() ? "java.lang.Object" : slot.type(), new SqlValue.Known(slot.position()), slot.value(),
-                    definition.location(), slot.options(), Optional.empty())).toList();
-            boolean sources = source.assessment().sourcesComplete();
-            return new SqlSample(source, Optional.empty(), bound.rendered(), bindings,
-                    sources ? SqlSample.Feasibility.UNVERIFIED : SqlSample.Feasibility.UNKNOWN,
-                    new SqlAssessment(sources, source.assessment().textComplete(), bound.valuesComplete(), Optional.empty()),
-                    new ArrayList<>(issues), Optional.empty(), Optional.empty(), source.definition());
+            return definition(source, source.definition().get().render(parameters));
         }
         return template(source, SqlNodeRenderer.render(source.template(), parameters));
+    }
+
+    private static SqlNodeRenderer.RenderedSql unavailable(SqlTemplateResult source) {
+        return new SqlNodeRenderer.RenderedSql(Optional.empty(), source.template(), Map.of(),
+                List.of(new SqlDiagnostic("RENDER_UNAVAILABLE", "No saved rendering snapshot; provide explicit sample parameters")));
+    }
+
+    private static SqlSample definition(SqlTemplateResult source, SqlNodeRenderer.BoundSql bound) {
+        var definition = source.definition().orElseThrow();
+        var issues = new LinkedHashSet<>(definition.issues());
+        source.diagnostics().forEach(diagnostic -> issues.add(diagnostic.code() + ": " + diagnostic.message()));
+        bound.rendered().diagnostics().forEach(diagnostic -> issues.add(diagnostic.code() + ": " + diagnostic.message()));
+        var bindings = bound.bindings().stream().map(slot -> new SqlSample.Binding(Integer.toString(slot.position()),
+                slot.type().isEmpty() ? "java.lang.Object" : slot.type(), new SqlValue.Known(slot.position()), slot.value(),
+                definition.location(), slot.options(), Optional.empty())).toList();
+        boolean sources = source.assessment().sourcesComplete();
+        boolean limited = bound.rendered().diagnostics().stream().anyMatch(diagnostic ->
+                diagnostic.code().equals("RENDER_LIMIT") || diagnostic.code().equals("RENDER_UNAVAILABLE"));
+        return new SqlSample(source, Optional.empty(), bound.rendered(), bindings,
+                sources && !limited ? SqlSample.Feasibility.UNVERIFIED : SqlSample.Feasibility.UNKNOWN,
+                new SqlAssessment(sources, source.assessment().textComplete(), bound.valuesComplete(), Optional.empty()),
+                new ArrayList<>(issues), Optional.empty(), Optional.empty(), source.definition());
     }
 
     private static SqlSample template(SqlTemplateResult source, SqlNodeRenderer.RenderedSql rendered) {
@@ -114,7 +125,8 @@ public final class SqlSampleRenderer {
                     slot.value(), evidence.location(), slot.options(), Optional.of(evidence.value())));
         }
         boolean sources = source.issues().isEmpty() && statement.sourcesComplete();
-        boolean values = model.bound().valuesComplete() && model.combination().map(value -> value.parameters().values()
+        boolean values = model.bound().valuesComplete() && model.bindings().stream().allMatch(binding -> binding.inference().complete())
+                && model.combination().map(value -> value.parameters().values()
                 .stream().allMatch(InferredParameterValue::complete)).orElse(saved.parameters().isEmpty());
         var feasibility = model.combination().map(value -> value.status() == JointSqlInferenceResult.Status.SATISFIABLE
                 ? SqlSample.Feasibility.SATISFIABLE : SqlSample.Feasibility.UNKNOWN)

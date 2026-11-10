@@ -103,6 +103,8 @@ final class AnalysisSession {
             Optional<SqlDefinition> definition = Optional.empty();
             try {
                 SqlInput input = item.seed().input();
+                if (input instanceof SqlInput.ComputedDefinition computed)
+                    input = new SqlInput.Definition(computed.resolve().apply(flow));
                 if (input instanceof SqlInput.ValueAt value) {
                     var point = new ExtractionPoint(item.moduleId(), value.method().getSignature(), value.statement());
                     if (extractionPoints.contains(point)) {
@@ -117,6 +119,7 @@ final class AnalysisSession {
                     case SqlInput.Template source -> source.node();
                     case SqlInput.Definition source -> source.definition().template();
                     case SqlInput.ValueAt source -> pipeline.template(source);
+                    case SqlInput.ComputedDefinition ignored -> throw new IllegalStateException("Computed definition was not resolved");
                 };
             } catch (Exception e) {
                 recover("SQL_EXTRACTION", item.seed().location().toString(), e);
@@ -179,12 +182,26 @@ final class AnalysisSession {
 
     private void publishTemplate(Pending item, SqlNode template, int diagnosticStart, Optional<SqlDefinition> definition) {
         definition.ifPresent(source -> source.issues().forEach(issue -> incomplete("SQL_DEFINITION", issue)));
+        var parameters = item.seed().parameters();
+        SqlNodeRenderer.BoundSql bound = null;
+        if (definition.isPresent()) try { bound = definition.get().render(parameters, this::checkpoint); }
+        catch (Exception e) { recover("SQL_RENDERING", item.seed().location().toString(), e, false); }
         SqlNodeRenderer.RenderedSql rendered;
-        try { rendered = SqlNodeRenderer.render(template, item.seed().parameters(),
-                definition.map(SqlDefinition::evaluator).orElseGet(SqlExpressionEvaluator::simple)); }
+        try {
+            // 已截断的参数化渲染不再启动第二次预览遍历；旧事件仍收到未完成的结果。
+            rendered = bound != null && hasRenderLimit(bound.rendered()) ? bound.rendered()
+                    : SqlNodeRenderer.render(template, parameters,
+                        definition.map(SqlDefinition::evaluator).orElseGet(SqlExpressionEvaluator::simple), this::checkpoint);
+        }
         catch (Exception e) { recover("SQL_RENDERING", item.seed().location().toString(), e, false); rendered = null; }
+        var limits = new LinkedHashSet<String>();
+        if (bound != null) bound.rendered().diagnostics().stream().filter(diagnostic -> diagnostic.code().equals("RENDER_LIMIT"))
+                .forEach(diagnostic -> limits.add(diagnostic.message()));
+        if (rendered != null) rendered.diagnostics().stream().filter(diagnostic -> diagnostic.code().equals("RENDER_LIMIT"))
+                .forEach(diagnostic -> limits.add(diagnostic.message()));
+        limits.forEach(message -> incomplete("SQL_RENDER_LIMIT", message));
         var result = new SqlTemplateResult(item.moduleId(), item.seed().location(), template,
-                Optional.ofNullable(rendered), diagnostics.subList(diagnosticStart, diagnostics.size()), definition);
+                Optional.ofNullable(rendered), diagnostics.subList(diagnosticStart, diagnostics.size()), definition, Optional.ofNullable(bound));
         sqlResults.add(result);
         notifyListener(listener -> listener.onSqlResult(result));
         analyzed++;
@@ -192,8 +209,16 @@ final class AnalysisSession {
     }
 
     private SqlNodeRenderer.RenderedSql render(Pending item, SqlNode template) {
-        try { return SqlNodeRenderer.render(template, item.seed().parameters()); }
+        try {
+            var rendered = SqlNodeRenderer.render(template, item.seed().parameters(), SqlExpressionEvaluator.simple(), this::checkpoint);
+            if (hasRenderLimit(rendered)) incomplete("SQL_RENDER_LIMIT", "SQL template rendering budget exceeded");
+            return rendered;
+        }
         catch (Exception e) { recover("SQL_RENDERING", item.seed().location().toString(), e, false); return null; }
+    }
+
+    private static boolean hasRenderLimit(SqlNodeRenderer.RenderedSql rendered) {
+        return rendered.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("RENDER_LIMIT"));
     }
 
     private void notifySql(Pending item, SqlNode template, SqlNodeRenderer.RenderedSql rendered) {

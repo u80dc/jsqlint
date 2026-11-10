@@ -230,6 +230,12 @@ var sample = template.sample(Map.of("id", 7));
 ```
 
 `SqlResult.samples()` 和 `AnalysisResult.samples()` 使用 `SqlSampleRenderer`，在输入关闭后仍可读取。
+默认 `samples()`、`rawSqls()` 和 `assessment()` 只读取分析阶段保存的快照，不再次求值或新增诊断。
+定义的 `SqlTemplateResult.rendered()` 保留字面量预览，`bound()` 保存以 `AnalysisSeed.parameters()`
+为原始输入的参数化 SQL 和绑定值；两种渲染分别使用原始参数，避免重复应用 bind。
+`sample(Map)` 使用显式参数独立渲染，不修改原始结果。旧五/六参数构造器继续可用；
+手工构造定义结果时需提供 `bound` 快照才能读取默认样例，缺失时保留残余模板并报告
+`RENDER_UNAVAILABLE`，也可通过 `sample(Map)` 显式渲染。
 每个样例保留原始 `source()`、`rawSql()`、`combination()`、可选 `batchEntry()` 和 `definition()`。
 绑定值另保留适配层 `options()` 和可选传播证据 `trace()`。
 样例覆盖准备点、执行点和批次加入点；可通过 `sample.source()` 中的调用点选择所需结果。
@@ -240,6 +246,9 @@ var sample = template.sample(Map.of("id", 7));
 `UNKNOWN` 保留已有值、残余模板和诊断，包括联合求解没有产生组合的情况。
 关闭联合求解时，样例保留符号槽位和未知绑定，状态为 `UNVERIFIED`。
 模板的显式参数可完成渲染，其路径仍未验证。
+定义渲染预算耗尽时，在分析返回前保存 `SQL_RENDER_LIMIT` 诊断并返回 `PARTIAL`；
+该样例为 `UNKNOWN`、值不完整，已恢复的来源和模板结构仍独立保留。字面量预览和参数化
+渲染均检查取消、超时和渲染预算。
 
 统一 `assessment()` 将状态分开描述：
 
@@ -589,6 +598,9 @@ var analyzer = new Analyzer(AnalyzerConfig.defaults().withJointBudgets(budgets))
 
 JDBC 关联规则：
 
+- SQL 入口、Statement 工厂及 setter/清除/批次操作共用 `jsqlint-jdbc` 的标准签名目录。
+  目录来自运行 JDK 的 JDBC 接口元数据，按方法名、全部参数类型及声明类型继承关系匹配，
+  支持协变返回。扩展重载不直接套用标准语义；可分析的包装方法通过 core 继续追踪内部标准调用。
 - Statement 的带 SQL 执行/加入批次方法、Connection 的 prepareStatement/prepareCall/nativeSQL
   从 SQL 实参开始追踪；无参 PreparedStatement/CallableStatement 执行先追踪接收对象的工厂来源。
 - 追踪局部别名、跨方法传入和工厂返回；工厂在不同调用位置产生的对象按调用上下文区分。
@@ -718,6 +730,9 @@ registry.sqlInvocation(site -> /* 框架实际调用判断 */ false);
 core 合并同源别名，保存 TemplateInferenceResult 的来源、推断和模型；联合推断通过
 `JointSqlValueInferencer.inferParameters(...)` 执行，无需伪造 Java SQL 字符串来源。
 模板模型下的 SQL 和绑定快照均在分析阶段保存，后续样例展示不访问代码输入。
+表达式求值同时返回通用输入引用，渲染器保存 bind/foreach 的派生来源，core 将其关联到
+真实实参的 `ValueTrace`。绑定表达式与实际依赖共同保留，不按表达式字符串猜测参数，
+同名局部绑定不会改写其他别名的来源；生成绑定证据的预算截断也进入完整性判断。
 
 方法级处理器产生 ValueAt 起点时应调用 `registry.requireCallIndex()`，
 使 core 建立共享调用者索引。`invocation` 提取规则自动启用此能力，`sqlInvocation` 识别规则则不启用。
@@ -738,8 +753,9 @@ core 负责通用 SQL 提取、值与参数溯源、保守推断和节点渲染�
   Mapper 标量实参通过 @Param、实际参数名称、paramN 和单值回退接入统一参数化 SQL 样例。
   通过 namespace/id 和 SQL/Provider 注解识别接口方法声明与调用，
   支持继承方法、重复注解及重载签名；XML 按方法名绑定，无法区分重载，因此保留全部候选签名。
-  default/static 辅助方法不作为映射 SQL 入口，其内部调用仍正常扫描。Provider 可以作为调用点被发现，
-  但 Provider SQL 内容仍需后续适配。直接调用 SqlSession 的字符串 statementId 入口尚未适配。
+  default/static 辅助方法不作为映射 SQL 入口，其内部调用仍正常扫描。
+  四类 Provider 支持公开静态/实例方法、默认方法选择、命名参数 Map、ProviderContext、Java 返回值/分支与 MyBatis SQL 构造器。
+  直接调用 SqlSession 的字符串 statementId 入口尚未适配。
 - core 值追踪：常量、控制流到达定义、已索引的参数调用来源、项目内返回值及保守虚调用分派、
   可解析数组元素、Java StringConcatFactory 连接和 String.concat。不同调用的参数上下文分别处理；
   分支保留为符号选择，不取第一个结果。
@@ -747,7 +763,7 @@ core 负责通用 SQL 提取、值与参数溯源、保守推断和节点渲染�
   基于传播链的参数推断独立保存外部输入生成的随机样例及其来源；SQL 文本和样例均不作为数据库执行入口。
 
 尚未完整迁移旧 analysis 的框架能力：StringBuilder 等可变对象建模、复杂虚调用/字段传播、
-精确堆别名、Spring JDBC、MyBatis Provider、无法确定的动态 include 属性、
+精确堆别名、Spring JDBC、Provider 自定义方法解析器、无法确定的动态 include 属性、
 selectKey 与 JPA 等仍需后续扩展。遇到已发现起点中不支持的结构，会保留未知节点并报告
 PARTIAL；没有启用相应框架模块的代码不属于本次框架识别范围。
 

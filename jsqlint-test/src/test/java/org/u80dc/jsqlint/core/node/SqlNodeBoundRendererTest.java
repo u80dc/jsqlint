@@ -53,4 +53,53 @@ class SqlNodeBoundRendererTest {
         assertSame(stop, assertThrows(IllegalStateException.class, () -> SqlNodeRenderer.renderBound(node, Map.of(),
                 SqlExpressionEvaluator.simple(), () -> { throw stop; })));
     }
+
+    @Test void bindOriginsKeepTheTransformAndOnlyTheInputsThatWereRead() {
+        var node = SqlNodeBuilder.buildScript("""
+                <bind name='pattern' value="name + '!'"/>SELECT #{pattern},#{name}
+                """);
+        var result = SqlNodeRenderer.renderBound(node, Map.of("name", "abc", "unused", 9), SqlExpressionEvaluator.simple());
+        assertEquals(new SqlValue.Known("abc!"), result.bindings().getFirst().value());
+        var origin = assertInstanceOf(SqlValueOrigin.Expression.class, result.bindings().getFirst().origin());
+        assertEquals("name + '!'", origin.expression());
+        assertEquals(List.of(new SqlValueOrigin.Input("name")), origin.inputs());
+        assertEquals(new SqlValueOrigin.Input("name"), result.bindings().getLast().origin());
+    }
+
+    @Test void iterationOriginsAndBindsStayLocalToTheIteration() {
+        var node = SqlNodeBuilder.buildScript("""
+                <foreach collection='values' item='value'>#{value}<bind name='value' value="value + '!'"/>#{value}</foreach>#{value}
+                """);
+        var result = SqlNodeRenderer.renderBound(node, Map.of("values", List.of("a", "b"), "value", "outside"), SqlExpressionEvaluator.simple());
+        assertEquals(List.of("a", "a!", "b", "b!", "outside"), result.bindings().stream()
+                .map(binding -> ((SqlValue.Known) binding.value()).value()).toList());
+        assertEquals(new SqlValueOrigin.Input("value"), result.bindings().getLast().origin());
+        var transformed = assertInstanceOf(SqlValueOrigin.Expression.class, result.bindings().get(1).origin());
+        var element = assertInstanceOf(SqlValueOrigin.Expression.class, transformed.inputs().getFirst());
+        assertEquals(new SqlValueOrigin.Input("values"), element.inputs().getFirst());
+        assertEquals("outside", result.rendered().parameters().get("value"));
+    }
+
+    @Test void nestedMapReferencesAreRecordedWithoutExposingTrackingMaps() {
+        var evaluator = SqlExpressionEvaluator.simple();
+        var result = evaluator.evaluateWithReferences("params.id", Map.of("params", Map.of("id", 7, "unused", 9)), false);
+        assertEquals(new SqlValue.Known(7), result.value());
+        assertEquals(List.of(new SqlExpressionEvaluator.Reference("params", List.of("id"))), result.references());
+        assertFalse(result.directReference());
+        var map = evaluator.evaluateWithReferences("params", Map.of("params", Map.of("id", 7)), false);
+        assertEquals(new SqlValue.Known(Map.of("id", 7)), map.value());
+        assertFalse(((SqlValue.Known) map.value()).value().getClass().getName().contains("TrackedMap"));
+    }
+
+    @Test void aRenderLimitRollsBackLocalBindingsAndLiteralRenderingUsesTheSameBudget() {
+        var node = new MixedSqlNode(List.of(new BindSqlNode("name", "name + '!'"),
+                new MixedSqlNode(Collections.nCopies(10001, new StaticTextSqlNode("x")))));
+        var parameters = Map.of("name", "abc");
+        var bound = SqlNodeRenderer.renderBound(node, parameters, SqlExpressionEvaluator.simple());
+        assertEquals("abc", bound.rendered().parameters().get("name"));
+        assertTrue(bound.bindings().isEmpty());
+        var preview = SqlNodeRenderer.render(node, parameters);
+        assertFalse(preview.complete()); assertEquals("abc", preview.parameters().get("name"));
+        assertTrue(preview.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("RENDER_LIMIT")));
+    }
 }

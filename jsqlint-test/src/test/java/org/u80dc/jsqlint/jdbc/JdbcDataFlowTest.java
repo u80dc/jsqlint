@@ -804,6 +804,110 @@ class JdbcDataFlowTest {
         assertTrue(statement.complete());
     }
 
+    @Test
+    void extensionFactoryDoesNotTreatStatementLabelAsSql() throws Exception {
+        var result = analyze("""
+                abstract class ExtendedConnection implements java.sql.Connection {
+                    public java.sql.PreparedStatement prepareStatement(String label, String sql) { return null; }
+                }
+                public class Sample {
+                    public void entry(ExtendedConnection c) throws Exception {
+                        c.prepareStatement("statementLabel", "SELECT actual").execute();
+                    }
+                }
+                """);
+        assertTrue(calls(result, "prepareStatement").isEmpty(), "扩展重载不能直接成为 JDBC SQL 入口");
+        var execution = only(calls(result, "execute"));
+        var statement = only(execution.statements());
+        assertTrue(statement.sql().isEmpty());
+        assertTrue(statement.rawSql().variants().isEmpty());
+        assertFalse(execution.complete());
+        assertEquals(PARTIAL, result.status());
+    }
+
+    @Test
+    void extensionWrapperCanReachItsRealStandardFactoryThroughCoreDataFlow() throws Exception {
+        var result = analyze("""
+                abstract class ExtendedConnection implements java.sql.Connection {
+                    public java.sql.PreparedStatement prepareStatement(String label, String sql) throws java.sql.SQLException {
+                        return prepareStatement(sql);
+                    }
+                }
+                public class Sample {
+                    public void entry(ExtendedConnection c) throws Exception {
+                        var p = c.prepareStatement("statementLabel", "SELECT actual WHERE id=?");
+                        p.setInt(1, 7); p.executeQuery();
+                    }
+                }
+                """);
+        var execution = only(calls(result, "executeQuery"));
+        assertEquals(Set.of("SELECT actual WHERE id=?"), renderedSql(execution));
+        assertEquals(Set.of("7"), constants(only(only(execution.statements()).bindings()).value()));
+        assertTrue(execution.complete());
+        assertEquals(SUCCESS, result.status());
+        assertTrue(result.samples().stream().noneMatch(sample -> sample.sql().orElse("").equals("statementLabel")));
+    }
+
+    @Test
+    void extensionSettersAndBatchMethodsDoNotApplyStandardStateTransitions() throws Exception {
+        var result = analyze("""
+                interface ExtendedPrepared extends java.sql.PreparedStatement {
+                    default void setString(int index, String value, int extension) {}
+                    default void clearParameters(String reason) {}
+                    default void addBatch(String label, String sql) {}
+                    default void clearBatch(String reason) {}
+                }
+                abstract class ExtendedConnection implements java.sql.Connection {
+                    @Override public abstract ExtendedPrepared prepareStatement(String sql) throws java.sql.SQLException;
+                }
+                public class Sample {
+                    public void entry(ExtendedConnection c) throws Exception {
+                        var p = c.prepareStatement("INSERT INTO t VALUES(?)");
+                        p.setString(1, "kept"); p.setString(1, "extension", 9); p.clearParameters("reason");
+                        p.addBatch(); p.addBatch("label", "SELECT extension"); p.clearBatch("reason"); p.executeBatch();
+                    }
+                }
+                """);
+        var execution = only(calls(result, "executeBatch"));
+        var statement = only(execution.statements());
+        assertEquals(Set.of("INSERT INTO t VALUES(?)"), renderedSql(execution));
+        assertEquals(Set.of("\"kept\""), constants(only(statement.bindings()).value()));
+        assertTrue(execution.complete());
+        assertEquals(SUCCESS, result.status());
+    }
+
+    @Test
+    void standardOverloadsCovariantFactoriesAndSqlTypeSettersRemainSupported() throws Exception {
+        var result = analyze("""
+                interface SpecializedPrepared extends java.sql.PreparedStatement {}
+                abstract class SpecializedConnection implements java.sql.Connection {
+                    @Override public abstract SpecializedPrepared prepareStatement(String sql) throws java.sql.SQLException;
+                }
+                public class Sample {
+                    public void entry(SpecializedConnection c) throws Exception {
+                        var p = c.prepareStatement("SELECT ?");
+                        p.setObject(1, "saved", java.sql.JDBCType.VARCHAR); p.executeLargeUpdate();
+                        c.prepareStatement("SELECT generated", new int[]{1});
+                        c.prepareStatement("SELECT named", new String[]{"id"});
+                        c.prepareStatement("SELECT scrolling", java.sql.ResultSet.TYPE_SCROLL_INSENSITIVE,
+                                java.sql.ResultSet.CONCUR_READ_ONLY, java.sql.ResultSet.HOLD_CURSORS_OVER_COMMIT);
+                        var named = c.prepareCall("{call named(?)}", java.sql.ResultSet.TYPE_FORWARD_ONLY,
+                                java.sql.ResultSet.CONCUR_READ_ONLY);
+                        named.setObject("arg", "named", java.sql.JDBCType.VARCHAR); named.execute();
+                    }
+                }
+                """);
+        assertEquals(4L, calls(result, "prepareStatement").stream().filter(call -> call.callSite().caller()
+                .map(caller -> caller.getName().equals("entry")).orElse(false)).count());
+        var execution = only(calls(result, "executeLargeUpdate"));
+        assertEquals(Set.of("SELECT ?"), renderedSql(execution));
+        assertEquals(Set.of("\"saved\""), constants(only(only(execution.statements()).bindings()).value()));
+        var named = only(only(calls(result, "execute")).statements());
+        assertEquals(":arg", only(named.bindings()).key());
+        assertEquals(Set.of("\"named\""), constants(only(named.bindings()).value()));
+        assertEquals(SUCCESS, result.status());
+    }
+
     private static Set<String> renderedSql(SqlExtraction extraction) {
         return extraction.statements().stream().flatMap(statement -> SqlNodeRenderer.render(statement.template(), Map.of()).sql().stream())
                 .collect(java.util.stream.Collectors.toSet());

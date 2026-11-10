@@ -21,4 +21,19 @@ public interface UserMapper {
 
     @Select("SELECT COUNT(*) FROM app_users")
     long unusedCount();
+
+    @SelectProvider(type = UserSqlProvider.class)
+    String providerFind(@Param("table") String table, @Param("id") long id);
+
+    @InsertProvider(value = UserSqlProvider.class, method = "insert")
+    int providerInsert(@Param("id") long id, @Param("name") String name);
+
+    @UpdateProvider(type = UserSqlProvider.class, method = "rename")
+    int providerRename(@Param("id") long id, @Param("name") String name);
+
+    @DeleteProvider(type = UserSqlProvider.class, method = "delete")
+    int providerDelete(@Param("id") long id);
+
+    @SelectProvider(type = UserSqlProvider.class)
+    long unusedProviderCount();
 }

@@ -141,6 +141,8 @@ public final class ParameterValueInferencer {
         }
 
         private List<Evaluation> operations(Node node, int depth) {
+            if (node.computation().operation() == Operation.MAP_LITERAL && node.inputs().isEmpty())
+                return List.of(wrap(node, List.of(), Map.of(), new SqlValue.Known(Map.of())));
             List<List<Evaluation>> inputs = node.inputs().stream().map(input -> visit(input, depth + 1)).toList();
             if (inputs.isEmpty()) return List.of(unknown(node, "Missing operands for " + node.computation().operation()));
             List<Evaluation> result = new ArrayList<>();
@@ -192,6 +194,12 @@ public final class ParameterValueInferencer {
                 case NEGATE -> JavaValueOperations.negate(values.getFirst(), node.variable().type());
                 case CAST -> JavaValueOperations.cast(values.getFirst(), node.computation().text());
                 case CALL -> JavaValueOperations.call(node.computation().method().orElseThrow(), values, MAX_LENGTH);
+                case MAP_LITERAL -> {
+                    if (values.size() % 2 != 0) throw new IllegalArgumentException("Invalid map snapshot operands");
+                    var map = new LinkedHashMap<Object, Object>();
+                    for (int i = 0; i < values.size(); i += 2) map.put(values.get(i), values.get(i + 1));
+                    yield Collections.unmodifiableMap(map);
+                }
                 default -> throw new IllegalArgumentException("Unmodeled operation: " + node.computation().operation());
             };
         }

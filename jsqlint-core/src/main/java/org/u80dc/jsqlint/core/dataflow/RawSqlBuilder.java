@@ -77,7 +77,7 @@ public final class RawSqlBuilder {
                 yield variants.stream().map(variant -> variant.withSources(join(
                         node.inputs().subList(0, Math.min(1, node.inputs().size())), variant.sources()))).toList();
             }
-            case OPAQUE, BINARY, NEGATE, CAST, CALL, ARRAY_INPUT -> unknown(node, chooseName(node, hint), "Unmodeled SQL value: " + node.detail());
+            case OPAQUE, BINARY, NEGATE, CAST, CALL, ARRAY_INPUT, MAP_LITERAL -> unknown(node, chooseName(node, hint), "Unmodeled SQL value: " + node.detail());
         };
     }
 

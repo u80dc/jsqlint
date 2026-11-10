@@ -16,7 +16,7 @@ class MybatisUserQueryAnalysisTest {
     private static final String MAPPER = "org.u80dc.jsqlint.samples.mybatis.UserMapper";
 
     @Test @Tag("integration")
-    void analyzesXmlAndAnnotationDefinitionsAndScalarCallsFromAProjectDirectory() throws Exception {
+    void analyzesXmlAnnotationAndProviderDefinitionsAndCallsFromAProjectDirectory() throws Exception {
         Path project = sampleProject();
         String outputId = "mybatis-user-query-test-" + UUID.randomUUID();
         Path output = Path.of(System.getProperty("java.io.tmpdir"), ".jsqlint", outputId);
@@ -26,11 +26,12 @@ class MybatisUserQueryAnalysisTest {
         assertFalse(Files.exists(output), "输入关闭后清理本次编译输出");
         assertTrue(result.diagnostics().stream().allMatch(diagnostic -> diagnostic.code().equals("JOINT_ANALYSIS_INCOMPLETE")), result.diagnostics().toString());
         var definitions = result.sqlResults().stream().filter(SqlTemplateResult.class::isInstance).map(SqlTemplateResult.class::cast).toList();
-        assertEquals(8, definitions.size());
-        assertEquals(Set.of("createTable", "insert", "find", "rename", "search", "optional", "delete", "unusedCount"), definitions.stream()
+        assertEquals(13, definitions.size());
+        assertEquals(Set.of("createTable", "insert", "find", "rename", "search", "optional", "delete", "unusedCount",
+                "providerFind", "providerInsert", "providerRename", "providerDelete", "unusedProviderCount"), definitions.stream()
                 .map(definition -> definition.definition().orElseThrow().id().substring(MAPPER.length() + 1)).collect(java.util.stream.Collectors.toSet()));
         var calls = result.extractions().stream().filter(value -> value.moduleId().equals("mybatis")).toList();
-        assertEquals(7, calls.size());
+        assertEquals(11, calls.size());
         assertTrue(calls.stream().allMatch(value -> value.callSite().target().getDeclClassType().toString().equals(MAPPER)));
         var samples = calls.stream().flatMap(value -> value.samples().stream()).toList();
         assertFalse(samples.isEmpty());
@@ -44,9 +45,20 @@ class MybatisUserQueryAnalysisTest {
         var optional = samples.stream().filter(sample -> ((SqlExtraction) sample.source()).callSite().target().getName().equals("optional")).findFirst().orElseThrow();
         assertEquals(new SqlValue.Known("%Ali%"), optional.bindings().getFirst().value());
         assertEquals(Optional.of(false), optional.assessment().pathCoverageComplete());
+        var providerFind = samples.stream().filter(sample -> ((SqlExtraction) sample.source()).callSite().target().getName().equals("providerFind")).findFirst().orElseThrow();
+        assertEquals("SELECT username /* providerFind */ FROM app_users WHERE (id=?)", normalize(providerFind.sql().orElseThrow()));
+        assertEquals(new SqlValue.Known(8L), providerFind.bindings().getFirst().value());
+        assertTrue(providerFind.definition().orElseThrow().metadata().get("providerSignature").contains("providerFind"));
+        var providerDefinition = definitions.stream().filter(value -> value.definition().orElseThrow().id().endsWith(".providerFind")).findFirst().orElseThrow();
+        assertEquals("SELECT username /* providerFind */ FROM archive_users WHERE (id=?)",
+                normalize(providerDefinition.sample(Map.of("table","archive_users","id",99L)).sql().orElseThrow()));
+        var providerRename = samples.stream().filter(sample -> ((SqlExtraction) sample.source()).callSite().target().getName().equals("providerRename")).findFirst().orElseThrow();
+        assertEquals(List.of(new SqlValue.Known("Bobby"), new SqlValue.Known(8L)), providerRename.bindings().stream().map(SqlSample.Binding::value).toList());
         assertTrue(calls.stream().filter(call -> !call.callSite().target().getName().equals("createTable"))
                 .allMatch(call -> call.callChain().stream().anyMatch(site -> site.target().getName().equals("exercise"))));
         assertEquals("SELECT COUNT(*) FROM app_users", definitions.stream().filter(value -> value.definition().orElseThrow().id().endsWith(".unusedCount"))
+                .findFirst().orElseThrow().samples().getFirst().sql().orElseThrow());
+        assertEquals("SELECT COUNT(*) FROM app_users", definitions.stream().filter(value -> value.definition().orElseThrow().id().endsWith(".unusedProviderCount"))
                 .findFirst().orElseThrow().samples().getFirst().sql().orElseThrow());
         var report = new StringBuilder("MyBatis SQL analysis: " + result.status() + "\n");
         for (var sample : result.samples()) report.append(sample.definition().map(SqlDefinition::id).orElse("<unknown>"))

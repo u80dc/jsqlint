@@ -10,6 +10,10 @@ public final class UserService {
         rename(7L, "Alice");
         search("username", "Alice");
         optional("Ali");
+        providerCreate(8L, "Bob");
+        providerFind(8L);
+        providerRename(8L, "Bobby");
+        providerDelete(8L);
         delete(7L);
     }
     public void create(long id, String name) { mapper.insert(id, name); }
@@ -18,4 +22,8 @@ public final class UserService {
     public void search(String column, String value) { mapper.search(column, value); }
     public void optional(String name) { mapper.optional(name); }
     public void delete(long id) { mapper.delete(id); }
+    public void providerCreate(long id, String name) { mapper.providerInsert(id, name); }
+    public String providerFind(long id) { return mapper.providerFind("app_users", id); }
+    public void providerRename(long id, String name) { mapper.providerRename(id, name); }
+    public void providerDelete(long id) { mapper.providerDelete(id); }
 }

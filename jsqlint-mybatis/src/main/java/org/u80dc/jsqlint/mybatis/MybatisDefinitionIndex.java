@@ -24,6 +24,7 @@ final class MybatisDefinitionIndex {
     private final Map<Candidate, SqlDefinition> definitions = new HashMap<>();
     private final Map<String, SqlDefinition> resolved = new HashMap<>();
     private final Set<MethodSignature> indexedMethods = new HashSet<>();
+    private final Map<String, JavaSootMethod> mapperMethods = new HashMap<>();
 
     MybatisDefinitionIndex(MybatisOptions options) { this.options = options; evaluator = new MybatisExpressionEvaluator(options); }
 
@@ -46,6 +47,7 @@ final class MybatisDefinitionIndex {
 
     void method(JavaSootMethod method) {
         if (!indexedMethods.add(method.getSignature())) return;
+        mapperMethods.put(method.getSignature().toString(), method);
         for (var annotation : MapperMethodMatcher.sqlAnnotations(method)) {
             String annotationType = annotation.getAnnotation().toString();
             String name = annotationType.substring(annotationType.lastIndexOf('.') + 1);
@@ -68,7 +70,10 @@ final class MybatisDefinitionIndex {
             var selected = activeStatements(entry.getValue());
             for (var candidate : selected) {
                 var definition = definition(candidate);
-                seeds.accept(new DefinitionSeed(definition));
+                if (candidate.command().endsWith("provider") && definition.complete()) {
+                    var mapper = mapperMethods.get(candidate.signature());
+                    seeds.accept(new ProviderSeed(definition, mapper, new ProviderSqlExtractor(options)));
+                } else seeds.accept(new DefinitionSeed(definition));
             }
         }
     }
@@ -100,8 +105,13 @@ final class MybatisDefinitionIndex {
                 if (!candidate.lang().isEmpty() && !candidate.lang().equals("xml") && !candidate.lang().contains("org.apache.ibatis.scripting.xmltags.XMLLanguageDriver")
                         && !candidate.lang().contains("org/apache/ibatis/scripting/xmltags/XMLLanguageDriver"))
                     throw new IllegalArgumentException("Unsupported MyBatis language driver: " + candidate.lang());
-                if (candidate.command().endsWith("provider")) throw new IllegalArgumentException("MyBatis Provider requires a provider-method adapter");
-                if (candidate.xml() != null) template = MybatisSqlAdapter.statement(candidate.xml(), candidate.namespace(), selectedFragments(), options);
+                if (candidate.command().endsWith("provider")) {
+                    String type = ProviderMethodResolver.type(candidate.annotation().getValues().get("type"));
+                    String value = ProviderMethodResolver.type(candidate.annotation().getValues().get("value"));
+                    if (!type.isEmpty() && !value.isEmpty() && !type.equals(value))
+                        throw new IllegalArgumentException("MyBatis Provider value and type refer to different classes");
+                    template = ValueSqlNode.raw("providerSql");
+                } else if (candidate.xml() != null) template = MybatisSqlAdapter.statement(candidate.xml(), candidate.namespace(), selectedFragments(), options);
                 else {
                     Object value = candidate.annotation().getValues().get("value");
                     List<?> values = value instanceof List<?> list ? list : Collections.singletonList(value);
@@ -145,6 +155,12 @@ final class MybatisDefinitionIndex {
         metadata.put("namespace", candidate.namespace()); metadata.put("databaseId", candidate.databaseId());
         metadata.put("command", candidate.command()); metadata.put("origin", candidate.xml() == null ? "annotation" : "xml");
         if (!candidate.signature().isEmpty()) metadata.put("method", candidate.signature());
+        if (candidate.command().endsWith("provider")) {
+            String type = ProviderMethodResolver.type(candidate.annotation().getValues().get("type"));
+            String value = ProviderMethodResolver.type(candidate.annotation().getValues().get("value"));
+            metadata.put("providerType", value.isEmpty() ? type : value);
+            metadata.put("providerMethod", string(candidate.annotation().getValues().get("method"), ""));
+        }
         if (candidate.xml() != null && candidate.xml().hasAttribute("parameterType")) metadata.put("parameterType", candidate.xml().getAttribute("parameterType"));
         return metadata;
     }
@@ -159,5 +175,9 @@ final class MybatisDefinitionIndex {
     private record DefinitionSeed(SqlDefinition definition) implements AnalysisSeed {
         public SourceLocation location() { return definition.location(); }
         public SqlInput input() { return new SqlInput.Definition(definition); }
+    }
+    private record ProviderSeed(SqlDefinition definition, JavaSootMethod mapper, ProviderSqlExtractor extractor) implements AnalysisSeed {
+        public SourceLocation location() { return definition.location(); }
+        public SqlInput input() { return new SqlInput.ComputedDefinition(flow -> extractor.definition(definition, mapper, flow)); }
     }
 }

@@ -20,9 +20,13 @@ public record TemplateInferenceResult(Map<String, ValueTrace> sources,
     private static <T> Map<String, T> immutable(Map<String, T> source) {
         return Collections.unmodifiableMap(new LinkedHashMap<>(source));
     }
-    public boolean sourcesComplete() { return sources.values().stream().allMatch(ValueTrace::complete); }
+    public boolean sourcesComplete() {
+        return sources.values().stream().allMatch(ValueTrace::complete)
+                && models.stream().flatMap(model -> model.bindings().stream()).allMatch(SqlExtraction.Binding::complete);
+    }
     public boolean valuesComplete() {
         return !models.isEmpty() && models.stream().allMatch(model -> model.bound().valuesComplete()
+                && model.bindings().stream().allMatch(binding -> binding.inference().complete())
                 && model.combination().map(combination -> combination.parameters().values().stream()
                     .allMatch(InferredParameterValue::complete)).orElse(parameters.isEmpty()));
     }

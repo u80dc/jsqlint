@@ -1,6 +1,8 @@
 package org.u80dc.jsqlint.core.parameter;
 
 import sootup.core.signatures.MethodSignature;
+import sootup.core.jimple.common.expr.AbstractInvokeExpr;
+import sootup.core.jimple.common.expr.JDynamicInvokeExpr;
 import java.util.*;
 
 /** 显式的 Java 纯值语义模型；从不反射调用目标项目的方法。 @author u80dc */
@@ -11,9 +13,24 @@ public final class JavaValueOperations {
             "java.lang.Integer", "int", "java.lang.Long", "long", "java.lang.Float", "float",
             "java.lang.Double", "double", "java.lang.Character", "char");
 
+    /** 只有标量和 String 的 JVM 拼接不会调用目标对象的 toString。 */
+    public static boolean scalarStringConcat(AbstractInvokeExpr invocation) {
+        return invocation instanceof JDynamicInvokeExpr dynamic
+                && dynamic.getBootstrapMethodSignature().getDeclClassType().toString().equals("java.lang.invoke.StringConcatFactory")
+                && Set.of("makeConcat", "makeConcatWithConstants").contains(dynamic.getBootstrapMethodSignature().getName())
+                && invocation.getMethodSignature().getParameterTypes().stream().map(Object::toString)
+                    .allMatch(type -> type.equals("java.lang.String") || WRAPPERS.containsValue(type) || WRAPPERS.containsKey(type));
+    }
+
     public static boolean supports(MethodSignature signature) {
         String owner = signature.getDeclClassType().toString(), name = signature.getName();
         var types = signature.getParameterTypes().stream().map(Object::toString).toList();
+        if (owner.equals("java.util.Map")) return switch (name) {
+            case "get", "containsKey" -> types.equals(List.of("java.lang.Object"));
+            case "getOrDefault" -> types.equals(List.of("java.lang.Object", "java.lang.Object"));
+            case "size", "isEmpty" -> types.isEmpty();
+            default -> false;
+        };
         if (owner.equals("java.lang.String")) return switch (name) {
             case "equals" -> types.equals(List.of("java.lang.Object")) && signature.getType().toString().equals("boolean");
             case "trim", "strip", "stripLeading", "stripTrailing", "toLowerCase", "toUpperCase", "length", "isEmpty", "isBlank" -> types.isEmpty();
@@ -36,6 +53,16 @@ public final class JavaValueOperations {
     static Object call(MethodSignature method, List<Object> operands, int maxLength) {
         if (!supports(method)) throw new IllegalArgumentException("Unmodeled method: " + method);
         String owner = method.getDeclClassType().toString(), name = method.getName();
+        if (owner.equals("java.util.Map")) {
+            var map = (Map<?, ?>) Objects.requireNonNull(operands.getFirst(), "Map receiver is null");
+            return switch (name) {
+                case "get" -> map.get(operands.get(1));
+                case "getOrDefault" -> map.containsKey(operands.get(1)) ? map.get(operands.get(1)) : operands.get(2);
+                case "containsKey" -> map.containsKey(operands.get(1));
+                case "size" -> map.size(); case "isEmpty" -> map.isEmpty();
+                default -> throw new IllegalArgumentException("Unmodeled Map operation");
+            };
+        }
         if (owner.equals("java.lang.String")) {
             String value = (String) Objects.requireNonNull(operands.getFirst(), "String receiver is null");
             return switch (name) {
@@ -104,6 +131,7 @@ public final class JavaValueOperations {
             case "char" -> (char) number(value).intValue();
             default -> {
                 if (type.equals("java.lang.Object") || type.equals(value.getClass().getName())
+                        || type.equals("java.util.Map") && value instanceof Map<?, ?>
                         || type.equals("java.lang.Number") && value instanceof Number
                         || type.equals("java.lang.CharSequence") && value instanceof String) yield value;
                 throw new IllegalArgumentException("Unmodeled reference cast to " + type);

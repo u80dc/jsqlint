@@ -201,14 +201,19 @@ class SqlCallSiteDiscoveryTest {
                         }
                         """));
         Capture capture = new Capture();
+        // 同一方法上的重复 SQL 注解仍须报告冲突。
         assertEquals(PARTIAL, new Analyzer(List.of(new MybatisAnalysisModule()), List.of())
-                .analyze(classes, options(capture)).status());
+                .analyze(classes, options(capture)).status(), capture.diagnostics.toString());
         assertEquals(4, capture.declarations().size());
         assertEquals(3, capture.invocations().size());
         assertEquals(5, capture.sqlCount);
-        assertTrue(capture.diagnostics.stream().anyMatch(message -> message.contains("Provider")));
+        assertTrue(capture.diagnostics.stream().anyMatch(message -> message.contains("Duplicate MyBatis statement: sample.Mapper.repeated")),
+                capture.diagnostics.toString());
+        assertTrue(capture.sqls.contains("SELECT 5"), capture.sqls.toString());
+        assertTrue(capture.diagnostics.stream().noneMatch(message -> message.contains("Provider")),
+                capture.diagnostics.toString());
         assertTrue(capture.events.indexOf("sql") > capture.events.lastIndexOf("site"),
-                "Provider SQL 暂时无法提取，也必须先完整报告已确认的调用点");
+                "SQL 提取前必须完整报告已确认的 Mapper 与 Provider 调用点");
     }
 
     @Test
@@ -263,12 +268,14 @@ class SqlCallSiteDiscoveryTest {
         final List<SqlCallSite> sites = new ArrayList<>();
         final List<String> diagnostics = new ArrayList<>();
         final List<String> events = new ArrayList<>();
+        final List<String> sqls = new ArrayList<>();
         int sqlCount;
         public void onSqlCallSite(String moduleId, SqlCallSite site) { sites.add(site); events.add("site"); }
         public void onDiagnostic(String code, String message) { diagnostics.add(code + ": " + message); }
         public void onSql(String moduleId, AnalysisSeed seed, SqlNode template, SqlNodeRenderer.RenderedSql sql) {
             sqlCount++;
             events.add("sql");
+            sql.sql().ifPresent(sqls::add);
         }
         List<SqlCallSite> declarations() { return sites.stream().filter(site -> site.kind() == SqlCallSite.Kind.DECLARATION).toList(); }
         List<SqlCallSite> invocations() { return sites.stream().filter(site -> site.kind() == SqlCallSite.Kind.INVOCATION).toList(); }

@@ -12,5 +12,9 @@ public record JdbcSqlSeed(InvocationSite site) implements AnalysisSeed {
     public JdbcSqlSeed { Objects.requireNonNull(site, "site"); }
     public SourceLocation location() { return site.location(); }
     /** 这里只声明 SQL 实参的位置，字符串溯源和节点构造统一交给 core。 */
-    public SqlInput input() { return site.argument(0); }
+    public SqlInput input() {
+        var rule = JdbcMethodMatcher.match(site).filter(JdbcMethodMatcher.Rule::hasSqlArgument)
+                .orElseThrow(() -> new IllegalArgumentException("Not a standard JDBC SQL argument call"));
+        return site.argument(rule.sqlArgument());
+    }
 }

@@ -99,11 +99,11 @@ class MybatisDefinitionTest {
         assertEquals("SELECT 7", definition(result, "sample.Mapper.good").samples().getFirst().sql().orElseThrow());
         Path classes = compile("""
                 interface Mapper { @SelectProvider(type=Sample.class, method="sql") Object query(); }
-                public class Sample { public static String sql() { return "SELECT 1"; } public void run(Mapper mapper) { mapper.query(); } }
+                public class Sample { public static String sql() { return System.getProperty("provider.sql"); } public void run(Mapper mapper) { mapper.query(); } }
                 """);
         var provider = new Analyzer(List.of(new MybatisAnalysisModule()), List.of()).analyze(classes);
         assertEquals(AnalysisResult.Status.PARTIAL, provider.status());
-        assertTrue(provider.diagnostics().stream().anyMatch(diagnostic -> diagnostic.message().contains("Provider")));
+        assertTrue(provider.diagnostics().stream().anyMatch(diagnostic -> diagnostic.message().contains("getProperty")));
         assertEquals(1, provider.extractions().size()); assertTrue(provider.extractions().getFirst().samples().getFirst().sql().isEmpty());
     }
 

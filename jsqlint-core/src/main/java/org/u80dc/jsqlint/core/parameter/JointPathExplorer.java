@@ -58,7 +58,7 @@ final class JointPathExplorer {
         Map<Frame, Map<Integer, Integer>> successors = new HashMap<>();
         add(execution.value(sootup.core.jimple.common.constant.IntConstant.getInstance(0)).snapshot(), required);
         Set<Node> seen = new HashSet<>();
-        for (Node root : roots) collect(root, required, definitions, seen, conflict, issues, dispatches);
+        for (Node root : roots) collect(root, required, definitions, seen, conflict, issues, dispatches, successors);
         for (ControlFlowEdge edge : history) {
             var from = edge.from().value(sootup.core.jimple.common.constant.IntConstant.getInstance(0)).snapshot();
             var to = edge.to().value(sootup.core.jimple.common.constant.IntConstant.getInstance(0)).snapshot();
@@ -156,7 +156,7 @@ final class JointPathExplorer {
             }
             if (external || targets.isEmpty()) {
                 var choices = new LinkedHashMap<>(state.dispatches());
-                if (choose(choices, dispatchKey(returned.variable()), Optional.empty()))
+                if (choose(choices, dispatchKey(returned), Optional.empty()))
                     pending.add(new Search(state.requirements(), state.paths(), Map.copyOf(choices)));
             }
         }
@@ -217,28 +217,38 @@ final class JointPathExplorer {
         return old == null || old.equals(target);
     }
 
-    private DispatchKey dispatchKey(Variable variable) {
+    private DispatchKey dispatchKey(Node node) {
+        var variable = node.variable();
         Frame owner = Frame.of(variable);
         JavaSootMethod method = method(owner);
         Stmt stmt = method.getBody().getStmts().get(variable.statementIndex());
-        var site = new InvocationSite(method, stmt, variable.statementIndex(),
-                stmt.asInvokableStmt().getInvokeExpr().orElseThrow(), flow.program().view());
+        var site = node.computation().method().flatMap(target -> flow.program().invocation(method.getSignature(), variable.statementIndex(), target))
+                .orElseGet(() -> new InvocationSite(method, stmt, variable.statementIndex(),
+                        stmt.asInvokableStmt().getInvokeExpr().orElseThrow(), flow.program().view()));
         return new DispatchKey(owner, SqlCallSite.invocation(site));
     }
 
     private void collect(Node node, Map<Frame, Set<Integer>> required, Map<Frame, Map<Use, Integer>> definitions,
                          Set<Node> seen, boolean[] conflict, Set<String> issues,
-                         Map<DispatchKey, Optional<MethodSignature>> dispatches) {
+                         Map<DispatchKey, Optional<MethodSignature>> dispatches, Map<Frame, Map<Integer, Integer>> successors) {
         flow.checkpoint();
         if (!seen.add(node)) return;
         if (seen.size() > maxSteps) { issues.add("Joint trace inspection limit exceeded"); return; }
         add(node.variable(), required);
         // 符号槽位可以携带尚未选定的分支，不能要求这些互斥来源同时执行。
         if (node.computation().operation() == Operation.ALTERNATIVES && node.inputs().size() > 1) return;
+        for (ControlEdge edge : node.computation().history()) {
+            add(edge.from(), required); add(edge.to(), required);
+            if (edge.exceptional()) issues.add("Joint value snapshot includes exceptional control flow");
+            if (!Frame.of(edge.from()).equals(Frame.of(edge.to()))) continue;
+            var choices = successors.computeIfAbsent(Frame.of(edge.from()), ignored -> new HashMap<>());
+            var old = choices.putIfAbsent(edge.from().statementIndex(), edge.to().statementIndex());
+            if (old != null && old != edge.to().statementIndex()) conflict[0] = true;
+        }
         // 外部实现也是独立的分派分支，不能与同次调用已经选定的项目实现拼成一组参数。
         if (node.kind() == Kind.RETURN && node.inputs().size() == 1 && node.inputs().getFirst().kind() == Kind.EXTERNAL_CALL
                 && !returnSource(node.inputs().getFirst(), Frame.of(node.variable()))
-                && !choose(dispatches, dispatchKey(node.variable()), Optional.empty())) conflict[0] = true;
+                && !choose(dispatches, dispatchKey(node), Optional.empty())) conflict[0] = true;
         if (node.kind() == Kind.DEFINITION && node.inputs().size() == 1) {
             Node selected = node.inputs().getFirst();
             Variable source = selected.variable();
@@ -253,7 +263,7 @@ final class JointPathExplorer {
         }
         if (node.kind() == Kind.CYCLE || node.kind() == Kind.LIMIT || node.kind() == Kind.FIELD)
             issues.add("Joint path contains unresolved cycle, limit or heap dependency");
-        for (Node input : node.inputs()) collect(input, required, definitions, seen, conflict, issues, dispatches);
+        for (Node input : node.inputs()) collect(input, required, definitions, seen, conflict, issues, dispatches, successors);
     }
 
     private Paths paths(Requirement requirement) {
@@ -390,7 +400,7 @@ final class JointPathExplorer {
             Integer definition = path.definitions().get(new Use(node.variable().statementIndex(), node.variable().expression()));
             if (definition != null) inputs = inputs.stream().filter(input -> input.variable().statementIndex() == definition).toList();
         } else if (node.kind() == Kind.RETURN && node.computation().operation() == Operation.ALTERNATIVES) {
-            if (Optional.empty().equals(dispatches.get(dispatchKey(node.variable()))))
+            if (Optional.empty().equals(dispatches.get(dispatchKey(node))))
                 return new Node(node.variable(), Kind.UNRESOLVED, "Condition includes external or unresolved return", List.of());
             var matched = inputs.stream().filter(input -> {
                 Path callee = paths.get(Frame.of(input.variable()));
@@ -406,6 +416,7 @@ final class JointPathExplorer {
     private JavaSootMethod method(Frame frame) { return flow.program().view().getMethod(frame.method()).orElseThrow(); }
     private InvocationSite call(SqlCallSite snapshot) {
         return calls.computeIfAbsent(snapshot, key -> {
+            var indexed = flow.program().invocation(key); if (indexed.isPresent()) return indexed.get();
             JavaSootMethod method = flow.program().view().getMethod(key.caller().orElseThrow()).orElseThrow();
             var statements = method.getBody().getStmts();
             for (int i = 0; i < statements.size(); i++) {

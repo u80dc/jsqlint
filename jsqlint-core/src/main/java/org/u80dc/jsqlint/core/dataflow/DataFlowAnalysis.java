@@ -31,6 +31,10 @@ public final class DataFlowAnalysis {
     private final BiConsumer<String, String> incomplete;
     private final Set<String> reported = new HashSet<>();
     private final Map<MethodSignature, List<ContextPath>> contextCache = new HashMap<>();
+    private record ModeledCall(InvocationSite invocation, CallContext parent) {}
+    private final Map<ModeledCall, ValueFlowModel> models = new HashMap<>();
+    private final Map<ModeledCall, JavaSootMethod> implicitTargets = new HashMap<>();
+    private ValueFlowModel localModel;
 
     public DataFlowAnalysis(ProgramIndex program, int maxDepth, int cacheSize, Runnable checkpoint,
                             BiConsumer<String, String> incomplete) {
@@ -43,6 +47,11 @@ public final class DataFlowAnalysis {
         this.program = program; this.maxCallDepth = maxCallDepth; this.maxTraceDepth = maxTraceDepth;
         this.maxTraceNodes = maxTraceNodes; this.checkpoint = checkpoint; this.incomplete = incomplete;
         definitions = new LocalDefinitions(cacheSize, checkpoint);
+    }
+    private DataFlowAnalysis(DataFlowAnalysis source) {
+        program = source.program; definitions = source.definitions; maxCallDepth = source.maxCallDepth;
+        maxTraceDepth = source.maxTraceDepth; maxTraceNodes = source.maxTraceNodes; checkpoint = source.checkpoint;
+        incomplete = source.incomplete; models.putAll(source.models); implicitTargets.putAll(source.implicitTargets);
     }
     public ProgramIndex program() { return program; }
     public void checkpoint() { checkpoint.run(); }
@@ -90,6 +99,49 @@ public final class DataFlowAnalysis {
         int[] steps = {0};
         return new ValueTrace(input.snapshot(), input.point().context().snapshot(), trace(input, new HashSet<>(), 0, steps));
     }
+    /** 对独立定义应用只读模型，不改变其他调用上下文。 */
+    public ValueTrace trace(ValuePoint input, ValueFlowModel model) { return withModel(ignored -> model).trace(input); }
+    /** 独立定义的模型与其全部辅助查询共用同一个隔离上下文。 */
+    public DataFlowAnalysis withModel(Function<DataFlowAnalysis, ValueFlowModel> factory) {
+        var analysis = new DataFlowAnalysis(this); analysis.localModel = Objects.requireNonNull(factory.apply(analysis)); return analysis;
+    }
+
+    /** 显式目标和框架已知接收者优先；其他调用继续使用保守 CHA 分派。 */
+    public ProgramIndex.CallResolution resolution(InvocationSite site, CallContext context) {
+        var selected = implicitTargets.get(new ModeledCall(site, context));
+        if (selected == null) {
+            var calls = context.calls();
+            for (int i = calls.size() - 1; i >= 0 && selected == null; i--) {
+                var model = models.get(new ModeledCall(calls.get(i), new CallContext(calls.subList(0, i))));
+                if (model != null) selected = model.invocation(site, context).orElse(null);
+            }
+            if (selected == null && localModel != null) selected = localModel.invocation(site, context).orElse(null);
+        }
+        if (selected != null) return selected.hasBody() ? new ProgramIndex.CallResolution(List.of(selected), false)
+                : new ProgramIndex.CallResolution(List.of(), true);
+        return program.resolution(site);
+    }
+
+    /** 将框架隐式调用登记为逻辑调用；形参由 model 映射，目标方法无需实际执行。 */
+    public InvocationSite implicitInvocation(FlowPoint caller, JavaSootMethod target, ValueFlowModel model) {
+        var expression = new JStaticInvokeExpr(target.getSignature(), List.of());
+        var site = new InvocationSite(caller.method(), caller.statement(), caller.method().getBody().getStmts().indexOf(caller.statement()),
+                expression, program.view());
+        program.registerImplicitInvocation(site);
+        var key = new ModeledCall(site, caller.context()); models.put(key, Objects.requireNonNull(model)); implicitTargets.put(key, target);
+        return site;
+    }
+
+    private Optional<ValueTrace.Node> modeled(ValuePoint input, Function<ValuePoint, ValueTrace.Node> dependency) {
+        var calls = input.point().context().calls();
+        for (int i = calls.size() - 1; i >= 0; i--) {
+            var model = models.get(new ModeledCall(calls.get(i), new CallContext(calls.subList(0, i))));
+            if (model != null) {
+                var result = model.resolve(input, dependency); if (result.isPresent()) return result;
+            }
+        }
+        return localModel == null ? Optional.empty() : localModel.resolve(input, dependency);
+    }
     private ValueTrace.Node trace(ValuePoint input, Set<ValuePoint> active, int depth, int[] steps) {
         checkpoint.run();
         if (++steps[0] > maxTraceNodes) return leaf(input, Kind.LIMIT, "data dependency node budget exceeded");
@@ -111,6 +163,12 @@ public final class DataFlowAnalysis {
                 if (text == null)
                     return node(input, Kind.CONSTANT, "Constant string conversion is not modeled: " + constant, List.of());
                 return computed(input, Kind.CONSTANT, constant instanceof NullConstant ? Operation.NULL : Operation.LITERAL, text, List.of());
+            }
+            var modeled = modeled(input, dependency -> depth >= maxTraceDepth ? leaf(input, Kind.LIMIT, "modeled value depth budget exceeded")
+                    : trace(dependency, active, depth + 1, steps));
+            if (modeled.isPresent()) {
+                if (depth >= maxTraceDepth) return leaf(input, Kind.LIMIT, "modeled value depth budget exceeded");
+                return modeled.get();
             }
             // 已知字面量或入口输入是正常终点，即使恰好处于深度边界也无需继续展开。
             if ((value instanceof JParameterRef || value instanceof JThisRef) && argument(input).isEmpty())
@@ -209,7 +267,7 @@ public final class DataFlowAnalysis {
                             new ValueTrace.Computation(Operation.CALL, name, Optional.of(invoke.getMethodSignature())));
                 }
                 InvocationSite site = invocation(input, invoke);
-                var resolution = program.resolution(site);
+                var resolution = resolution(site, point.context());
                 List<JavaSootMethod> targets = resolution.applicationTargets();
                 if (!targets.isEmpty()) {
                     if (point.context().calls().size() >= maxCallDepth)
@@ -222,7 +280,8 @@ public final class DataFlowAnalysis {
                     if (resolution.hasExternalTargets()) children.add(node(input, Kind.EXTERNAL_CALL,
                             "external or unresolved dispatch alternative: " + invoke.getMethodSignature(),
                             operands(input, invoke.getUses(), active, depth, steps)));
-                    if (!children.isEmpty()) return computed(input, Kind.RETURN, Operation.ALTERNATIVES, "return values (CHA candidates)", children);
+                    if (!children.isEmpty()) return new ValueTrace.Node(input.snapshot(), Kind.RETURN, "return values (CHA candidates)", children,
+                            new ValueTrace.Computation(Operation.ALTERNATIVES, "return values (CHA candidates)", Optional.of(invoke.getMethodSignature())));
                 }
                 List<ValueTrace.Node> children = operands(input, invoke.getUses(), active, depth, steps);
                 boolean concat = invoke instanceof JDynamicInvokeExpr dynamic && dynamic.getBootstrapMethodSignature()
@@ -357,7 +416,7 @@ public final class DataFlowAnalysis {
             if (input.value() instanceof AbstractInvokeExpr invoke) {
                 InvocationSite site = invocation(input, invoke);
                 if (!factory.test(site)) {
-                    var resolution = program.resolution(site);
+                    var resolution = resolution(site, point.context());
                     List<JavaSootMethod> targets = resolution.applicationTargets();
                     if (!targets.isEmpty()) {
                         if (point.context().calls().size() >= maxCallDepth) { values.add(input); return false; }
@@ -431,7 +490,7 @@ public final class DataFlowAnalysis {
             Decision<S> decision = item.exceptional() ? Decision.skipCall(item.state()) : transfer.visit(item.point(), item.state());
             if (decision.stop()) { sink.accept(new FlowEnd<>(decision.state(), End.FOUND, item.issues(), item.path())); continue; }
             var call = item.point().invocation(program.view());
-            List<JavaSootMethod> targets = !decision.skipCall() && call.isPresent() ? program.targets(call.get()) : List.of();
+            List<JavaSootMethod> targets = !decision.skipCall() && call.isPresent() ? resolution(call.get(), item.point().context()).applicationTargets() : List.of();
             if (!targets.isEmpty()) {
                 if (item.point().context().calls().size() >= maxCallDepth) {
                     sink.accept(new FlowEnd<>(decision.state(), End.LIMIT, item.issues(), item.path())); continue;
@@ -446,7 +505,7 @@ public final class DataFlowAnalysis {
                 }
                 // 虚调用可能同时落到项目和依赖库。外部分支继续回溯调用前的候选状态，
                 // 由框架 transfer 对相关对象的未知副作用作标记，不能被项目分支覆盖。
-                if (returned && !program.resolution(call.orElseThrow()).hasExternalTargets()) continue;
+                if (returned && !resolution(call.orElseThrow(), item.point().context()).hasExternalTargets()) continue;
             }
             previous.accept(new Work<>(item.point(), decision.state(), visited, item.issues(), false, item.path()));
         }
