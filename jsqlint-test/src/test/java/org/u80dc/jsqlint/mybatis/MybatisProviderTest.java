@@ -129,6 +129,38 @@ class MybatisProviderTest {
         assertEquals("SELECT name FROM users WHERE id=? ORDER BY users.id", sample(result, "query").sql().orElseThrow());
     }
 
+    @Test void keepsProviderAnalysisInputsOutsideTheMapperParameterObject() throws Exception {
+        var result = analyze("""
+                interface Mapper {
+                    @SelectProvider(type=Sample.class,method="count") Object count(@Param("id") int id);
+                    @SelectProvider(type=Sample.class,method="dynamic") Object dynamic(@Param("table") String table,@Param("id") int id);
+                    @SelectProvider(type=Sample.class,method="empty") Object empty();
+                }
+                public class Sample {
+                    public static String count() { return "SELECT ${_parameter.size()} AS n WHERE id=#{_parameter.id}"; }
+                    public static String dynamic(@Param("table") String table) {
+                        return "SELECT ${_parameter.size()} AS n FROM "+table+" WHERE id=#{_parameter.id}";
+                    }
+                    public static String empty() { return "SELECT ${_parameter == null ? 0 : _parameter.size()} AS n"; }
+                    public void run(Mapper mapper) { mapper.count(7); mapper.dynamic("users",8); mapper.empty(); }
+                }
+                """);
+        assertEquals(AnalysisResult.Status.SUCCESS, result.status(), result.diagnostics().toString());
+        assertEquals("SELECT 2 AS n WHERE id=?", sample(result,"count").sql().orElseThrow());
+        assertEquals("SELECT 4 AS n FROM users WHERE id=?", sample(result,"dynamic").sql().orElseThrow());
+        assertEquals("SELECT 0 AS n", sample(result,"empty").sql().orElseThrow());
+        assertEquals(new SqlValue.Known(8), sample(result,"dynamic").bindings().getFirst().value());
+        for (var extraction : result.extractions()) {
+            var input = extraction.statements().getFirst().templateInference().orElseThrow();
+            assertTrue(input.aliases().keySet().stream().noneMatch(name -> name.startsWith("__jsqlint_provider_")));
+            var environment = input.environment(input.models().getFirst().combination().orElseThrow().parameters());
+            if (environment.get("_parameter") instanceof Map<?,?> root)
+                assertTrue(root.keySet().stream().noneMatch(name -> name.toString().startsWith("__jsqlint_provider_")));
+            assertTrue(environment.keySet().stream().noneMatch(name -> name.startsWith("__jsqlint_provider_source")));
+            assertEquals(SqlSample.Feasibility.SATISFIABLE, extraction.samples().getFirst().feasibility());
+        }
+    }
+
     @Test void doesNotExecuteProviderCodeOrStaticInitializers() throws Exception {
         System.clearProperty("jsqlint.provider.executed");
         var result = analyze("""

@@ -38,7 +38,11 @@ final class TemplateExtractionPipeline {
         Map<TemplateSqlInput.Parameter, String> keys = new LinkedHashMap<>();
         Map<String, String> aliases = new LinkedHashMap<>();
         input.parameters().forEach((alias, parameter) -> aliases.put(alias, key(keys, parameter)));
+        Map<String, String> renderAliases = new LinkedHashMap<>();
+        input.renderParameters().forEach((alias, parameter) -> renderAliases.put(alias, key(keys, parameter)));
         Optional<String> fallback = input.fallback().map(parameter -> key(keys, parameter));
+        // SQL 返回路径参与联合求解，不向模板暴露额外变量或改变业务参数 Map。
+        input.sqlSource().ifPresent(trace -> key(keys, new TemplateSqlInput.Parameter(trace, trace.variable().type())));
         Map<String, ValueTrace> traces = new LinkedHashMap<>();
         Map<String, ParameterValueInferenceResult> parameters = new LinkedHashMap<>();
         keys.forEach((parameter, name) -> {
@@ -48,7 +52,7 @@ final class TemplateExtractionPipeline {
             parameters.put(name, inferParameter.infer(inference, name, trace, parameter.type()));
         });
         var state = new TemplateInferenceResult(traces, parameters, aliases, fallback, input.parameterMapName(),
-                input.constants(), Optional.empty(), List.of(), List.of());
+                input.constants(), Optional.empty(), List.of(), List.of(), renderAliases);
         Optional<JointSqlInferenceResult> jointResult = Optional.empty();
         if (joint != null) {
             try { jointResult = Optional.of(joint.inferParameters(parameters.values(), point, source.controlFlowPaths(), sourceIssues)); }
@@ -78,8 +82,8 @@ final class TemplateExtractionPipeline {
             if (models.isEmpty() && result.status() != JointSqlInferenceResult.Status.UNSATISFIABLE)
                 models.add(render(definition, state, point, Optional.empty(), append(sourceIssues, "No joint parameter combination is available")));
             // 保存最终绑定值及其来源，后续 samples() 只读取快照。
-            jointResult = Optional.of(new JointSqlInferenceResult(result.status(), models.stream()
-                    .flatMap(model -> model.combination().stream()).toList(), result.issues(), result.coverageComplete()));
+            jointResult = Optional.of(result.withCombinations(models.stream()
+                    .flatMap(model -> model.combination().stream()).toList()));
         } else {
             models.add(render(definition, state, point, Optional.empty(),
                     append(sourceIssues, "Joint path inference was not requested")));
@@ -94,9 +98,10 @@ final class TemplateExtractionPipeline {
         var savedJoint = jointResult;
         List<RawSql.Variant> variants = new ArrayList<>();
         for (var model : models) model.bound().rendered().sql().ifPresent(text -> variants.add(
-                new RawSql.Variant(text, List.of(), input.sqlSource(), model.bindings(), savedJoint)));
+                new RawSql.Variant(text, List.of(), input.sqlSource(), model.bindings(), savedJoint,
+                        List.of(new RawSql.BindingSnapshot(SqlBindingSnapshots.bound(model.bound(), definition.location(), model.bindings()), model.combination())))));
         var saved = new TemplateInferenceResult(traces, parameters, aliases, fallback, input.parameterMapName(), input.constants(),
-                jointResult, models, jointResult.map(JointSqlInferenceResult::issues).orElse(List.of()));
+                jointResult, models, jointResult.map(JointSqlInferenceResult::issues).orElse(List.of()), renderAliases);
         var bindings = models.stream().flatMap(model -> model.bindings().stream()).distinct().toList();
         return new SqlExtraction.Statement(input.sqlSource(), definition.template(), bindings, source.batchEntry(), sourceIssues,
                 definition.issues(), new RawSql(variants, definition.issues()), Optional.of(definition), Optional.of(saved));
@@ -140,7 +145,7 @@ final class TemplateExtractionPipeline {
     private static SqlValueOrigin inputOrigin(TemplateInferenceResult state, Map<String, Object> environment,
                                               SqlExpressionEvaluator.Reference reference) {
         String name = reference.name(); var path = reference.path();
-        String key = state.aliases().get(name);
+        String key = state.aliases().getOrDefault(name, state.renderAliases().get(name));
         boolean parameterMap = state.parameterMapName().filter(name::equals).isPresent();
         if (key == null && parameterMap && !path.isEmpty() && path.getFirst() instanceof String property) {
             key = state.aliases().get(property); path = path.subList(1, path.size());
@@ -151,7 +156,7 @@ final class TemplateExtractionPipeline {
             Object value = state.constants().get(name);
             origin = new SqlValueOrigin.Literal(value instanceof SqlValue sqlValue ? sqlValue : new SqlValue.Known(value));
         } else if (parameterMap) {
-            origin = new SqlValueOrigin.Expression("Named template parameters", state.sources().keySet().stream()
+            origin = new SqlValueOrigin.Expression("Named template parameters", state.aliases().values().stream().distinct()
                     .map(input -> (SqlValueOrigin) new SqlValueOrigin.Input(input)).toList());
         } else if (state.fallback().isPresent() && environment.containsKey(name)) origin = new SqlValueOrigin.Input(state.fallback().get());
         else origin = new SqlValueOrigin.Literal(new SqlValue.Unknown("Unmapped template input: " + name));

@@ -27,11 +27,13 @@ public record RawSql(List<Variant> variants, List<String> issues) {
      * 联合求解为 UNSATISFIABLE 的原始候选也保留，供审计剔除原因；手工构造或尚未求解时为 Optional.empty。
      */
     public record Variant(String text, List<Placeholder> placeholders, Optional<ValueTrace> trace,
-                          List<SqlExtraction.Binding> bindings, Optional<JointSqlInferenceResult> jointInference) {
+                          List<SqlExtraction.Binding> bindings, Optional<JointSqlInferenceResult> jointInference,
+                          List<BindingSnapshot> bindingSnapshots) {
         public Variant {
             Objects.requireNonNull(text); placeholders = List.copyOf(placeholders); Objects.requireNonNull(trace);
             bindings = List.copyOf(bindings);
             Objects.requireNonNull(jointInference);
+            bindingSnapshots = List.copyOf(bindingSnapshots);
             int end = 0;
             for (var slot : placeholders) {
                 if (slot.start() < end || slot.end() > text.length()
@@ -39,6 +41,12 @@ public record RawSql(List<Variant> variants, List<String> issues) {
                     throw new IllegalArgumentException("Placeholder positions must match ordered, non-overlapping text slots");
                 end = slot.end();
             }
+        }
+
+        /** bindings 保留 Java 来源与独立推断；bindingSnapshots 保存各联合模型或定义的最终绑定。 */
+        public Variant(String text, List<Placeholder> placeholders, Optional<ValueTrace> trace,
+                       List<SqlExtraction.Binding> bindings, Optional<JointSqlInferenceResult> jointInference) {
+            this(text, placeholders, trace, bindings, jointInference, SqlBindingSnapshots.models(bindings, jointInference));
         }
 
         public Variant(String text, List<Placeholder> placeholders, Optional<ValueTrace> trace, List<SqlExtraction.Binding> bindings) {
@@ -63,7 +71,9 @@ public record RawSql(List<Variant> variants, List<String> issues) {
         /** 当前候选的拼接参数和绑定参数是否均已完成推断，不表示路径在实际运行中可行。 */
         public boolean inferenceComplete() {
             return parameters().stream().allMatch(ParameterValueInferenceResult::complete)
-                    && bindings.stream().allMatch(binding -> binding.inference().complete());
+                    && bindings.stream().allMatch(binding -> binding.inference().complete())
+                    && (!bindings.isEmpty() || bindingSnapshots.stream().flatMap(snapshot -> snapshot.bindings().stream())
+                        .allMatch(binding -> binding.value() instanceof SqlValue.Known && binding.keyValue() instanceof SqlValue.Known));
         }
 
         /**
@@ -81,6 +91,11 @@ public record RawSql(List<Variant> variants, List<String> issues) {
             nodes.add(new StaticTextSqlNode(text.substring(start)));
             return new MixedSqlNode(nodes);
         }
+    }
+
+    /** 同一候选的一个绑定模型；不合并不同组合，定义快照可没有 Java 传播证据或路径模型。 */
+    public record BindingSnapshot(List<SqlSample.Binding> bindings, Optional<JointSqlInferenceResult.Combination> combination) {
+        public BindingSnapshot { bindings = List.copyOf(bindings); Objects.requireNonNull(combination); }
     }
 
     /** start/end 为 text 中槽位的 UTF-16 起止位置；source 保留来源，inference 保存转换后的参数候选值。 */

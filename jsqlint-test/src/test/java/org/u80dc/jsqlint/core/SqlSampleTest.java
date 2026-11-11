@@ -37,7 +37,33 @@ class SqlSampleTest {
         assertEquals(new SqlAssessment(true, true, true, Optional.of(true)), sample.assessment());
         assertSame(sample.rawSql().orElseThrow(), ((SqlExtraction) sample.source()).rawSqls().getFirst());
         assertTrue(sample.combination().isPresent());
+        assertEquals(sample.bindings(), sample.rawSql().orElseThrow().bindingSnapshots().getFirst().bindings());
+        assertEquals(sample.combination(), sample.rawSql().orElseThrow().bindingSnapshots().getFirst().combination());
         assertThrows(UnsupportedOperationException.class, () -> sample.bindings().clear());
+    }
+
+    @Test void identicalSqlKeepsEachJointBindingModelAsASeparateSnapshot() throws Exception {
+        var result = analyze("""
+                public void query(java.sql.Connection c, boolean flag) throws Exception {
+                    var p = c.prepareStatement("SELECT ?");
+                    if (flag) p.setInt(1,11); else p.setInt(1,22);
+                    p.executeQuery();
+                }
+                """, AnalyzerConfig.defaults());
+        var variants = result.extractions().stream().filter(value -> value.callSite().target().getName().equals("executeQuery"))
+                .flatMap(value -> value.rawSqls().stream()).toList();
+        var snapshots = variants.stream().flatMap(raw -> raw.bindingSnapshots().stream()).toList();
+        assertEquals(Set.of("SELECT ?"), variants.stream().map(RawSql.Variant::text).collect(java.util.stream.Collectors.toSet()));
+        assertEquals(Set.of(new SqlValue.Known(11),new SqlValue.Known(22)), snapshots.stream()
+                .map(snapshot -> snapshot.bindings().getFirst().value()).collect(java.util.stream.Collectors.toSet()));
+        assertEquals(2, snapshots.size());
+        var samples = result.samples().stream().filter(value -> value.rawSql().filter(variants::contains).isPresent()).toList();
+        assertEquals(2, samples.size());
+        for (var sample : samples) {
+            var raw = sample.rawSql().orElseThrow();
+            var saved = raw.bindingSnapshots().stream().filter(snapshot -> snapshot.combination().equals(sample.combination())).findFirst().orElseThrow();
+            assertEquals(sample.bindings(), saved.bindings());
+        }
     }
 
     @Test

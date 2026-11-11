@@ -6,7 +6,6 @@ import org.u80dc.jsqlint.core.SqlDiscovery.Pending;
 import org.u80dc.jsqlint.core.node.*;
 import org.u80dc.jsqlint.core.dataflow.*;
 import org.u80dc.jsqlint.core.spi.*;
-import sootup.core.signatures.MethodSignature;
 
 import java.util.*;
 import java.util.function.Consumer;
@@ -90,10 +89,7 @@ final class AnalysisSession {
         var flow = new DataFlowAnalysis(program, config.maxCallDepth(), config.maxTraceDepth(), config.maxTraceNodes(),
                 config.methodCacheSize(), this::checkpoint, this::incomplete);
         var pipeline = new SqlExtractionPipeline(flow, config, this::checkpoint, this::incomplete, this::recover);
-        Set<ExtractionPoint> extractionPoints = new HashSet<>();
-        for (var requestPoint : extractionRequests) extractionPoints.add(new ExtractionPoint(requestPoint.moduleId(),
-                requestPoint.site().method().getSignature(), requestPoint.site().statement()));
-        Map<ExtractionPoint, List<Compatibility>> compatibility = new LinkedHashMap<>();
+        var compatibility = new SqlSeedCompatibility(extractionRequests);
         if (extensions.isEmpty()) diagnostic("NO_MODULES", "No SQL discovery modules registered");
         for (Pending item : pending) {
             checkpoint();
@@ -105,14 +101,10 @@ final class AnalysisSession {
                 SqlInput input = item.seed().input();
                 if (input instanceof SqlInput.ComputedDefinition computed)
                     input = new SqlInput.Definition(computed.resolve().apply(flow));
-                if (input instanceof SqlInput.ValueAt value) {
-                    var point = new ExtractionPoint(item.moduleId(), value.method().getSignature(), value.statement());
-                    if (extractionPoints.contains(point)) {
-                        // 已注册完整提取的调用点只分析一次；旧事件稍后从同一份结果派生。
-                        compatibility.computeIfAbsent(point, ignored -> new ArrayList<>()).add(new Compatibility(item, value));
-                        diagnosticLocation = Optional.empty();
-                        continue;
-                    }
+                if (input instanceof SqlInput.ValueAt value && compatibility.defer(item, value)) {
+                    // 已注册完整提取的调用点只分析一次；旧事件稍后从同一份结果派生。
+                    diagnosticLocation = Optional.empty();
+                    continue;
                 }
                 if (input instanceof SqlInput.Definition source) definition = Optional.of(source.definition());
                 template = switch (input) {
@@ -129,51 +121,37 @@ final class AnalysisSession {
             diagnosticLocation = Optional.empty();
             progress(stage);
         }
-        Map<ExtractionPoint, List<SqlExtraction.Statement>> compatibilityStatements = new LinkedHashMap<>();
         for (SqlDiscovery.ExtractionRequest requestPoint : extractionRequests) {
             checkpoint();
             diagnosticLocation = Optional.of(requestPoint.site().location());
             var results = pipeline.extract(requestPoint.moduleId(), requestPoint.site(), requestPoint.handler(), this::publishExtraction);
-            var point = new ExtractionPoint(requestPoint.moduleId(), requestPoint.site().method().getSignature(), requestPoint.site().statement());
-            if (compatibility.containsKey(point)) compatibilityStatements.computeIfAbsent(point, ignored -> new ArrayList<>())
-                    .addAll(results.stream().flatMap(result -> result.statements().stream()).toList());
+            compatibility.capture(requestPoint, results);
             diagnosticLocation = Optional.empty();
             progress(stage);
         }
         // 同一位置可有多个提取规则；兼容事件按原始 seed 发出一次，展示所有规则的候选。
-        for (var entry : compatibility.entrySet()) {
-            for (Compatibility legacy : entry.getValue()) {
-                Pending item = legacy.item();
-                diagnosticLocation = Optional.of(item.seed().location());
-                var templates = compatibilityStatements.getOrDefault(entry.getKey(), List.of()).stream()
-                        .filter(statement -> sourceMatches(statement, legacy.input())).map(SqlExtraction.Statement::template).toList();
-                if (templates.isEmpty()) {
-                    // 相同调用位置的其他 SQL 输入没有被完整提取规则覆盖，仍按原始 seed 恢复。
-                    int diagnosticStart = diagnostics.size();
-                    SqlNode template;
-                    try { template = pipeline.template(legacy.input()); }
-                    catch (Exception e) {
-                        recover("SQL_EXTRACTION", item.seed().location().toString(), e);
-                        template = ValueSqlNode.raw("unresolvedSql");
-                    }
-                    publishTemplate(item, template, diagnosticStart);
-                } else {
-                    var template = SqlTemplateProjection.alternatives(templates);
-                    notifySql(item, template, render(item, template));
+        compatibility.replay(legacy -> {
+            checkpoint();
+            Pending item = legacy.item();
+            diagnosticLocation = Optional.of(item.seed().location());
+            if (legacy.template().isEmpty()) {
+                // 相同调用位置的其他 SQL 输入没有被完整提取规则覆盖，仍按原始 seed 恢复。
+                int diagnosticStart = diagnostics.size();
+                SqlNode template;
+                try { template = pipeline.template(legacy.input()); }
+                catch (Exception e) {
+                    recover("SQL_EXTRACTION", item.seed().location().toString(), e);
+                    template = ValueSqlNode.raw("unresolvedSql");
                 }
-                progress(stage);
+                publishTemplate(item, template, diagnosticStart);
+            } else {
+                var template = legacy.template().orElseThrow();
+                notifySql(item, template, render(item, template));
             }
-        }
+            progress(stage);
+        });
         diagnosticLocation = Optional.empty();
         return partial ? Status.PARTIAL : Status.SUCCESS;
-    }
-
-    private boolean sourceMatches(SqlExtraction.Statement statement, SqlInput.ValueAt input) {
-        if (statement.sql().isEmpty()) return false;
-        var source = statement.sql().get().variable();
-        return source.method().equals(input.method().getSignature())
-                && source.statementIndex() == input.method().getBody().getStmts().indexOf(input.statement())
-                && source.expression().equals(input.value().toString()) && source.type().equals(input.value().getType().toString());
     }
 
     private void publishTemplate(Pending item, SqlNode template, int diagnosticStart) {
@@ -298,8 +276,6 @@ final class AnalysisSession {
                 Objects.toString(error.getMessage(), error.getClass().getSimpleName())));
     }
 
-    private record ExtractionPoint(String moduleId, MethodSignature method, sootup.core.jimple.common.stmt.Stmt statement) {}
-    private record Compatibility(Pending item, SqlInput.ValueAt input) {}
     private static final class ListenerFailure extends RuntimeException {
         ListenerFailure(Throwable cause) { super(cause); }
     }

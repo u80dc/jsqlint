@@ -11,11 +11,22 @@ public record TemplateInferenceResult(Map<String, ValueTrace> sources,
                                       Map<String, ParameterValueInferenceResult> parameters,
                                       Map<String, String> aliases, Optional<String> fallback,
                                       Optional<String> parameterMapName, Map<String, Object> constants,
-                                      Optional<JointSqlInferenceResult> jointInference, List<BoundModel> models, List<String> issues) {
+                                      Optional<JointSqlInferenceResult> jointInference, List<BoundModel> models, List<String> issues,
+                                      Map<String, String> renderAliases) {
     public TemplateInferenceResult {
         sources = immutable(sources); parameters = immutable(parameters); aliases = immutable(aliases);
         Objects.requireNonNull(fallback); Objects.requireNonNull(parameterMapName); constants = immutable(constants);
         Objects.requireNonNull(jointInference); models = List.copyOf(models); issues = List.copyOf(issues);
+        renderAliases = immutable(renderAliases);
+        for (String name : renderAliases.keySet())
+            if (aliases.containsKey(name) || constants.containsKey(name) || parameterMapName.filter(name::equals).isPresent())
+                throw new IllegalArgumentException("Template render alias conflicts with a business or reserved name: " + name);
+    }
+    public TemplateInferenceResult(Map<String, ValueTrace> sources, Map<String, ParameterValueInferenceResult> parameters,
+                                   Map<String, String> aliases, Optional<String> fallback, Optional<String> parameterMapName,
+                                   Map<String, Object> constants, Optional<JointSqlInferenceResult> jointInference,
+                                   List<BoundModel> models, List<String> issues) {
+        this(sources, parameters, aliases, fallback, parameterMapName, constants, jointInference, models, issues, Map.of());
     }
     private static <T> Map<String, T> immutable(Map<String, T> source) {
         return Collections.unmodifiableMap(new LinkedHashMap<>(source));
@@ -46,6 +57,7 @@ public record TemplateInferenceResult(Map<String, ValueTrace> sources,
         // 根参数 Map 在加入保留名称前复制，避免自引用或别名覆盖根对象。
         parameterMapName.ifPresent(name -> values.put(name, immutable(values)));
         values.putAll(constants);
+        renderAliases.forEach((alias, key) -> values.put(alias, value(model, key)));
         if (fallback.isEmpty()) return Collections.unmodifiableMap(values);
         Object single = value(model, fallback.get());
         return Collections.unmodifiableMap(new AbstractMap<>() {

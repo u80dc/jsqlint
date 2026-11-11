@@ -34,9 +34,36 @@ class SqlDefinitionSnapshotTest {
         for (int i = 0; i < 3; i++) {
             assertEquals(new SqlValue.Known(7), result.samples().getFirst().bindings().getFirst().value());
             assertEquals(List.of("SELECT ?"), result.rawSqls().stream().map(RawSql.Variant::text).toList());
+            var raw = result.rawSqls().getFirst();
+            assertEquals(result.samples().getFirst().bindings(), raw.bindingSnapshots().getFirst().bindings());
+            assertTrue(raw.bindingSnapshots().getFirst().combination().isEmpty());
+            assertTrue(raw.bindingSnapshots().getFirst().bindings().getFirst().trace().isEmpty());
             assertEquals(new SqlAssessment(true, true, true, Optional.empty()), source.assessment());
         }
         assertEquals(savedEvaluations, evaluations.get(), "默认读取只消费快照");
+    }
+
+    @Test void definitionBindingsKeepOrderTypesNullUnknownAndOptionsWithoutJavaEvidence() {
+        var definition = new SqlDefinition("query", LOCATION,
+                new MixedSqlNode(List.of(new StaticTextSqlNode("SELECT "),
+                        ValueSqlNode.parameter("id", "javaType=int,jdbcType=INTEGER", "int"),
+                        SqlNodeBuilder.templateText(",#{empty},#{id},#{missing}"))));
+        Map<String,Object> parameters = new LinkedHashMap<>(); parameters.put("id",7); parameters.put("empty",null);
+        var result = analyze(definition, parameters, AnalysisOptions.defaults());
+        var raw = result.rawSqls().getFirst();
+        var snapshot = raw.bindingSnapshots().getFirst();
+        assertEquals("SELECT ?,?,?,?", raw.text());
+        assertEquals(List.of("1","2","3","4"), snapshot.bindings().stream().map(SqlSample.Binding::key).toList());
+        assertEquals("int", snapshot.bindings().getFirst().type());
+        assertEquals("javaType=int,jdbcType=INTEGER", snapshot.bindings().getFirst().options());
+        assertEquals(new SqlValue.Known(null), snapshot.bindings().get(1).value());
+        assertEquals(new SqlValue.Known(7), snapshot.bindings().get(2).value());
+        assertInstanceOf(SqlValue.Unknown.class, snapshot.bindings().getLast().value());
+        assertTrue(snapshot.bindings().stream().allMatch(binding -> binding.location().equals(LOCATION) && binding.trace().isEmpty()));
+        assertEquals(result.samples().getFirst().bindings(), snapshot.bindings());
+        assertFalse(raw.inferenceComplete());
+        assertThrows(UnsupportedOperationException.class, () -> raw.bindingSnapshots().clear());
+        assertThrows(UnsupportedOperationException.class, () -> snapshot.bindings().clear());
     }
 
     @Test void previewBindsAreNotAppliedTwiceAndExplicitSamplesDoNotChangeTheSnapshot() {

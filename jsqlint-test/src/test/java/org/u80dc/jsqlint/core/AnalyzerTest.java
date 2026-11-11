@@ -154,6 +154,8 @@ class AnalyzerTest {
         assertEquals(2, result.extractions().size(), "提取规则分别保留自己的结果");
         assertEquals(List.of("SELECT 1", "SELECT 2"), capture.completeSql(), "旧事件只按原始 seed 报告一次，不混入另一个 SQL 输入");
         assertEquals(3, capture.results.size(), "未被完整提取规则覆盖的第二个输入仍保留自己的模板结果");
+        assertEquals(result.extractions(), result.calls());
+        assertTrue(result.definitions().isEmpty(), "旧裸模板起点不伪装成 SQL 定义");
     }
 
     @Test

@@ -6,10 +6,16 @@ import org.u80dc.jsqlint.core.dataflow.DataFlowAnalysis;
 import org.u80dc.jsqlint.core.dataflow.ValueTrace;
 import java.util.*;
 
-/** 定义与调用实参的通用关联；别名和单值回退策略由框架适配层提供。 @author u80dc */
+/**
+ * 定义与调用实参的通用关联；业务参数、渲染槽位和 SQL 路径来源分别保存。
+ * renderParameters 只进入模板求值环境，不属于 parameterMapName 指定的业务参数对象；
+ * sqlSource 参与联合求解和来源记录，不作为可见模板变量。
+ * @author u80dc
+ */
 public record TemplateSqlInput(SqlDefinition definition, Map<String, Parameter> parameters,
                                Optional<Parameter> fallback, Optional<String> parameterMapName,
-                               Map<String, Object> constants, Optional<ValueTrace> sqlSource) {
+                               Map<String, Object> constants, Optional<ValueTrace> sqlSource,
+                               Map<String, Parameter> renderParameters) {
     public TemplateSqlInput {
         Objects.requireNonNull(definition);
         parameters = Collections.unmodifiableMap(new LinkedHashMap<>(parameters));
@@ -17,6 +23,14 @@ public record TemplateSqlInput(SqlDefinition definition, Map<String, Parameter> 
         Objects.requireNonNull(parameterMapName);
         constants = Collections.unmodifiableMap(new LinkedHashMap<>(constants));
         Objects.requireNonNull(sqlSource);
+        renderParameters = Collections.unmodifiableMap(new LinkedHashMap<>(renderParameters));
+        for (String name : renderParameters.keySet())
+            if (parameters.containsKey(name) || constants.containsKey(name) || parameterMapName.filter(name::equals).isPresent())
+                throw new IllegalArgumentException("Template render parameter conflicts with a business or reserved name: " + name);
+    }
+    public TemplateSqlInput(SqlDefinition definition, Map<String, Parameter> parameters, Optional<Parameter> fallback,
+                            Optional<String> parameterMapName, Map<String, Object> constants, Optional<ValueTrace> sqlSource) {
+        this(definition, parameters, fallback, parameterMapName, constants, sqlSource, Map.of());
     }
     public TemplateSqlInput(SqlDefinition definition, Map<String, Parameter> parameters, Optional<Parameter> fallback,
                             Optional<String> parameterMapName, Map<String, Object> constants) {

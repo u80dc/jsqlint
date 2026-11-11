@@ -89,9 +89,7 @@ final class ProviderSqlExtractor {
         for (var variant : raw.variants()) {
             var adapted = adapt(base, provider, input, variant, raw.issues(), flow, branch++);
             templates.add(adapted.definition().template());
-            adapted.parameters().forEach((name, parameter) -> {
-                if (!input.parameters().containsKey(name)) slots.put(name, parameter.trace(flow));
-            });
+            adapted.renderParameters().forEach((name, parameter) -> slots.put(name, parameter.trace(flow)));
         }
         var evaluator = new TraceSqlExpressionEvaluator(new MybatisExpressionEvaluator(options), slots, aliases);
         return new SqlDefinition(base.id(), base.location(), SqlTemplateProjection.alternatives(templates), evaluator,
@@ -100,7 +98,7 @@ final class ProviderSqlExtractor {
 
     private TemplateSqlInput adapt(SqlDefinition base, ProviderMethodResolver.Method provider, TemplateSqlInput input,
                                    RawSql.Variant variant, List<String> issues, DataFlowAnalysis flow, int branch) {
-        var aliases = new LinkedHashMap<>(input.parameters());
+        var slots = new LinkedHashMap<>(input.renderParameters());
         var sql = new StringBuilder(); int start = 0, slotIndex = 0;
         for (var slot : variant.placeholders()) {
             flow.checkpoint();
@@ -111,28 +109,18 @@ final class ProviderSqlExtractor {
                 if (++slotIndex > DataFlowAnalysis.MAX_STEPS) throw new IllegalArgumentException("MyBatis Provider placeholder naming budget exceeded");
                 name = "__jsqlint_provider_value_" + (branch < 0 ? "" : branch + "_") + slotIndex;
             }
-            while (variant.text().contains(name) || aliases.containsKey(name));
+            while (variant.text().contains(name) || input.parameters().containsKey(name) || slots.containsKey(name)
+                    || input.constants().containsKey(name) || input.parameterMapName().filter(name::equals).isPresent());
             sql.append("${").append(name).append('}');
             var saved = new ValueTrace(slot.source().variable(), variant.trace().map(ValueTrace::callChain).orElse(List.of()), slot.source());
-            aliases.put(name, new TemplateSqlInput.Parameter(saved, "java.lang.String"));
+            slots.put(name, new TemplateSqlInput.Parameter(saved, "java.lang.String"));
             start = slot.end();
         }
         sql.append(variant.text(), start, variant.text().length());
         var evaluator = new MybatisExpressionEvaluator(options);
         var template = MybatisSqlAdapter.annotation(sql.toString(), options); evaluator.validate(template);
         var definition = new SqlDefinition(base.id(), base.location(), template, evaluator, metadata(base, provider), issues);
-        // 即使 SQL 是常量，也把 Provider 返回路径纳入联合求解，避免混用互斥分支。
-        variant.trace().ifPresent(saved -> aliases.put(hiddenName(aliases, variant.text(), flow), new TemplateSqlInput.Parameter(saved, "java.lang.String")));
-        return new TemplateSqlInput(definition, aliases, input.fallback(), input.parameterMapName(), input.constants(), variant.trace());
-    }
-
-    private static String hiddenName(Map<String, ?> aliases, String sql, DataFlowAnalysis flow) {
-        for (int i = 0; i < DataFlowAnalysis.MAX_STEPS; i++) {
-            flow.checkpoint();
-            String name = "__jsqlint_provider_source" + (i == 0 ? "" : "_" + i);
-            if (!aliases.containsKey(name) && !sql.contains(name)) return name;
-        }
-        throw new IllegalArgumentException("MyBatis Provider source naming budget exceeded");
+        return new TemplateSqlInput(definition, input.parameters(), input.fallback(), input.parameterMapName(), input.constants(), variant.trace(), slots);
     }
 
     private List<ProviderArgumentModel.Argument> arguments(ProviderMethodResolver.Method provider, TemplateSqlInput input,

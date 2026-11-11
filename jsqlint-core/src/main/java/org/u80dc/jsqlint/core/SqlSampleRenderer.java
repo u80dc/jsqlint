@@ -37,9 +37,7 @@ public final class SqlSampleRenderer {
         var issues = new LinkedHashSet<>(definition.issues());
         source.diagnostics().forEach(diagnostic -> issues.add(diagnostic.code() + ": " + diagnostic.message()));
         bound.rendered().diagnostics().forEach(diagnostic -> issues.add(diagnostic.code() + ": " + diagnostic.message()));
-        var bindings = bound.bindings().stream().map(slot -> new SqlSample.Binding(Integer.toString(slot.position()),
-                slot.type().isEmpty() ? "java.lang.Object" : slot.type(), new SqlValue.Known(slot.position()), slot.value(),
-                definition.location(), slot.options(), Optional.empty())).toList();
+        var bindings = SqlBindingSnapshots.bound(bound, definition.location(), List.of());
         boolean sources = source.assessment().sourcesComplete();
         boolean limited = bound.rendered().diagnostics().stream().anyMatch(diagnostic ->
                 diagnostic.code().equals("RENDER_LIMIT") || diagnostic.code().equals("RENDER_UNAVAILABLE"));
@@ -90,17 +88,11 @@ public final class SqlSampleRenderer {
                             value.value() instanceof SqlValue.Known known
                                     ? known.value() instanceof String ? known.value() : new SqlValue.Unknown("SQL slot is not a string: " + name)
                                     : value.value()));
-                    var bindings = new ArrayList<SqlSample.Binding>();
                     var issues = new ArrayList<>(combination.issues());
                     if (combination.bindings().size() != statement.bindings().size()) issues.add("Joint binding snapshot size differs from its source");
-                    for (int i = 0; i < statement.bindings().size(); i++) {
-                        var binding = statement.bindings().get(i);
-                        if (i < combination.bindings().size()) {
-                            var value = combination.bindings().get(i);
-                            bindings.add(new SqlSample.Binding(binding.key(), binding.inference().type(),
-                                    value.keyValue().value(), value.value().value(), binding.location(), binding.options(), Optional.of(value.value().propagationPath())));
-                        } else bindings.add(unknownBinding(binding, "Joint binding value is unavailable"));
-                    }
+                    var bindings = variant.bindingSnapshots().stream().filter(snapshot -> snapshot.combination().filter(combination::equals).isPresent())
+                            .findFirst().map(RawSql.BindingSnapshot::bindings)
+                            .orElseGet(() -> SqlBindingSnapshots.unknown(statement.bindings(), "Joint binding snapshot is unavailable"));
                     samples.add(sample(source, statement, Optional.of(variant), Optional.of(combination), parameters, bindings,
                             combination.status() == JointSqlInferenceResult.Status.SATISFIABLE
                                     ? SqlSample.Feasibility.SATISFIABLE : SqlSample.Feasibility.UNKNOWN, issues));
@@ -118,12 +110,7 @@ public final class SqlSampleRenderer {
         issues.addAll(statement.issues()); issues.addAll(statement.templateIssues()); issues.addAll(saved.issues());
         issues.addAll(model.issues()); model.combination().ifPresent(value -> issues.addAll(value.issues()));
         rendered.diagnostics().forEach(diagnostic -> issues.add(diagnostic.code() + ": " + diagnostic.message()));
-        List<SqlSample.Binding> bindings = new ArrayList<>();
-        for (int i = 0; i < model.bound().bindings().size(); i++) {
-            var slot = model.bound().bindings().get(i); var evidence = model.bindings().get(i);
-            bindings.add(new SqlSample.Binding(evidence.key(), evidence.inference().type(), new SqlValue.Known(slot.position()),
-                    slot.value(), evidence.location(), slot.options(), Optional.of(evidence.value())));
-        }
+        var bindings = SqlBindingSnapshots.bound(model.bound(), statement.definition().orElseThrow().location(), model.bindings());
         boolean sources = source.issues().isEmpty() && statement.sourcesComplete();
         boolean values = model.bound().valuesComplete() && model.bindings().stream().allMatch(binding -> binding.inference().complete())
                 && model.combination().map(value -> value.parameters().values()
@@ -136,7 +123,8 @@ public final class SqlSampleRenderer {
         var assessment = new SqlAssessment(sources, statement.templateComplete(), values,
                 saved.jointInference().map(JointSqlInferenceResult::coverageComplete));
         var raw = statement.rawSql().variants().stream().filter(variant -> rendered.sql().filter(variant.text()::equals).isPresent()
-                && variant.bindings().equals(model.bindings())).findFirst();
+                && variant.bindingSnapshots().stream().anyMatch(snapshot -> snapshot.combination().equals(model.combination())
+                    && snapshot.bindings().equals(bindings))).findFirst();
         return new SqlSample(source, statement.batchEntry(), rendered, bindings, feasibility, assessment,
                 new ArrayList<>(issues), raw, model.combination(), statement.definition());
     }
@@ -166,11 +154,6 @@ public final class SqlSampleRenderer {
     }
 
     private static List<SqlSample.Binding> unknownBindings(SqlExtraction.Statement statement, String reason) {
-        return statement.bindings().stream().map(binding -> unknownBinding(binding, reason)).toList();
-    }
-
-    private static SqlSample.Binding unknownBinding(SqlExtraction.Binding binding, String reason) {
-        return new SqlSample.Binding(binding.key(), binding.inference().type(),
-                new SqlValue.Unknown(reason), new SqlValue.Unknown(reason), binding.location(), binding.options(), Optional.of(binding.value()));
+        return SqlBindingSnapshots.unknown(statement.bindings(), reason);
     }
 }

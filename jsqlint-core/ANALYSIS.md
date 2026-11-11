@@ -10,6 +10,7 @@
 |---|---|
 | `Analyzer` | 输入准备、所有权和结束清理，解析实例配置与单次覆盖 |
 | `AnalysisSession` | 取消、超时、阶段进度、诊断、结果保存与监听器交付 |
+| `SqlSeedCompatibility` | 旧 ValueAt 起点与完整提取结果的匹配、复用和事件投影 |
 | `SqlDiscovery` | 每次注册模块，共享资源和代码扫描，收集起点及应用调用点 |
 | `ProgramIndex` / `DataFlowAnalysis` | 调用上下文、应用类分派、局部与过程间来源追踪 |
 | `SqlExtractionPipeline` | 组织 raw SQL 恢复、模板投影、参数重演与联合路径推断 |
@@ -357,9 +358,13 @@ var result = new Analyzer().analyze(project);
 for (var sql : result.rawSqls()) {
     System.out.println(sql.text());
     System.out.println(sql.parameters()); // ${name} 拼接参数及各自的推断值、传播链
-    for (var binding : sql.bindings()) {   // 本条 SQL 的预编译绑定参数快照
+    for (var binding : sql.bindings()) {   // Java 绑定来源及独立参数推断
         System.out.println(binding.key()); // 位置、名称或 unknown 标识
         System.out.println(binding.inference()); // 参数名、Java 类型、推断值列表和对应传播链
+    }
+    for (var model : sql.bindingSnapshots()) { // 每个最终组合或定义的统一绑定快照
+        System.out.println(model.bindings());  // 位置、类型、值、选项和可选传播证据
+        System.out.println(model.combination());
     }
     System.out.println(sql.inferenceComplete());
     sql.trace().ifPresent(trace -> System.out.println(trace.root()));
@@ -374,8 +379,14 @@ for (var sql : result.rawSqls()) {
 绑定快照在 `SqlExtraction.Statement` 组装时关联，`statement.bindings()` 与候选的 `bindings()` 内容一致；
 不同调用上下文、不同批次中的相同 SQL 文本分别保留各自的参数，准备点不会混入后续 setter 的值。
 拼接参数与预编译绑定参数分别访问，不按名称混合去重；绑定值的 Unknown、初始值和传播链均保留。
+`bindingSnapshots()` 按最终联合组合分别保存绑定值，与样例使用相同快照；定义候选也保存绑定，
+其传播证据和路径组合可以为空。相同 SQL 文本的不同绑定分支不合并，不跨组合混用参数。
 `sql.inferenceComplete()` 只检查当前候选已关联参数的推断，不保证 JDBC 的所有 `?` 都已经被设置。
 调用点、批次位置和各层诊断继续通过 `result.extractions()` 获取；未能生成任何候选的失败来源及其绑定参数也保存在其中。
+
+`result.definitions()` 返回资源、注解与计算定义的 `SqlTemplateResult`；`result.calls()` 返回
+完整调用提取的 `SqlExtraction`，包含 JDBC 和 Mapper 调用。`extractions()` 保留为同一调用视图的兼容入口。
+两者保留结果顺序并返回不可变列表；调用关联的定义不会重复加入定义视图，旧裸模板仍通过 `sqlResults()` 读取。
 
 `statement.rawSql()` 保存可直接查看的 SQL 文本候选，core 同时以 `Raw SQL` 日志输出。
 构造器消费 `ValueTrace.Node.computation()` 中的计算语义，不重新扫描方法体，也不从 Jimple
@@ -730,6 +741,9 @@ registry.sqlInvocation(site -> /* 框架实际调用判断 */ false);
 core 合并同源别名，保存 TemplateInferenceResult 的来源、推断和模型；联合推断通过
 `JointSqlValueInferencer.inferParameters(...)` 执行，无需伪造 Java SQL 字符串来源。
 模板模型下的 SQL 和绑定快照均在分析阶段保存，后续样例展示不访问代码输入。
+TemplateSqlInput 分开保存业务参数、渲染槽位和仅参与求解的 SQL 来源；Provider 内部来源不进入
+业务 `_parameter` Map。渲染后用 `JointSqlInferenceResult.withCombinations(...)` 重新汇总最终组合状态，
+未知绑定使组合和总状态均为 UNKNOWN；普通未知值不会自动把已完整枚举的 Java 路径覆盖标为不完整。
 表达式求值同时返回通用输入引用，渲染器保存 bind/foreach 的派生来源，core 将其关联到
 真实实参的 `ValueTrace`。绑定表达式与实际依赖共同保留，不按表达式字符串猜测参数，
 同名局部绑定不会改写其他别名的来源；生成绑定证据的预算截断也进入完整性判断。

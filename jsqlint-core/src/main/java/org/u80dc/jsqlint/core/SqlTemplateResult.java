@@ -45,8 +45,9 @@ public record SqlTemplateResult(String moduleId, SourceLocation location, SqlNod
     }
 
     public List<RawSql.Variant> rawSqls() {
-        if (definition.isPresent()) return bound.flatMap(snapshot -> snapshot.rendered().sql()).stream()
-                .map(text -> new RawSql.Variant(text, List.of())).toList();
+        if (definition.isPresent()) return bound.stream().flatMap(snapshot -> snapshot.rendered().sql().stream()
+                .map(text -> new RawSql.Variant(text, List.of(), Optional.empty(), List.of(), Optional.empty(),
+                        List.of(new RawSql.BindingSnapshot(SqlBindingSnapshots.bound(snapshot, definition.get().location(), List.of()), Optional.empty()))))).toList();
         // 尚未枚举动态模板分支时，通过 templates() 访问完整结构，不编造文本候选。
         if (template.isDynamic()) return List.of();
         return rendered.flatMap(RenderedSql::sql).stream().map(text -> new RawSql.Variant(text, List.of())).toList();

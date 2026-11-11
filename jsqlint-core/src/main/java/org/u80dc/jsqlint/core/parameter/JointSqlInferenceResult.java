@@ -18,6 +18,13 @@ public record JointSqlInferenceResult(Status status, List<Combination> combinati
     public JointSqlInferenceResult(Status status, List<Combination> combinations, List<String> issues) {
         this(status, combinations, issues, issues.isEmpty());
     }
+    /** 渲染等后处理改变组合后，按最终组合重新汇总；覆盖情况独立于普通未知值。 */
+    public JointSqlInferenceResult withCombinations(List<Combination> completed) {
+        Status summary = !coverageComplete || !issues.isEmpty() || completed.stream().anyMatch(value -> value.status() == Status.UNKNOWN)
+                ? Status.UNKNOWN : completed.isEmpty() ? status
+                : completed.stream().anyMatch(value -> value.status() == Status.SATISFIABLE) ? Status.SATISFIABLE : Status.UNSATISFIABLE;
+        return new JointSqlInferenceResult(summary, completed, issues, coverageComplete);
+    }
     /** UNSATISFIABLE 表示在完整枚举的受支持路径内已证明无解；UNKNOWN 不可当作无解。 */
     public enum Status { SATISFIABLE, UNSATISFIABLE, UNKNOWN }
 

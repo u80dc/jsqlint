@@ -7,6 +7,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.u80dc.jsqlint.core.*;
 import org.u80dc.jsqlint.core.node.SqlValue;
 import org.u80dc.jsqlint.core.dataflow.ValueTrace;
+import org.u80dc.jsqlint.core.parameter.JointSqlInferenceResult;
 import org.u80dc.jsqlint.jdbc.JdbcAnalysisModule;
 
 import javax.tools.ToolProvider;
@@ -36,6 +37,13 @@ class MybatisExtractionTest {
                 """, false);
         var result = analyze(classes, AnalyzerConfig.defaults(), MybatisOptions.defaults());
         assertEquals(AnalysisResult.Status.SUCCESS, result.status(), result.diagnostics().toString());
+        assertEquals(1, result.definitions().size());
+        assertEquals("sample.Mapper.query", result.definitions().getFirst().definition().orElseThrow().id());
+        assertEquals(result.extractions(), result.calls());
+        assertEquals(1, result.calls().size());
+        assertEquals(2, result.sqlResults().size());
+        assertThrows(UnsupportedOperationException.class, () -> result.definitions().clear());
+        assertThrows(UnsupportedOperationException.class, () -> result.calls().clear());
         var sample = onlyCalls(result);
         assertEquals("SELECT 100,101 FROM users WHERE a=? AND b=? OR a=?", normalize(sample.sql().orElseThrow()));
         assertEquals(List.of(new SqlValue.Known(100), new SqlValue.Known(101), new SqlValue.Known(100)), values(sample));
@@ -51,6 +59,8 @@ class MybatisExtractionTest {
         assertEquals(3, statement.templateInference().orElseThrow().sources().size());
         assertSame(sample.rawSql().orElseThrow(), statement.rawSql().variants().getFirst());
         assertEquals(3, sample.combination().orElseThrow().bindings().size());
+        assertEquals(sample.bindings(), sample.rawSql().orElseThrow().bindingSnapshots().getFirst().bindings());
+        assertEquals(sample.combination(), sample.rawSql().orElseThrow().bindingSnapshots().getFirst().combination());
         assertEquals(1, result.sqlResults().stream().filter(SqlTemplateResult.class::isInstance).count());
         assertThrows(UnsupportedOperationException.class, () -> statement.templateInference().orElseThrow().aliases().clear());
     }
@@ -198,6 +208,28 @@ class MybatisExtractionTest {
         assertEquals(SqlSample.Feasibility.UNKNOWN, sample.feasibility());
         assertEquals(Optional.of(false), sample.assessment().pathCoverageComplete());
         assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("JOINT_ANALYSIS_INCOMPLETE")));
+    }
+
+    @Test void unknownRenderedBindingDowngradesTheJointSummaryWithoutLosingPathCoverage() throws Exception {
+        Path classes = compile("""
+                interface Mapper {
+                    @Select("SELECT #{missing}") Object query(@Param("id") int id);
+                }
+                public class Sample { public void run(Mapper mapper) { mapper.query(7); } }
+                """, false);
+        var result = analyze(classes, AnalyzerConfig.defaults(), MybatisOptions.defaults());
+        var saved = result.calls().getFirst().statements().getFirst().templateInference().orElseThrow();
+        var joint = saved.jointInference().orElseThrow();
+        assertEquals(JointSqlInferenceResult.Status.UNKNOWN, joint.status());
+        assertTrue(joint.coverageComplete(), "普通缺失值不表示遗漏 Java 路径");
+        assertEquals(1, joint.combinations().size());
+        assertEquals(JointSqlInferenceResult.Status.UNKNOWN, joint.combinations().getFirst().status());
+        var sample = onlyCalls(result);
+        assertEquals("SELECT ?", sample.sql().orElseThrow());
+        assertEquals(SqlSample.Feasibility.UNKNOWN, sample.feasibility());
+        assertInstanceOf(SqlValue.Unknown.class, sample.bindings().getFirst().value());
+        assertEquals(joint, sample.rawSql().orElseThrow().jointInference().orElseThrow());
+        assertEquals(sample.combination(), sample.rawSql().orElseThrow().bindingSnapshots().getFirst().combination());
     }
 
     @Test void failuresAndCancellationKeepTheExistingSessionSemantics() throws Exception {
