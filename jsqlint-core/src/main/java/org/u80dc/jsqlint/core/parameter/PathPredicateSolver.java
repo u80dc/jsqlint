@@ -1,5 +1,7 @@
 package org.u80dc.jsqlint.core.parameter;
 
+import org.u80dc.jsqlint.core.semantics.JavaValueOperations;
+
 import org.u80dc.jsqlint.core.dataflow.ValueTrace;
 import org.u80dc.jsqlint.core.node.SqlValue;
 import java.math.BigInteger;
@@ -10,7 +12,7 @@ import static org.u80dc.jsqlint.core.parameter.JointSqlInferenceResult.*;
 
 /** 有界条件求解：精确收缩整数/布尔区间和 null 条件，复杂表达式仅在找到可验证模型时判为可满足。 @author u80dc */
 final class PathPredicateSolver {
-    private final int maxModels;
+    private final int maxModels, maxDepth, maxLength;
     private enum Unknown { VALUE }
     private record Expression(String operator, String type, Object value, List<Expression> inputs) {}
     private record Predicate(Expression expression, boolean expected) {}
@@ -22,9 +24,17 @@ final class PathPredicateSolver {
 
     /** 模型搜索步数来自 AnalyzerConfig 的联合求解预算；独立使用时保持默认上限。 */
     PathPredicateSolver(Runnable checkpoint, int maxModels) {
+        this(checkpoint, maxModels, 256);
+    }
+
+    PathPredicateSolver(Runnable checkpoint, int maxModels, int maxDepth) {
+        this(checkpoint, maxModels, maxDepth, 1_000_000);
+    }
+
+    PathPredicateSolver(Runnable checkpoint, int maxModels, int maxDepth, int maxLength) {
         this.checkpoint = Objects.requireNonNull(checkpoint);
-        if (maxModels < 1) throw new IllegalArgumentException("Joint model budget must be positive");
-        this.maxModels = maxModels;
+        if (maxModels < 1 || maxDepth < 1 || maxLength < 1) throw new IllegalArgumentException("Joint model budgets must be positive");
+        this.maxModels = maxModels; this.maxDepth = maxDepth; this.maxLength = maxLength;
     }
 
     Solution solve(List<Condition> conditions) {
@@ -126,7 +136,7 @@ final class PathPredicateSolver {
 
     private Expression expression(Node node, int depth) {
         checkpoint.run();
-        if (depth > 256) return unknownExpression(node);
+        if (depth > maxDepth) return unknownExpression(node);
         if (node.kind() == Kind.ENTRY || node.kind() == Kind.NO_CALLER) {
             if (!node.inputs().isEmpty()) return unknownExpression(node);
             return new Expression("symbol", node.variable().type(), node.variable(), List.of());
@@ -134,14 +144,16 @@ final class PathPredicateSolver {
         List<Expression> inputs = node.inputs().stream().map(input -> expression(input, depth + 1)).toList();
         try {
             return switch (node.computation().operation()) {
-                case LITERAL -> new Expression("constant", node.variable().type(), JavaValueOperations.parse(node.computation().text(), node.variable().type()), List.of());
+                case LITERAL -> new Expression("constant", node.variable().type(),
+                        JavaValueOperations.evaluate(node.computation(), node.variable().type(), List.of(), maxLength), List.of());
                 case NULL -> new Expression("constant", node.variable().type(), null, List.of());
-                case IDENTITY -> Set.of("Objects.requireNonNull", "String constructor", "String cast").contains(node.computation().text())
-                        ? new Expression("IDENTITY", node.variable().type(), node.computation(), inputs)
-                        : inputs.size() == 1 ? inputs.getFirst() : unknownExpression(node);
-                case ALTERNATIVES -> inputs.size() == 1 ? inputs.getFirst() : unknownExpression(node);
+                case IDENTITY, ALTERNATIVES -> inputs.size() != 1 ? unknownExpression(node)
+                        : node.variable().type().equals(inputs.getFirst().type()) ? inputs.getFirst()
+                        : new Expression(node.computation().operation().name(), node.variable().type(), node.computation(), inputs);
                 case BINARY -> binary(node, inputs);
-                case CAST, STRINGIFY, CONCAT, REPLACE, NEGATE, CALL -> new Expression(node.computation().operation().name(),
+                case CALL -> JavaValueOperations.supports(node.computation().method().orElseThrow())
+                        ? new Expression("CALL", node.variable().type(), node.computation(), inputs) : unknownExpression(node);
+                case REQUIRE_NON_NULL, STRING_COPY, STRING_CAST, CAST, STRINGIFY, CONCAT, STRING_CONCAT, REPLACE, NEGATE -> new Expression(node.computation().operation().name(),
                         node.variable().type(), node.computation(), inputs);
                 default -> unknownExpression(node);
             };
@@ -155,8 +167,8 @@ final class PathPredicateSolver {
         if (Set.of("==", "!=", ">", ">=", "<", "<=").contains(operator) && inputs.size() == 2
                 && inputs.getFirst().operator().equals("cmp") && inputs.get(1).operator().equals("constant")
                 && BigInteger.ZERO.equals(integral(inputs.get(1).value())))
-            return new Expression(operator, node.variable().type(), null, inputs.getFirst().inputs());
-        return new Expression(operator, node.variable().type(), null, inputs);
+            return new Expression(operator, node.variable().type(), node.computation(), inputs.getFirst().inputs());
+        return new Expression(operator, node.variable().type(), node.computation(), inputs);
     }
     private boolean supported(Expression expression) {
         return !expression.operator().equals("unknown") && expression.inputs().stream().allMatch(this::supported);
@@ -180,27 +192,9 @@ final class PathPredicateSolver {
                 // 不把浮点 NaN 或引用身份比较错误地转换为字符串/十进制值比较。
                 return Unknown.VALUE;
             }
-            Computation computation = expression.value() instanceof Computation value ? value : null;
-            return switch (op) {
-                case "cmp" -> integral(inputs.getFirst()).compareTo(integral(inputs.get(1)));
-                case "IDENTITY" -> computation.text().equals("String cast")
-                        ? JavaValueOperations.cast(inputs.getFirst(), "java.lang.String") : Objects.requireNonNull(inputs.getFirst());
-                case "CAST" -> JavaValueOperations.cast(inputs.getFirst(), computation.text());
-                case "STRINGIFY" -> JavaValueOperations.stringify(inputs.getFirst(), computation.text());
-                case "NEGATE" -> JavaValueOperations.negate(inputs.getFirst(), expression.type());
-                case "CALL" -> JavaValueOperations.call(computation.method().orElseThrow(), inputs, 1_000_000);
-                case "REPLACE" -> JavaValueOperations.replace((String) inputs.getFirst(), (String) inputs.get(1), (String) inputs.get(2), 1_000_000);
-                case "CONCAT" -> {
-                    StringBuilder text = new StringBuilder();
-                    for (Object input : inputs) {
-                        if (computation.text().equals("String.concat")) Objects.requireNonNull(input);
-                        if (text.length() + String.valueOf(input).length() > 1_000_000) yield Unknown.VALUE;
-                        text.append(input);
-                    }
-                    yield text.toString();
-                }
-                default -> JavaValueOperations.binary(op, inputs.getFirst(), inputs.get(1), expression.type());
-            };
+            // 比较仍由条件模型处理；其余已知运算与独立重演共享相同类型和长度语义。
+            if (op.equals("cmp")) return integral(inputs.getFirst()).compareTo(integral(inputs.get(1)));
+            return JavaValueOperations.evaluate((Computation) expression.value(), expression.type(), inputs, maxLength);
         } catch (RuntimeException e) { return Unknown.VALUE; }
     }
 

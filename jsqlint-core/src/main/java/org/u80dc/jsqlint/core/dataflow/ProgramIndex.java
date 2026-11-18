@@ -21,22 +21,27 @@ public final class ProgramIndex {
     private final List<JavaSootClass> classes;
     private final Runnable checkpoint;
     private final Map<Dispatch, CallResolution> targets = new HashMap<>();
-    private final Map<MethodSignature, List<InvocationSite>> callers = new LinkedHashMap<>();
+    private final Map<MethodSignature, List<InvocationSite>> callers;
     private final Map<SqlCallSite, InvocationSite> invocations = new LinkedHashMap<>();
+    private final Map<InvocationKey, InvocationSite> invocationKeys = new HashMap<>();
+    private final Map<JavaSootMethod, Map<Stmt, Integer>> statementPositions = new IdentityHashMap<>();
     private final Map<ClassType, Set<ClassType>> ancestors = new HashMap<>();
     private final Map<FieldSignature, List<FlowPoint>> writes = new HashMap<>();
     private boolean fieldsIndexed;
 
     public ProgramIndex(JavaView view, List<JavaSootClass> classes, Collection<InvocationSite> calls, Runnable checkpoint) {
         this.view = view; this.classes = List.copyOf(classes); this.checkpoint = checkpoint;
+        Map<MethodSignature, List<InvocationSite>> callerIndex = new LinkedHashMap<>();
         for (InvocationSite call : calls) {
             checkpoint.run();
-            invocations.put(SqlCallSite.invocation(call), call);
+            indexInvocation(call);
             Set<MethodSignature> signatures = new LinkedHashSet<>();
             signatures.add(call.invocation().getMethodSignature());
             targets(call).forEach(method -> signatures.add(method.getSignature()));
-            for (MethodSignature signature : signatures) callers.computeIfAbsent(signature, ignored -> new ArrayList<>()).add(call);
+            for (MethodSignature signature : signatures) callerIndex.computeIfAbsent(signature, ignored -> new ArrayList<>()).add(call);
         }
+        callerIndex.replaceAll((signature, sites) -> List.copyOf(sites));
+        callers = Collections.unmodifiableMap(callerIndex);
     }
     /** 仅当被追踪的值读取字段时建立写入索引，普通局部变量分析不额外扫描方法体。 */
     private void indexFields() {
@@ -53,13 +58,36 @@ public final class ProgramIndex {
     }
     public JavaView view() { return view; }
     /** 保存框架声明的隐式调用，仅用于本次分析，不改变目标字节码或实际调用者索引。 */
-    public void registerImplicitInvocation(InvocationSite site) { invocations.put(SqlCallSite.invocation(site), site); }
+    public void registerImplicitInvocation(InvocationSite site) { indexInvocation(site); }
     public Optional<InvocationSite> invocation(SqlCallSite site) { return Optional.ofNullable(invocations.get(site)); }
     public Optional<InvocationSite> invocation(MethodSignature caller, int statement, MethodSignature target) {
-        return invocations.values().stream().filter(site -> site.method().getSignature().equals(caller)
-                && site.statementIndex() == statement && site.invocation().getMethodSignature().equals(target)).findFirst();
+        return Optional.ofNullable(invocationKeys.get(new InvocationKey(caller, statement, target)));
     }
-    public Map<MethodSignature, List<InvocationSite>> callers() { return Collections.unmodifiableMap(callers); }
+    private void indexInvocation(InvocationSite site) {
+        invocations.put(SqlCallSite.invocation(site), site);
+        invocationKeys.put(new InvocationKey(site.method().getSignature(), site.statementIndex(),
+                site.invocation().getMethodSignature()), site);
+    }
+
+    /** 实际语句按身份定位；同一方法只建立一次位置表。外部等价语句沿用旧 indexOf 的兼容行为。 */
+    public int statementIndex(JavaSootMethod method, Stmt statement) {
+        Objects.requireNonNull(method); Objects.requireNonNull(statement);
+        Map<Stmt, Integer> positions = statementPositions.computeIfAbsent(method, owner -> {
+            Map<Stmt, Integer> indexed = new IdentityHashMap<>();
+            int i = 0;
+            for (Stmt actual : owner.getBody().getStmts()) {
+                checkpoint.run(); indexed.put(actual, i++);
+            }
+            return indexed;
+        });
+        Integer position = positions.get(statement);
+        if (position != null) return position;
+        int compatible = method.getBody().getStmts().indexOf(statement);
+        positions.put(statement, compatible);
+        return compatible;
+    }
+    /** 实际调用者索引在构造结束后冻结，包括每个目标签名对应的调用点列表。 */
+    public Map<MethodSignature, List<InvocationSite>> callers() { return callers; }
     public List<FlowPoint> writes(FieldSignature field) { indexFields(); return List.copyOf(writes.getOrDefault(field, List.of())); }
 
     public List<JavaSootMethod> targets(InvocationSite site) {
@@ -130,6 +158,7 @@ public final class ProgramIndex {
         });
     }
     private record Dispatch(MethodSignature signature, boolean exact) {}
+    private record InvocationKey(MethodSignature caller, int statement, MethodSignature target) {}
 
     public record CallResolution(List<JavaSootMethod> applicationTargets, boolean hasExternalTargets) {
         public CallResolution { applicationTargets = List.copyOf(applicationTargets); }

@@ -12,6 +12,7 @@ import java.util.Objects;
 /**
  * 有界语法子集：字面量、属性/下标、比较、加减、布尔运算、size/length/isEmpty。
  * 不执行任意 OGNL 方法、静态方法或构造器；无法求值时显式返回 Unknown。
+ * 对象属性读取会调用 getter/record 访问器，其无副作用约束由提供参数对象的调用方保证。
  *
  * @author u80dc
  */

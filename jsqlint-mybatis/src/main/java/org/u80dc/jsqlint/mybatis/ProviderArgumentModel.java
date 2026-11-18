@@ -4,7 +4,7 @@ import org.u80dc.jsqlint.core.dataflow.*;
 import org.u80dc.jsqlint.core.dataflow.FlowPoint.ValuePoint;
 import org.u80dc.jsqlint.core.spi.TemplateSqlInput;
 import org.u80dc.jsqlint.core.spi.InvocationSite;
-import org.u80dc.jsqlint.core.parameter.JavaValueOperations;
+import org.u80dc.jsqlint.core.semantics.JavaValueOperations;
 import sootup.core.jimple.common.expr.AbstractInstanceInvokeExpr;
 import sootup.core.jimple.common.constant.StringConstant;
 import sootup.core.jimple.common.ref.JParameterRef;

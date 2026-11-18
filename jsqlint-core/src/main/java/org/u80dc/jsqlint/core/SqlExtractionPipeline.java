@@ -5,6 +5,8 @@ import org.u80dc.jsqlint.core.dataflow.*;
 import org.u80dc.jsqlint.core.node.*;
 import org.u80dc.jsqlint.core.parameter.*;
 import org.u80dc.jsqlint.core.spi.*;
+import org.u80dc.jsqlint.core.template.SqlTemplateProjection;
+import org.u80dc.jsqlint.core.template.RawSqlBuilder;
 import java.util.*;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
@@ -28,7 +30,7 @@ final class SqlExtractionPipeline {
         for (var context : flow.contexts(input.method())) {
             checkpoint.run();
             var trace = flow.trace(new FlowPoint(input.method(), input.statement(), context.context()).value(input.value()));
-            templates.add(SqlTemplateProjection.template(rawSql(Optional.of(trace), input.toString()), checkpoint));
+            templates.add(SqlTemplateProjection.template(rawSql(Optional.of(trace), input.toString()), config.replayBudgets(), checkpoint));
         }
         return SqlTemplateProjection.alternatives(templates);
     }
@@ -37,7 +39,7 @@ final class SqlExtractionPipeline {
                                 Consumer<SqlExtraction> results) {
         List<SqlExtraction> extracted = new ArrayList<>();
         var mode = config.inferenceOptions().mode();
-        var joint = mode.jointEnabled() ? new JointSqlValueInferencer(flow, config.jointBudgets(), this::externalGenerator) : null;
+        var joint = mode.jointEnabled() ? new JointSqlValueInferencer(flow, config.jointBudgets(), this::externalGenerator, config.replayBudgets()) : null;
         var templates = new TemplateExtractionPipeline(flow, checkpoint, this::reportTraceLimits, errors, this::inferParameter, incomplete);
         for (var context : flow.contexts(site.method())) {
             checkpoint.run();
@@ -51,7 +53,7 @@ final class SqlExtractionPipeline {
                     var sourceIssues = new ArrayList<>(issues); sourceIssues.addAll(source.issues());
                     Optional<ValueTrace> sql = source.sql().map(flow::trace);
                     // 同一语句共享入口值；其他调用上下文和批次使用独立的推断状态。
-                    var inference = mode.parametersEnabled() ? new ParameterValueInferencer(externalGenerator(), checkpoint) : null;
+                    var inference = mode.parametersEnabled() ? new ParameterValueInferencer(externalGenerator(), checkpoint, config.replayBudgets()) : null;
                     if (source.templateInput().isPresent()) {
                         statements.add(templates.extract(source, point, inference, joint, sourceIssues));
                         continue;
@@ -67,7 +69,7 @@ final class SqlExtractionPipeline {
                     RawSql raw = rawSql(sql, site.location().toString());
                     SqlNode template = ValueSqlNode.raw("unresolvedSql");
                     var templateIssues = new ArrayList<>(raw.issues());
-                    try { template = SqlTemplateProjection.template(raw, checkpoint); }
+                    try { template = SqlTemplateProjection.template(raw, config.replayBudgets(), checkpoint); }
                     catch (Exception e) {
                         errors.recover("SQL_TEMPLATE", site.location().toString(), e, false);
                         templateIssues.add("SQL template projection failed: " + e.getMessage());
@@ -97,7 +99,7 @@ final class SqlExtractionPipeline {
     private RawSql rawSql(Optional<ValueTrace> sql, String location) {
         sql.ifPresent(this::reportTraceLimits);
         try {
-            var raw = sql.map(trace -> RawSqlBuilder.build(trace, checkpoint))
+            var raw = sql.map(trace -> RawSqlBuilder.build(trace, config.sqlRecoveryBudgets(), checkpoint))
                     .orElseGet(() -> new RawSql(List.of(), List.of("SQL source is unavailable")));
             // 框架没有找到 SQL 来源时由提取结果报告，不将缺失来源误当作未知表达式。
             if (sql.isPresent() && !raw.issues().isEmpty()) incomplete.accept("UNSUPPORTED_VALUE", String.join("; ", raw.issues()));
@@ -110,7 +112,7 @@ final class SqlExtractionPipeline {
 
     private void reportTraceLimits(ValueTrace trace) {
         Deque<ValueTrace.Node> pending = new ArrayDeque<>(); pending.add(trace.root());
-        Set<ValueTrace.Node> seen = new HashSet<>();
+        Set<ValueTrace.Node> seen = Collections.newSetFromMap(new IdentityHashMap<>());
         while (!pending.isEmpty()) {
             checkpoint.run();
             var node = pending.removeFirst();
@@ -140,6 +142,9 @@ final class SqlExtractionPipeline {
         if (inference == null) return new ParameterValueInferenceResult(name, type, List.of(), List.of("Parameter inference was not requested"));
         try {
             var inferred = inference.infer(trace, type);
+            if (inferred.truncated()) incomplete.accept("PARAMETER_INFERENCE_LIMIT",
+                    "Parameter inference was truncated: " + name + (inferred.issues().isEmpty()
+                            ? "" : "; " + String.join("; ", inferred.issues())));
             return new ParameterValueInferenceResult(name, inferred.type(), inferred.possibleValues(), inferred.issues(), inferred.truncated());
         } catch (Exception e) {
             errors.recover("PARAMETER_INFERENCE", trace.variable().toString(), e, true);

@@ -44,6 +44,52 @@ class JdbcParameterInferenceTest {
     }
 
     @Test
+    void guardedStringOperationsHaveExplicitSemanticsInBytecodeTraces() throws Exception {
+        var result = analyze("""
+                public class Sample {
+                    public static void main(String[] args) throws Exception { run(null, "kept", "cast"); }
+                    static void run(java.sql.Connection c, String value, Object object) throws Exception {
+                        var p = c.prepareStatement("SELECT ?,?,?,?");
+                        p.setString(1, java.util.Objects.requireNonNull(value));
+                        p.setString(2, new String(value));
+                        p.setString(3, (String) object);
+                        p.setString(4, "prefix".concat(value));
+                        p.executeQuery();
+                    }
+                }
+                """);
+        var bindings = bindings(result);
+        assertEquals(Map.of("1", "kept", "2", "kept", "3", "cast", "4", "prefixkept"), bindings.entrySet().stream()
+                .collect(Collectors.toMap(Map.Entry::getKey, entry -> known(only(entry.getValue().inference().possibleValues())))));
+        var operations = bindings.values().stream().flatMap(binding -> nodes(binding.value().root()))
+                .map(node -> node.computation().operation()).collect(Collectors.toSet());
+        assertTrue(operations.containsAll(Set.of(ValueTrace.Operation.REQUIRE_NON_NULL, ValueTrace.Operation.STRING_COPY,
+                ValueTrace.Operation.STRING_CAST, ValueTrace.Operation.STRING_CONCAT)), operations.toString());
+    }
+
+    @Test
+    void guardedStringOperationsKeepNullAndInvalidCastsUnknown() throws Exception {
+        var result = analyze("""
+                public class Sample {
+                    public static void main(String[] args) throws Exception { run(null, null, 42); }
+                    static void run(java.sql.Connection c, String value, Object object) throws Exception {
+                        var p = c.prepareStatement("SELECT ?,?,?,?");
+                        p.setString(1, java.util.Objects.requireNonNull(value));
+                        p.setString(2, new String(value));
+                        p.setString(3, (String) object);
+                        p.setString(4, "prefix".concat(value));
+                        p.executeQuery();
+                    }
+                }
+                """);
+        for (var binding : bindings(result).values()) {
+            var inference = binding.inference();
+            assertFalse(inference.complete(), binding.key());
+            assertInstanceOf(SqlValue.Unknown.class, only(inference.possibleValues()).value(), binding.key());
+        }
+    }
+
+    @Test
     void stringEqualsReplaysContentCaseNullAndNonStringArguments() throws Exception {
         var result = analyze("""
                 public class Sample {

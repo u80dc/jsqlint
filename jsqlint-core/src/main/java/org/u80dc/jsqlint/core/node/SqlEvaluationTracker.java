@@ -1,6 +1,7 @@
 package org.u80dc.jsqlint.core.node;
 
 import java.util.*;
+import java.lang.reflect.Array;
 
 import static org.u80dc.jsqlint.core.node.SqlExpressionEvaluator.*;
 
@@ -8,6 +9,9 @@ import static org.u80dc.jsqlint.core.node.SqlExpressionEvaluator.*;
 final class SqlEvaluationTracker {
     private final Set<Reference> reads = new LinkedHashSet<>();
     private final Set<Object> inputContainers = Collections.newSetFromMap(new IdentityHashMap<>());
+
+    /** Tracking wrappers remain live only inside evaluation; clean removes them before publishing a snapshot. */
+    static boolean isTrackedValue(Object value) { return value instanceof TrackedMap; }
 
     static Evaluation evaluate(SqlExpressionEvaluator evaluator, String expression, Map<String, ?> parameters, boolean parameter) {
         var tracker = new SqlEvaluationTracker();
@@ -18,7 +22,10 @@ final class SqlEvaluationTracker {
             value = Objects.requireNonNull(parameter ? evaluator.evaluateParameter(expression, observed)
                     : evaluator.evaluate(expression, observed), "Evaluator returned null");
         } catch (RuntimeException e) { value = new SqlValue.Unknown("Evaluation failed: " + e.getMessage()); }
-        if (value instanceof SqlValue.Known known) value = new SqlValue.Known(tracker.clean(known.value(), new IdentityHashMap<>()));
+        if (value instanceof SqlValue.Known known) {
+            try { value = new SqlValue.Known(tracker.clean(known.snapshotValue(), new IdentityHashMap<>())); }
+            catch (RuntimeException e) { value = new SqlValue.Unknown("Evaluation failed: " + e.getMessage()); }
+        }
         var references = tracker.reads.stream().filter(reference -> tracker.reads.stream()
                 .noneMatch(other -> parent(reference, other))).toList();
         boolean direct = references.size() == 1 && references.getFirst().path().isEmpty()
@@ -45,18 +52,26 @@ final class SqlEvaluationTracker {
         private final Map<?, ?> delegate;
         private final Reference prefix;
         private TrackedMap(Map<?, ?> delegate, Reference prefix) { this.delegate = delegate; this.prefix = prefix; }
-        @Override public boolean containsKey(Object key) { return delegate.containsKey(key); }
-        @Override public Object get(Object key) {
+        private Reference read(Object key) {
             Reference reference;
             if (prefix == null) {
-                if (!(key instanceof String name)) return delegate.get(key);
+                if (!(key instanceof String name)) return null;
                 reference = new Reference(name, List.of());
             } else {
                 var path = new ArrayList<>(prefix.path()); path.add(key);
                 reference = new Reference(prefix.name(), path);
             }
             reads.add(reference);
-            return observe(delegate.get(key), reference);
+            return reference;
+        }
+        @Override public boolean containsKey(Object key) {
+            read(key);
+            return delegate.containsKey(key);
+        }
+        @Override public Object get(Object key) {
+            Reference reference = read(key);
+            Object value = delegate.get(key);
+            return reference == null ? value : observe(value, reference);
         }
         @Override public Set<Entry<Object, Object>> entrySet() {
             return new AbstractSet<>() {
@@ -77,10 +92,20 @@ final class SqlEvaluationTracker {
 
     /** 不让值快照持有跟踪 Map 或渲染上下文；原始输入容器无需重新遍历。 */
     private Object clean(Object value, Map<Object, Object> seen) {
-        if (value instanceof TrackedMap map) return map.prefix == null ? clean(map.delegate, seen) : map.delegate;
-        if (value instanceof SqlValue.Known known) return new SqlValue.Known(clean(known.value(), seen));
         if (value == null || inputContainers.contains(value)) return value;
         if (seen.containsKey(value)) return seen.get(value);
+        if (value instanceof TrackedMap map) return map.prefix == null ? clean(map.delegate, seen) : map.delegate;
+        if (value instanceof SqlValue.Known known) {
+            var result = new SqlValue.Known(clean(known.snapshotValue(), seen));
+            seen.put(value, result);
+            return result;
+        }
+        if (value.getClass().isArray() && !value.getClass().getComponentType().isPrimitive()) {
+            int length = Array.getLength(value);
+            Object copy = Array.newInstance(value.getClass().getComponentType(), length); seen.put(value, copy);
+            for (int i = 0; i < length; i++) Array.set(copy, i, clean(Array.get(value, i), seen));
+            return copy;
+        }
         if (value instanceof Map<?, ?> map) {
             var copy = new LinkedHashMap<Object, Object>(); var result = Collections.unmodifiableMap(copy); seen.put(value, result);
             map.forEach((key, item) -> copy.put(clean(key, seen), clean(item, seen)));
@@ -92,7 +117,7 @@ final class SqlEvaluationTracker {
             return result;
         }
         if (value instanceof Set<?> set) {
-            var copy = new LinkedHashSet<>(); var result = Collections.unmodifiableSet(copy); seen.put(value, result);
+            var copy = new ArrayList<Object>(); var result = SqlValueSnapshots.capturedSet(copy); seen.put(value, result);
             set.forEach(item -> copy.add(clean(item, seen)));
             return result;
         }

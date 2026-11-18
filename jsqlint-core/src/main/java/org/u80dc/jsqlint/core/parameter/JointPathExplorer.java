@@ -14,7 +14,7 @@ import static org.u80dc.jsqlint.core.parameter.JointSqlInferenceResult.Condition
 
 /** 按调用帧检查一组传播链是否能出现在同一条控制流路径上。循环、异常边和预算截断保守返回未知。 @author u80dc */
 final class JointPathExplorer {
-    private final int maxPaths, maxSteps;
+    private final int maxPaths, maxSteps, maxDependencyDepth, maxControlFlowDepth;
     record Frame(MethodSignature method, List<SqlCallSite> context) {
         Frame { context = List.copyOf(context); }
         static Frame of(Variable variable) { return new Frame(variable.method(), variable.callContext()); }
@@ -43,8 +43,21 @@ final class JointPathExplorer {
 
     /** 预算来自 AnalyzerConfig 的联合求解配置；路径与步数分别对应每帧保留的候选与处理的工作量。 */
     JointPathExplorer(DataFlowAnalysis flow, int maxPaths, int maxSteps, int modelSteps) {
+        this(flow, maxPaths, maxSteps, modelSteps, 256, 512);
+    }
+
+    JointPathExplorer(DataFlowAnalysis flow, int maxPaths, int maxSteps, int modelSteps,
+                      int maxDependencyDepth, int maxControlFlowDepth) {
+        this(flow, maxPaths, maxSteps, modelSteps, maxDependencyDepth, maxControlFlowDepth, 1_000_000);
+    }
+
+    JointPathExplorer(DataFlowAnalysis flow, int maxPaths, int maxSteps, int modelSteps,
+                      int maxDependencyDepth, int maxControlFlowDepth, int maxLength) {
+        if (maxPaths < 1 || maxSteps < 1 || modelSteps < 1 || maxDependencyDepth < 1 || maxControlFlowDepth < 1 || maxLength < 1)
+            throw new IllegalArgumentException("Joint path budgets must be positive");
         this.flow = flow; this.maxPaths = maxPaths; this.maxSteps = maxSteps;
-        solver = new PathPredicateSolver(flow::checkpoint, modelSteps);
+        this.maxDependencyDepth = maxDependencyDepth; this.maxControlFlowDepth = maxControlFlowDepth;
+        solver = new PathPredicateSolver(flow::checkpoint, modelSteps, maxDependencyDepth, maxLength);
     }
 
     Result explore(FlowPoint execution, List<Node> roots, List<ControlFlowEdge> history) {
@@ -56,12 +69,12 @@ final class JointPathExplorer {
         boolean[] conflict = {false};
         Map<DispatchKey, Optional<MethodSignature>> dispatches = new LinkedHashMap<>();
         Map<Frame, Map<Integer, Integer>> successors = new HashMap<>();
-        add(execution.value(sootup.core.jimple.common.constant.IntConstant.getInstance(0)).snapshot(), required);
-        Set<Node> seen = new HashSet<>();
+        add(execution.value(sootup.core.jimple.common.constant.IntConstant.getInstance(0)).snapshot(flow.program()), required);
+        Set<Node> seen = Collections.newSetFromMap(new IdentityHashMap<>());
         for (Node root : roots) collect(root, required, definitions, seen, conflict, issues, dispatches, successors);
         for (ControlFlowEdge edge : history) {
-            var from = edge.from().value(sootup.core.jimple.common.constant.IntConstant.getInstance(0)).snapshot();
-            var to = edge.to().value(sootup.core.jimple.common.constant.IntConstant.getInstance(0)).snapshot();
+            var from = edge.from().value(sootup.core.jimple.common.constant.IntConstant.getInstance(0)).snapshot(flow.program());
+            var to = edge.to().value(sootup.core.jimple.common.constant.IntConstant.getInstance(0)).snapshot(flow.program());
             add(from, required); add(to, required);
             var selected = successors.computeIfAbsent(Frame.of(from), ignored -> new HashMap<>());
             Integer old = selected.putIfAbsent(from.statementIndex(), to.statementIndex());
@@ -170,7 +183,7 @@ final class JointPathExplorer {
         for (Edge edge : path.branches()) {
             Stmt stmt = method.getBody().getStmts().get(edge.statement());
             Stmt target = method.getBody().getControlFlowGraph().successors(stmt).get(edge.successor());
-            selected.put(edge.statement(), method.getBody().getStmts().indexOf(target));
+            selected.put(edge.statement(), flow.program().statementIndex(method, target));
         }
         return new Requirement(requirement.frame(), requirement.statements(), requirement.definitions(), Map.copyOf(selected), requirement.returns());
     }
@@ -181,7 +194,7 @@ final class JointPathExplorer {
     }
 
     private Node unselectedReturn(Node node, Map<Frame, Path> paths, int depth) {
-        if (depth > 256) return null;
+        if (depth > maxDependencyDepth) return null;
         if (node.kind() == Kind.RETURN && node.computation().operation() == Operation.ALTERNATIVES) {
             boolean matched = node.inputs().stream().anyMatch(input -> returnSource(input, Frame.of(node.variable()))
                     && paths.containsKey(Frame.of(input.variable())) && paths.get(Frame.of(input.variable())).order().contains(input.variable().statementIndex()));
@@ -290,7 +303,7 @@ final class JointPathExplorer {
             State state = pending.removeLast();
             int index = positions.get(state.statement());
             if (state.order().contains(index)) { issues.add("Joint loop path requires unrolling"); continue; }
-            if (state.order().size() >= 512) { issues.add("Joint control-flow depth limit exceeded"); continue; }
+            if (state.order().size() >= maxControlFlowDepth) { issues.add("Joint control-flow depth limit exceeded"); continue; }
             if (!slice.cyclic()) {
                 Set<Integer> relevantVisited = new HashSet<>(state.order());
                 var relevantStatements = new HashSet<>(requirement.statements()); relevantStatements.addAll(requirement.returns());
@@ -393,7 +406,7 @@ final class JointPathExplorer {
 
     private Node select(Node node, Map<Frame, Path> paths, Map<DispatchKey, Optional<MethodSignature>> dispatches, boolean keepReturns, int depth) {
         flow.checkpoint();
-        if (depth > 256) return new Node(node.variable(), Kind.LIMIT, "Joint condition depth limit exceeded", List.of());
+        if (depth > maxDependencyDepth) return new Node(node.variable(), Kind.LIMIT, "Joint condition depth limit exceeded", List.of());
         List<Node> inputs = node.inputs();
         Path path = paths.get(Frame.of(node.variable()));
         if (node.kind() == Kind.DEFINITION && path != null) {

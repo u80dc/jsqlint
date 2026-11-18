@@ -118,6 +118,28 @@ class SqlSampleTest {
     }
 
     @Test
+    void completeSingleCombinationAtTheBudgetBoundaryRemainsSatisfiable() throws Exception {
+        for (var budget : List.of(JointBudgets.defaults().withCombinations(1), JointBudgets.defaults().withAttempts(1))) {
+            var result = analyze("""
+                    public void query(java.sql.Connection c) throws Exception {
+                        var p = c.prepareStatement("SELECT ?"); p.setInt(1, 7); p.executeQuery();
+                    }
+                    """, AnalyzerConfig.defaults().withJointBudgets(budget));
+            assertEquals(AnalysisResult.Status.SUCCESS, result.status(), result.diagnostics().toString());
+            var extraction = only(result.calls().stream()
+                    .filter(value -> value.callSite().target().getName().equals("executeQuery")).toList());
+            var joint = only(extraction.rawSqls()).jointInference().orElseThrow();
+            assertEquals(JointSqlInferenceResult.Status.SATISFIABLE, joint.status(), joint.issues().toString());
+            assertTrue(joint.coverageComplete());
+            assertEquals(1, joint.combinations().size());
+            var sample = only(extraction.samples());
+            assertEquals(SATISFIABLE, sample.feasibility());
+            assertEquals(Optional.of(true), sample.assessment().pathCoverageComplete());
+            assertEquals(new SqlValue.Known(7), only(sample.bindings()).value());
+        }
+    }
+
+    @Test
     void limitedPathCoverageIsVisibleOnOtherwiseConcreteSamples() throws Exception {
         var result = analyze("""
                 public void query(java.sql.Connection c, boolean flag) throws Exception {

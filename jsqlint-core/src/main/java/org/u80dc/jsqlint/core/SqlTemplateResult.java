@@ -28,6 +28,11 @@ public record SqlTemplateResult(String moduleId, SourceLocation location, SqlNod
         Objects.requireNonNull(definition);
         Objects.requireNonNull(bound);
         if (bound.isPresent() && definition.isEmpty()) throw new IllegalArgumentException("A bound definition snapshot requires a definition");
+        if (definition.isPresent() && !template.equals(definition.get().template()))
+            throw new IllegalArgumentException("The saved template must match its SQL definition");
+        if (bound.isPresent() && bound.get().rendered().recoveryMode() == RenderedSql.RecoveryMode.BOUND_REPLAY
+                && !template.equals(bound.get().rendered().residual()))
+            throw new IllegalArgumentException("The bound replay template must match its SQL definition");
     }
     /** 兼容旧构造器；定义的默认样例需要显式提供分析阶段保存的 bound 快照。 */
     public SqlTemplateResult(String moduleId, SourceLocation location, SqlNode template,

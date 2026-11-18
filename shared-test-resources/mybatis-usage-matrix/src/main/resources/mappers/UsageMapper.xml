@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="org.u80dc.jsqlint.samples.mybatismatrix.UsageMapper">
+    <update id="createTable">
+        CREATE TABLE ${sampleTable} (id BIGINT PRIMARY KEY, username VARCHAR(80), email VARCHAR(120))
+    </update>
+    <insert id="insertXml">
+        INSERT INTO ${sampleTable} (id, username, email) VALUES (#{id}, #{name}, #{email,jdbcType=VARCHAR})
+    </insert>
+    <delete id="deleteXml">DELETE FROM ${sampleTable} WHERE id=#{id}</delete>
+    <select id="chooseSearch" resultType="string">
+        SELECT username FROM ${sampleTable}
+        <trim prefix="WHERE" prefixOverrides="AND |OR ">
+            <choose>
+                <when test="id > 0">AND id=#{id}</when>
+                <when test="name != null and name != ''">OR username=#{name}</when>
+                <otherwise>AND 1=1</otherwise>
+            </choose>
+        </trim>
+        ORDER BY id
+    </select>
+    <update id="trimUpdate">
+        UPDATE ${sampleTable}
+        <trim prefix="SET" suffixOverrides=",">
+            <if test="name != null">username=#{name},</if>
+            <if test="email != null">email=#{email},</if>
+        </trim>
+        WHERE id=#{id}
+    </update>
+    <select id="implicitNames" resultType="string">
+        SELECT username FROM ${sampleTable} WHERE id=#{id} OR username=#{param2} ORDER BY id
+    </select>
+    <select id="scalarFallback" resultType="string">
+        SELECT username FROM ${sampleTable} WHERE id=#{anything}
+    </select>
+    <select id="repeated" resultType="string">
+        SELECT username FROM ${sampleTable} WHERE id=#{id,javaType=long,jdbcType=BIGINT} OR id=#{id}
+    </select>
+    <select id="included" resultType="map">
+        SELECT <include refid="samples.SharedColumns.columns"><property name="alias" value="u"/></include>
+        FROM ${sampleTable} u WHERE u.id=#{id}
+    </select>
+    <select id="databaseVariant" resultType="string">
+        SELECT username /* default */ FROM ${sampleTable} WHERE id=#{id}
+    </select>
+    <select id="databaseVariant" databaseId="h2" resultType="string">
+        SELECT username /* h2 */ FROM ${sampleTable} WHERE id=#{id}
+    </select>
+</mapper>

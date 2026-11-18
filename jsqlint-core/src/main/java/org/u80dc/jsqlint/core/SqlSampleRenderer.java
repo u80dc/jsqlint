@@ -14,7 +14,8 @@ public final class SqlSampleRenderer {
         return switch (source) {
             case SqlExtraction extraction -> render(extraction);
             case SqlTemplateResult template -> template.definition().isPresent()
-                    ? List.of(definition(template, template.bound().orElseGet(() -> new SqlNodeRenderer.BoundSql(unavailable(template), List.of()))))
+                    ? List.of(definition(template, template.bound().orElseGet(() -> new SqlNodeRenderer.BoundSql(
+                        unavailable(template, SqlNodeRenderer.RenderedSql.RecoveryMode.BOUND_REPLAY), List.of()))))
                     : List.of(template(template, template.rendered().orElseGet(() -> unavailable(template))));
         };
     }
@@ -28,8 +29,12 @@ public final class SqlSampleRenderer {
     }
 
     private static SqlNodeRenderer.RenderedSql unavailable(SqlTemplateResult source) {
+        return unavailable(source, SqlNodeRenderer.RenderedSql.RecoveryMode.LITERAL_CONTINUATION);
+    }
+
+    private static SqlNodeRenderer.RenderedSql unavailable(SqlTemplateResult source, SqlNodeRenderer.RenderedSql.RecoveryMode mode) {
         return new SqlNodeRenderer.RenderedSql(Optional.empty(), source.template(), Map.of(),
-                List.of(new SqlDiagnostic("RENDER_UNAVAILABLE", "No saved rendering snapshot; provide explicit sample parameters")));
+                List.of(new SqlDiagnostic("RENDER_UNAVAILABLE", "No saved rendering snapshot; provide explicit sample parameters")), mode);
     }
 
     private static SqlSample definition(SqlTemplateResult source, SqlNodeRenderer.BoundSql bound) {
@@ -110,7 +115,7 @@ public final class SqlSampleRenderer {
         issues.addAll(statement.issues()); issues.addAll(statement.templateIssues()); issues.addAll(saved.issues());
         issues.addAll(model.issues()); model.combination().ifPresent(value -> issues.addAll(value.issues()));
         rendered.diagnostics().forEach(diagnostic -> issues.add(diagnostic.code() + ": " + diagnostic.message()));
-        var bindings = SqlBindingSnapshots.bound(model.bound(), statement.definition().orElseThrow().location(), model.bindings());
+        var bindings = model.bindingSnapshot(statement.definition().orElseThrow().location());
         boolean sources = source.issues().isEmpty() && statement.sourcesComplete();
         boolean values = model.bound().valuesComplete() && model.bindings().stream().allMatch(binding -> binding.inference().complete())
                 && model.combination().map(value -> value.parameters().values()
@@ -122,11 +127,8 @@ public final class SqlSampleRenderer {
             feasibility = SqlSample.Feasibility.UNKNOWN;
         var assessment = new SqlAssessment(sources, statement.templateComplete(), values,
                 saved.jointInference().map(JointSqlInferenceResult::coverageComplete));
-        var raw = statement.rawSql().variants().stream().filter(variant -> rendered.sql().filter(variant.text()::equals).isPresent()
-                && variant.bindingSnapshots().stream().anyMatch(snapshot -> snapshot.combination().equals(model.combination())
-                    && snapshot.bindings().equals(bindings))).findFirst();
         return new SqlSample(source, statement.batchEntry(), rendered, bindings, feasibility, assessment,
-                new ArrayList<>(issues), raw, model.combination(), statement.definition());
+                new ArrayList<>(issues), model.rawSql(), model.combination(), statement.definition());
     }
 
     private static SqlSample sample(SqlExtraction source, SqlExtraction.Statement statement,

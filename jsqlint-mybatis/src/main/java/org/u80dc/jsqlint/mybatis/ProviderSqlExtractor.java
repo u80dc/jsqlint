@@ -2,6 +2,8 @@ package org.u80dc.jsqlint.mybatis;
 
 import org.u80dc.jsqlint.core.*;
 import org.u80dc.jsqlint.core.dataflow.*;
+import org.u80dc.jsqlint.core.template.SqlTemplateProjection;
+import org.u80dc.jsqlint.core.template.RawSqlBuilder;
 import org.u80dc.jsqlint.core.node.*;
 import org.u80dc.jsqlint.core.parameter.TraceSqlExpressionEvaluator;
 import org.u80dc.jsqlint.core.spi.*;

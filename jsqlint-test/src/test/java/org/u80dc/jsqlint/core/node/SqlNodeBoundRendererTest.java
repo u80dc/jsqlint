@@ -7,6 +7,23 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /** 参数化渲染的顺序、部分完成、作用域和有界执行契约。 @author u80dc */
 class SqlNodeBoundRendererTest {
+    @Test void recoveryModeDistinguishesLiteralContinuationFromBoundReplay() {
+        var node = SqlNodeBuilder.buildScript("SELECT #{first}<if test='enabled'>,#{second}</if>");
+        var literal = SqlNodeRenderer.render(node, Map.of("first", 1));
+        var bound = SqlNodeRenderer.renderBound(node, Map.of("first", 1), SqlExpressionEvaluator.simple());
+        assertEquals(SqlNodeRenderer.RenderedSql.RecoveryMode.LITERAL_CONTINUATION, literal.recoveryMode());
+        assertEquals(SqlNodeRenderer.RenderedSql.RecoveryMode.BOUND_REPLAY, bound.rendered().recoveryMode());
+        assertEquals(SqlNodeRenderer.RenderedSql.RecoveryMode.LITERAL_CONTINUATION,
+                new SqlNodeRenderer.RenderedSql(literal.sql(), literal.residual(), literal.parameters(), literal.diagnostics()).recoveryMode());
+    }
+
+    @Test void manuallyConstructedBindingsMustKeepRenderingOrder() {
+        var rendered = SqlNodeRenderer.renderBound(SqlNodeBuilder.templateText("SELECT #{a},#{b}"),
+                Map.of("a", 1, "b", 2), SqlExpressionEvaluator.simple());
+        assertThrows(IllegalArgumentException.class, () -> new SqlNodeRenderer.BoundSql(rendered.rendered(),
+                List.of(rendered.bindings().getLast(), rendered.bindings().getFirst())));
+    }
+
     @Test void bindingValuesStaySeparateFromSqlAndUnknownStillHasAPlaceholder() {
         var node = SqlNodeBuilder.templateText("SELECT * FROM ${table} WHERE a=#{id,jdbcType=INTEGER} OR b=#{id} OR c=#{missing}");
         var result = SqlNodeRenderer.renderBound(node, Map.of("table", "users", "id", 7), SqlExpressionEvaluator.simple());
@@ -42,6 +59,85 @@ class SqlNodeBoundRendererTest {
         assertFalse(result.rendered().complete());
         assertEquals(1, result.bindings().size()); assertEquals(new SqlValue.Known(5), result.bindings().getFirst().value());
         assertFalse(result.rendered().parameters().containsKey("item"));
+    }
+
+    @Test void replayRebuildsPrefixBindingsAndKeepsLiteralQuestionMarksSeparate() {
+        var node = SqlNodeBuilder.buildScript("SELECT '?' AS marker,#{first}<if test='enabled'>,#{second}</if>");
+        var evaluator = SqlExpressionEvaluator.simple();
+        var pending = SqlNodeRenderer.renderBound(node, Map.of("first", 1, "second", 2), evaluator);
+        assertFalse(pending.rendered().complete());
+        assertEquals(List.of("first"), pending.bindings().stream().map(SqlNodeRenderer.BoundParameter::expression).toList());
+
+        var parameters = new LinkedHashMap<>(pending.rendered().parameters());
+        parameters.put("enabled", true);
+        var replayed = SqlNodeRenderer.renderBound(pending.rendered().residual(), parameters, evaluator);
+        assertEquals("SELECT '?' AS marker,?,?", replayed.rendered().sql().orElseThrow());
+        assertEquals(List.of(1, 2), replayed.bindings().stream().map(SqlNodeRenderer.BoundParameter::position).toList());
+        assertEquals(List.of(new SqlValue.Known(1), new SqlValue.Known(2)),
+                replayed.bindings().stream().map(SqlNodeRenderer.BoundParameter::value).toList());
+        assertTrue(replayed.valuesComplete());
+        assertEquals(SqlNodeRenderer.renderBound(node, parameters, evaluator), replayed);
+    }
+
+    @Test void replayCanCompletePreviouslyUnknownBindingsEvenWhenSqlWasAlreadyComplete() {
+        var node = SqlNodeBuilder.templateText("SELECT #{first},#{second}");
+        var evaluator = SqlExpressionEvaluator.simple();
+        var pending = SqlNodeRenderer.renderBound(node, Map.of("first", 1), evaluator);
+        assertTrue(pending.rendered().complete());
+        assertFalse(pending.valuesComplete());
+
+        var parameters = new LinkedHashMap<>(pending.rendered().parameters());
+        parameters.put("second", 2);
+        var replayed = SqlNodeRenderer.renderBound(pending.rendered().residual(), parameters, evaluator);
+        assertTrue(replayed.valuesComplete());
+        assertEquals(List.of(1, 2), replayed.bindings().stream().map(SqlNodeRenderer.BoundParameter::position).toList());
+        assertEquals(List.of(new SqlValue.Known(1), new SqlValue.Known(2)),
+                replayed.bindings().stream().map(SqlNodeRenderer.BoundParameter::value).toList());
+        assertTrue(replayed.rendered().diagnostics().isEmpty());
+    }
+
+    @Test void replayStartsFromOriginalInputsAndRestoresBindAndForeachOrigins() {
+        var node = SqlNodeBuilder.buildScript("""
+                <bind name='name' value="name + '!'"/>SELECT #{name}<foreach collection='items' item='name'>,#{name}</foreach><if test='enabled'>,#{name}</if>
+                """);
+        var evaluator = SqlExpressionEvaluator.simple();
+        var pending = SqlNodeRenderer.renderBound(node, Map.of("name", "outer", "items", List.of("a", "b")), evaluator);
+        assertFalse(pending.rendered().complete());
+        assertEquals("outer", pending.rendered().parameters().get("name"));
+
+        var parameters = new LinkedHashMap<>(pending.rendered().parameters());
+        parameters.put("enabled", true);
+        var replayed = SqlNodeRenderer.renderBound(pending.rendered().residual(), parameters, evaluator);
+        assertEquals(List.of(new SqlValue.Known("outer!"), new SqlValue.Known("a"), new SqlValue.Known("b"), new SqlValue.Known("outer!")),
+                replayed.bindings().stream().map(SqlNodeRenderer.BoundParameter::value).toList());
+        assertEquals(SqlNodeRenderer.renderBound(node, parameters, evaluator), replayed);
+        var boundOrigin = assertInstanceOf(SqlValueOrigin.Expression.class, replayed.bindings().getLast().origin());
+        assertEquals(List.of(new SqlValueOrigin.Input("name")), boundOrigin.inputs());
+        var elementOrigin = assertInstanceOf(SqlValueOrigin.Expression.class, replayed.bindings().get(1).origin());
+        assertEquals(new SqlValueOrigin.Input("items"), elementOrigin.inputs().getFirst());
+        assertEquals("SELECT 'outer!','a','b','outer!'",
+                SqlNodeRenderer.render(pending.rendered().residual(), parameters, evaluator).sql().orElseThrow().strip());
+    }
+
+    @Test void replayCanUseTheOriginalMapsImplicitNameFallback() {
+        var node = SqlNodeBuilder.buildScript("SELECT #{alias}<if test='enabled'>,#{anotherAlias}</if>");
+        var evaluator = SqlExpressionEvaluator.simple();
+        var explicit = new LinkedHashMap<String, Object>();
+        explicit.put("enabled", new SqlValue.Unknown("Not supplied"));
+        Map<String, Object> parameters = new AbstractMap<>() {
+            @Override public Set<Entry<String, Object>> entrySet() { return explicit.entrySet(); }
+            @Override public boolean containsKey(Object key) { return key instanceof String; }
+            @Override public Object get(Object key) { return explicit.containsKey(key) ? explicit.get(key) : 7; }
+        };
+        var pending = SqlNodeRenderer.renderBound(node, parameters, evaluator);
+        assertFalse(pending.rendered().complete());
+        assertEquals(new SqlValue.Known(7), pending.bindings().getFirst().value());
+        explicit.put("enabled", true);
+        var replayed = SqlNodeRenderer.renderBound(pending.rendered().residual(), parameters, evaluator);
+        assertTrue(replayed.valuesComplete());
+        assertEquals(List.of(new SqlValue.Known(7), new SqlValue.Known(7)),
+                replayed.bindings().stream().map(SqlNodeRenderer.BoundParameter::value).toList());
+        assertInstanceOf(SqlValue.Unknown.class, pending.rendered().parameters().get("enabled"));
     }
 
     @Test void renderingIsBoundedAndCancellationIsNotConvertedToAnUnknownValue() {
@@ -91,6 +187,31 @@ class SqlNodeBoundRendererTest {
         assertFalse(((SqlValue.Known) map.value()).value().getClass().getName().contains("TrackedMap"));
     }
 
+    @Test void presenceChecksKeepInputOriginsForPresentAndMissingNames() {
+        SqlExpressionEvaluator evaluator = (expression, parameters) -> new SqlValue.Known(parameters.containsKey("flag"));
+        var node = ValueSqlNode.parameter("hasFlag");
+        var present = new LinkedHashMap<String, Object>();
+        present.put("flag", null);
+        for (Map<String, ?> parameters : List.<Map<String, ?>>of(present, Map.of())) {
+            var evaluated = evaluator.evaluateWithReferences("hasFlag", parameters, true);
+            assertEquals(List.of(new SqlExpressionEvaluator.Reference("flag", List.of())), evaluated.references());
+            assertEquals(new SqlValue.Known(parameters.containsKey("flag")), evaluated.value());
+            var bound = SqlNodeRenderer.renderBound(node, parameters, evaluator);
+            var origin = assertInstanceOf(SqlValueOrigin.Expression.class, bound.bindings().getFirst().origin());
+            assertEquals(List.of(new SqlValueOrigin.Input("flag")), origin.inputs());
+        }
+    }
+
+    @Test void missingNamesAndNestedPropertiesRetainTheirReferences() {
+        var evaluator = SqlExpressionEvaluator.simple();
+        var absent = evaluator.evaluateWithReferences("missing", Map.of(), true);
+        assertInstanceOf(SqlValue.Unknown.class, absent.value());
+        assertEquals(List.of(new SqlExpressionEvaluator.Reference("missing", List.of())), absent.references());
+        var nested = evaluator.evaluateWithReferences("params.missing", Map.of("params", Map.of("id", 7)), true);
+        assertInstanceOf(SqlValue.Unknown.class, nested.value());
+        assertEquals(List.of(new SqlExpressionEvaluator.Reference("params", List.of("missing"))), nested.references());
+    }
+
     @Test void aRenderLimitRollsBackLocalBindingsAndLiteralRenderingUsesTheSameBudget() {
         var node = new MixedSqlNode(List.of(new BindSqlNode("name", "name + '!'"),
                 new MixedSqlNode(Collections.nCopies(10001, new StaticTextSqlNode("x")))));
@@ -101,5 +222,25 @@ class SqlNodeBoundRendererTest {
         var preview = SqlNodeRenderer.render(node, parameters);
         assertFalse(preview.complete()); assertEquals("abc", preview.parameters().get("name"));
         assertTrue(preview.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("RENDER_LIMIT")));
+    }
+
+    @Test void replayAfterARenderLimitUsesFreshBudgetAndOriginalBindInputs() {
+        var node = SqlNodeBuilder.buildScript("""
+                <bind name='name' value="name + '!'"/>SELECT #{name}<foreach collection='items' item='item'>,#{item}</foreach>
+                """);
+        var evaluator = SqlExpressionEvaluator.simple();
+        var pending = SqlNodeRenderer.renderBound(node, Map.of("name", "outer", "items", Collections.nCopies(10001, 1)), evaluator);
+        assertFalse(pending.rendered().complete());
+        assertTrue(pending.bindings().isEmpty());
+        assertEquals("outer", pending.rendered().parameters().get("name"));
+        assertTrue(pending.rendered().diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("RENDER_LIMIT")));
+        var parameters = new LinkedHashMap<>(pending.rendered().parameters());
+        parameters.put("items", List.of(2, 3));
+        var replayed = SqlNodeRenderer.renderBound(pending.rendered().residual(), parameters, evaluator);
+        assertTrue(replayed.valuesComplete());
+        assertEquals(List.of(new SqlValue.Known("outer!"), new SqlValue.Known(2), new SqlValue.Known(3)),
+                replayed.bindings().stream().map(SqlNodeRenderer.BoundParameter::value).toList());
+        assertTrue(replayed.rendered().diagnostics().isEmpty());
+        assertEquals(SqlNodeRenderer.renderBound(node, parameters, evaluator), replayed);
     }
 }

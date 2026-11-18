@@ -8,7 +8,7 @@ import sootup.core.jimple.common.ref.*;
 import sootup.core.jimple.common.stmt.*;
 import sootup.core.signatures.MethodSignature;
 import sootup.java.core.JavaSootMethod;
-import org.u80dc.jsqlint.core.parameter.JavaValueOperations;
+import org.u80dc.jsqlint.core.semantics.JavaValueOperations;
 import java.util.*;
 import java.util.function.*;
 
@@ -97,7 +97,7 @@ public final class DataFlowAnalysis {
 
     public ValueTrace trace(ValuePoint input) {
         int[] steps = {0};
-        return new ValueTrace(input.snapshot(), input.point().context().snapshot(), trace(input, new HashSet<>(), 0, steps));
+        return new ValueTrace(input.snapshot(program), input.point().context().snapshot(), trace(input, new HashSet<>(), 0, steps));
     }
     /** 对独立定义应用只读模型，不改变其他调用上下文。 */
     public ValueTrace trace(ValuePoint input, ValueFlowModel model) { return withModel(ignored -> model).trace(input); }
@@ -125,7 +125,7 @@ public final class DataFlowAnalysis {
     /** 将框架隐式调用登记为逻辑调用；形参由 model 映射，目标方法无需实际执行。 */
     public InvocationSite implicitInvocation(FlowPoint caller, JavaSootMethod target, ValueFlowModel model) {
         var expression = new JStaticInvokeExpr(target.getSignature(), List.of());
-        var site = new InvocationSite(caller.method(), caller.statement(), caller.method().getBody().getStmts().indexOf(caller.statement()),
+        var site = new InvocationSite(caller.method(), caller.statement(), program.statementIndex(caller.method(), caller.statement()),
                 expression, program.view());
         program.registerImplicitInvocation(site);
         var key = new ModeledCall(site, caller.context()); models.put(key, Objects.requireNonNull(model)); implicitTargets.put(key, target);
@@ -187,7 +187,7 @@ public final class DataFlowAnalysis {
                         for (ValuePoint source : contents.values()) inputs.add(trace(source, active, depth + 1, steps));
                         for (String issue : contents.issues()) inputs.add(leaf(definition, Kind.UNRESOLVED, issue));
                         children.add(contents.issues().isEmpty() && inputs.size() == 1
-                                ? computed(definition, Kind.ALLOCATION, Operation.IDENTITY, "String constructor", inputs)
+                                ? computed(definition, Kind.ALLOCATION, Operation.STRING_COPY, "String constructor", inputs)
                                 : node(definition, Kind.ALLOCATION, "object content through constructor", inputs));
                     } else children.add(trace(definition, active, depth + 1, steps));
                 }
@@ -219,7 +219,7 @@ public final class DataFlowAnalysis {
                 return computed(input, Kind.ARRAY_ELEMENT, Operation.ARRAY_READ, "reaching array element writes", children);
             }
             if (value instanceof JCastExpr cast && cast.getType().toString().equals("java.lang.String"))
-                return computed(input, Kind.EXPRESSION, Operation.IDENTITY, "String cast",
+                return computed(input, Kind.EXPRESSION, Operation.STRING_CAST, "String cast",
                         List.of(trace(point.value(cast.getOp()), active, depth + 1, steps)));
             if (value instanceof JCastExpr cast)
                 return computed(input, Kind.EXPRESSION, Operation.CAST, cast.getType().toString(),
@@ -235,7 +235,7 @@ public final class DataFlowAnalysis {
                 String owner = invoke.getMethodSignature().getDeclClassType().toString();
                 String name = invoke.getMethodSignature().getName();
                 if (owner.equals("java.util.Objects") && name.equals("requireNonNull") && invoke.getArgCount() >= 1)
-                    return computed(input, Kind.EXPRESSION, Operation.IDENTITY, "Objects.requireNonNull",
+                    return computed(input, Kind.EXPRESSION, Operation.REQUIRE_NON_NULL, "Objects.requireNonNull",
                             List.of(trace(point.value(invoke.getArg(0)), active, depth + 1, steps)));
                 if (owner.equals("java.lang.String") && name.equals("valueOf") && invoke.getArgCount() == 1
                         && !invoke.getMethodSignature().getParameterTypes().getFirst().toString().equals("char[]"))
@@ -253,7 +253,7 @@ public final class DataFlowAnalysis {
                     return concat(input, dynamic, active, depth, steps);
                 if (invoke instanceof AbstractInstanceInvokeExpr instance && invoke.getMethodSignature().getDeclClassType()
                         .toString().equals("java.lang.String") && invoke.getMethodSignature().getName().equals("concat") && invoke.getArgCount() == 1) {
-                    return computed(input, Kind.EXPRESSION, Operation.CONCAT, "String.concat", List.of(
+                    return computed(input, Kind.EXPRESSION, Operation.STRING_CONCAT, "String.concat", List.of(
                             trace(point.value(instance.getBase()), active, depth + 1, steps),
                             trace(point.value(invoke.getArg(0)), active, depth + 1, steps)));
                 }
@@ -263,7 +263,7 @@ public final class DataFlowAnalysis {
                     if (invoke instanceof AbstractInstanceInvokeExpr instance)
                         inputs.add(trace(point.value(instance.getBase()), active, depth + 1, steps));
                     for (Value argument : invoke.getArgs()) inputs.add(trace(point.value(argument), active, depth + 1, steps));
-                    return new ValueTrace.Node(input.snapshot(), Kind.EXPRESSION, invoke.getMethodSignature().toString(), inputs,
+                    return new ValueTrace.Node(input.snapshot(program), Kind.EXPRESSION, invoke.getMethodSignature().toString(), inputs,
                             new ValueTrace.Computation(Operation.CALL, name, Optional.of(invoke.getMethodSignature())));
                 }
                 InvocationSite site = invocation(input, invoke);
@@ -280,7 +280,7 @@ public final class DataFlowAnalysis {
                     if (resolution.hasExternalTargets()) children.add(node(input, Kind.EXTERNAL_CALL,
                             "external or unresolved dispatch alternative: " + invoke.getMethodSignature(),
                             operands(input, invoke.getUses(), active, depth, steps)));
-                    if (!children.isEmpty()) return new ValueTrace.Node(input.snapshot(), Kind.RETURN, "return values (CHA candidates)", children,
+                    if (!children.isEmpty()) return new ValueTrace.Node(input.snapshot(program), Kind.RETURN, "return values (CHA candidates)", children,
                             new ValueTrace.Computation(Operation.ALTERNATIVES, "return values (CHA candidates)", Optional.of(invoke.getMethodSignature())));
                 }
                 List<ValueTrace.Node> children = operands(input, invoke.getUses(), active, depth, steps);
@@ -304,7 +304,7 @@ public final class DataFlowAnalysis {
                 .map(value -> trace(input.point().value(value), active, depth + 1, steps)).toList();
     }
     private ValueTrace.Node computed(ValuePoint input, Kind kind, Operation operation, String text, List<ValueTrace.Node> children) {
-        var variable = input.snapshot();
+        var variable = input.snapshot(program);
         // 拼接配方中的 stringify 是合成操作，结果为 String；原始操作数类型保留在输入节点中。
         if (operation == Operation.STRINGIFY) variable = variable.withType("java.lang.String");
         return new ValueTrace.Node(variable, kind, text, children, new ValueTrace.Computation(operation, text));
@@ -351,11 +351,11 @@ public final class DataFlowAnalysis {
     }
     private ValueTrace.Node leaf(ValuePoint point, Kind kind, String detail) { return node(point, kind, detail, List.of()); }
     private ValueTrace.Node node(ValuePoint point, Kind kind, String detail, List<ValueTrace.Node> inputs) {
-        return new ValueTrace.Node(point.snapshot(), kind, detail, inputs);
+        return new ValueTrace.Node(point.snapshot(program), kind, detail, inputs);
     }
     private InvocationSite invocation(ValuePoint input, AbstractInvokeExpr invocation) {
         FlowPoint point = input.point();
-        return new InvocationSite(point.method(), point.statement(), point.method().getBody().getStmts().indexOf(point.statement()), invocation, program.view());
+        return new InvocationSite(point.method(), point.statement(), program.statementIndex(point.method(), point.statement()), invocation, program.view());
     }
     private Optional<ValuePoint> argument(ValuePoint input) {
         FlowPoint point = input.point();
@@ -489,7 +489,7 @@ public final class DataFlowAnalysis {
             Set<FlowPoint> visited = new HashSet<>(item.visited()); visited.add(item.point());
             Decision<S> decision = item.exceptional() ? Decision.skipCall(item.state()) : transfer.visit(item.point(), item.state());
             if (decision.stop()) { sink.accept(new FlowEnd<>(decision.state(), End.FOUND, item.issues(), item.path())); continue; }
-            var call = item.point().invocation(program.view());
+            var call = item.point().invocation(program);
             List<JavaSootMethod> targets = !decision.skipCall() && call.isPresent() ? resolution(call.get(), item.point().context()).applicationTargets() : List.of();
             if (!targets.isEmpty()) {
                 if (item.point().context().calls().size() >= maxCallDepth) {

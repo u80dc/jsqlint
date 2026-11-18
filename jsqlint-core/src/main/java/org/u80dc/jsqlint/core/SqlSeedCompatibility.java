@@ -2,7 +2,7 @@ package org.u80dc.jsqlint.core;
 
 import org.u80dc.jsqlint.core.SqlDiscovery.ExtractionRequest;
 import org.u80dc.jsqlint.core.SqlDiscovery.Pending;
-import org.u80dc.jsqlint.core.dataflow.SqlTemplateProjection;
+import org.u80dc.jsqlint.core.template.SqlTemplateProjection;
 import org.u80dc.jsqlint.core.node.SqlNode;
 import org.u80dc.jsqlint.core.spi.SqlInput;
 import sootup.core.jimple.common.stmt.Stmt;

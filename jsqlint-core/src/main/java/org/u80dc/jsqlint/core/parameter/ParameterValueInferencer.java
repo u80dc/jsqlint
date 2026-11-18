@@ -1,7 +1,10 @@
 package org.u80dc.jsqlint.core.parameter;
 
 import org.u80dc.jsqlint.core.dataflow.ValueTrace;
+import org.u80dc.jsqlint.core.ReplayBudgets;
 import org.u80dc.jsqlint.core.node.SqlValue;
+import org.u80dc.jsqlint.core.semantics.JavaValueOperations;
+import org.u80dc.jsqlint.core.semantics.ValueEvaluationLimitException;
 import java.util.*;
 
 import static org.u80dc.jsqlint.core.dataflow.ValueTrace.*;
@@ -13,7 +16,7 @@ import static org.u80dc.jsqlint.core.parameter.InferredParameterValue.InitialVal
  * @author u80dc
  */
 public final class ParameterValueInferencer {
-    private static final int MAX_VALUES = 128, MAX_STEPS = 10000, MAX_DEPTH = 256, MAX_LENGTH = 1_000_000;
+    private final ReplayBudgets budgets;
     private final ExternalValueGenerator generator;
     private final Runnable checkpoint;
     private final Map<SampleKey, SqlValue> samples = new HashMap<>();
@@ -26,8 +29,16 @@ public final class ParameterValueInferencer {
     }
     /** 联合求解后使用同一组入口值重演全部参数，不能继续沿用各参数原先的随机样例。 */
     public ParameterValueInferencer(ExternalValueGenerator generator, Runnable checkpoint, Map<Variable, SqlValue> inputs) {
+        this(generator, checkpoint, inputs, ReplayBudgets.defaults());
+    }
+    public ParameterValueInferencer(ExternalValueGenerator generator, Runnable checkpoint, ReplayBudgets budgets) {
+        this(generator, checkpoint, Map.of(), budgets);
+    }
+    public ParameterValueInferencer(ExternalValueGenerator generator, Runnable checkpoint, Map<Variable, SqlValue> inputs,
+                                    ReplayBudgets budgets) {
         this.generator = Objects.requireNonNull(generator); this.checkpoint = Objects.requireNonNull(checkpoint);
         this.inputs = Map.copyOf(inputs);
+        this.budgets = Objects.requireNonNull(budgets);
     }
 
     public ParameterValueInferenceResult infer(ValueTrace trace) { return infer(variableName(trace.root()), trace); }
@@ -73,18 +84,26 @@ public final class ParameterValueInferencer {
         private int steps;
         private boolean truncated;
         private final Set<String> issues = new LinkedHashSet<>();
-        private final Map<Node, List<Evaluation>> cache = new HashMap<>();
+        private final Map<Node, List<Evaluation>> cache = new IdentityHashMap<>();
 
         List<Evaluation> visit(Node node, int depth) {
             checkpoint.run();
-            if (++steps > MAX_STEPS || depth > MAX_DEPTH) {
+            if (++steps > budgets.steps() || depth > budgets.depth()) {
                 truncated = true;
                 return List.of(unknown(node, "Parameter inference budget exceeded"));
             }
             if (cache.containsKey(node)) return cache.get(node);
-            List<Evaluation> result = compute(node, depth);
+            List<Evaluation> result = compute(node, depth).stream().map(this::limitLength).toList();
             cache.put(node, result);
             return result;
+        }
+
+        private Evaluation limitLength(Evaluation value) {
+            if (!(value.value() instanceof SqlValue.Known known) || !(known.value() instanceof String text)
+                    || text.length() <= budgets.length()) return value;
+            truncated = true;
+            String message = "Inferred value length limit exceeded"; issues.add(message);
+            return withIssue(new Evaluation(new SqlValue.Unknown(message), value.node(), value.initials(), value.issues(), value.choices()), message);
         }
 
         private List<Evaluation> compute(Node node, int depth) {
@@ -105,21 +124,23 @@ public final class ParameterValueInferencer {
 
         private Evaluation literal(Node node) {
             try {
-                Object value = node.computation().operation() == Operation.NULL ? null
-                        : JavaValueOperations.parse(node.computation().text(), node.variable().type());
-                if (value instanceof String text && text.length() > MAX_LENGTH) {
-                    truncated = true;
-                    return unknown(node, "Inferred value length limit exceeded");
-                }
+                Object value = JavaValueOperations.evaluate(node.computation(), node.variable().type(), List.of(), budgets.length());
                 SqlValue known = new SqlValue.Known(value);
                 return new Evaluation(known, node, List.of(new InitialValue(node.variable(), known, false)), List.of(), Map.of());
-            } catch (RuntimeException e) { return unknown(node, failure(e)); }
+            } catch (RuntimeException e) {
+                if (e instanceof ValueEvaluationLimitException) truncated = true;
+                return unknown(node, failure(e));
+            }
         }
 
         private Evaluation external(Node node, Variable source, String type, String element) {
             var key = new SampleKey(source, type, element);
             SqlValue value = samples.computeIfAbsent(key, ignored -> inputs.containsKey(source) ? inputs.get(source)
                     : Objects.requireNonNull(generator.generate(type, variableName(node))));
+            if (value instanceof SqlValue.Known known && known.value() instanceof String text && text.length() > budgets.length()) {
+                truncated = true;
+                return unknown(node, "Inferred value length limit exceeded");
+            }
             if (value instanceof SqlValue.Unknown unknown) issues.add(unknown.reason());
             return new Evaluation(value, node, List.of(new InitialValue(node.variable(), value, value instanceof SqlValue.Known)),
                     value instanceof SqlValue.Unknown unknown ? List.of(unknown.reason()) : List.of(), Map.of());
@@ -131,7 +152,7 @@ public final class ParameterValueInferencer {
             ChoiceKey key = choiceKey(node);
             for (int i = 0; i < node.inputs().size(); i++) {
                 for (Evaluation value : visit(node.inputs().get(i), depth + 1)) {
-                    if (result.size() >= MAX_VALUES) { truncated = true; issues.add("Parameter value limit exceeded"); return List.copyOf(result); }
+                    if (result.size() >= budgets.values()) { truncated = true; issues.add("Parameter value limit exceeded"); return List.copyOf(result); }
                     var choices = new HashMap<>(value.choices()); choices.put(key, node.inputs().get(i).variable());
                     Evaluation wrapped = wrap(node, List.of(value), choices, value.value());
                     result.add(coerce(wrapped, node.variable().type()));
@@ -155,53 +176,15 @@ public final class ParameterValueInferencer {
                 }
                 List<Object> operands = values.stream().map(value -> ((SqlValue.Known) value.value()).value()).toList();
                 try {
-                    Object evaluated = apply(node, operands);
-                    if (evaluated instanceof String text && text.length() > MAX_LENGTH)
-                        throw new InferenceLimitException("Inferred value length limit exceeded");
+                    Object evaluated = JavaValueOperations.evaluate(node.computation(), node.variable().type(), operands, budgets.length());
                     result.add(wrap(node, values, args.choices(), new SqlValue.Known(evaluated)));
                 } catch (RuntimeException e) {
-                    if (e instanceof InferenceLimitException) truncated = true;
+                    if (e instanceof ValueEvaluationLimitException) truncated = true;
                     String message = failure(e); issues.add(message);
                     result.add(withIssue(wrap(node, values, args.choices(), new SqlValue.Unknown(message)), message));
                 }
             }
             return result.isEmpty() ? List.of(unknown(node, "No replay result within inference budget or compatible choices")) : List.copyOf(result);
-        }
-
-        private Object apply(Node node, List<Object> values) {
-            return switch (node.computation().operation()) {
-                case IDENTITY -> {
-                    if (values.size() != 1) throw new IllegalArgumentException("Invalid identity operands");
-                    Object value = values.getFirst();
-                    if (node.computation().text().equals("Objects.requireNonNull") || node.computation().text().equals("String constructor"))
-                        Objects.requireNonNull(value, "Null input on normal-return path");
-                    if (node.computation().text().equals("String cast")) yield JavaValueOperations.cast(value, "java.lang.String");
-                    yield primitiveType(node.variable().type()) ? JavaValueOperations.cast(value, node.variable().type()) : value;
-                }
-                case STRINGIFY -> JavaValueOperations.stringify(values.getFirst(), node.computation().text());
-                case CONCAT -> {
-                    StringBuilder text = new StringBuilder();
-                    for (Object value : values) {
-                        if (node.computation().text().equals("String.concat")) Objects.requireNonNull(value, "String.concat null operand");
-                        String part = String.valueOf(value);
-                        if ((long) text.length() + part.length() > MAX_LENGTH) throw new InferenceLimitException("Inferred value length limit exceeded");
-                        text.append(part);
-                    }
-                    yield text.toString();
-                }
-                case REPLACE -> JavaValueOperations.replace((String) values.get(0), (String) values.get(1), (String) values.get(2), MAX_LENGTH);
-                case BINARY -> JavaValueOperations.binary(node.computation().text(), values.get(0), values.get(1), node.variable().type());
-                case NEGATE -> JavaValueOperations.negate(values.getFirst(), node.variable().type());
-                case CAST -> JavaValueOperations.cast(values.getFirst(), node.computation().text());
-                case CALL -> JavaValueOperations.call(node.computation().method().orElseThrow(), values, MAX_LENGTH);
-                case MAP_LITERAL -> {
-                    if (values.size() % 2 != 0) throw new IllegalArgumentException("Invalid map snapshot operands");
-                    var map = new LinkedHashMap<Object, Object>();
-                    for (int i = 0; i < values.size(); i += 2) map.put(values.get(i), values.get(i + 1));
-                    yield Collections.unmodifiableMap(map);
-                }
-                default -> throw new IllegalArgumentException("Unmodeled operation: " + node.computation().operation());
-            };
         }
 
         private List<Evaluation> array(Node node, int depth) {
@@ -218,7 +201,7 @@ public final class ParameterValueInferencer {
                         values = List.of(externalArrayElement(node, index, source));
                     } else values = visit(source, depth + 1);
                     for (Evaluation value : values) {
-                        if (result.size() >= MAX_VALUES) { truncated = true; issues.add("Parameter value limit exceeded"); return List.copyOf(result); }
+                        if (result.size() >= budgets.values()) { truncated = true; issues.add("Parameter value limit exceeded"); return List.copyOf(result); }
                         Map<ChoiceKey, Variable> choices = merge(index.choices(), value.choices());
                         if (choices == null) continue;
                         choices.put(key, source.variable());
@@ -256,11 +239,12 @@ public final class ParameterValueInferencer {
                 input = new Node(variable, base.kind(), input.detail(), input.inputs(), input.computation());
                 SqlValue model = inputs.get(base.variable());
                 if (model instanceof SqlValue.Known array) {
-                    if (array.value() == null) value = unknown(input, "Cannot read external array element from null array model");
-                    else if (!array.value().getClass().isArray()) value = unknown(input, "External array model is not an array");
-                    else if (offset >= java.lang.reflect.Array.getLength(array.value())) value = unknown(input, "External array index exceeds model length");
+                    Object arrayData = array.value();
+                    if (arrayData == null) value = unknown(input, "Cannot read external array element from null array model");
+                    else if (!arrayData.getClass().isArray()) value = unknown(input, "External array model is not an array");
+                    else if (offset >= java.lang.reflect.Array.getLength(arrayData)) value = unknown(input, "External array index exceeds model length");
                     else {
-                        SqlValue element = new SqlValue.Known(java.lang.reflect.Array.get(array.value(), offset));
+                        SqlValue element = new SqlValue.Known(java.lang.reflect.Array.get(arrayData, offset));
                         if (inputs.containsKey(variable) && !element.equals(inputs.get(variable)))
                             value = unknown(input, "External array and element models disagree");
                         else value = new Evaluation(element, input, List.of(new InitialValue(variable, element, false)), List.of(), Map.of());
@@ -282,10 +266,10 @@ public final class ParameterValueInferencer {
                 List<Arguments> next = new ArrayList<>();
                 outer: for (Arguments prefix : result) for (Evaluation suffix : input) {
                     checkpoint.run();
-                    if (++steps > MAX_STEPS) { truncated = true; issues.add("Parameter inference budget exceeded"); return List.of(); }
+                    if (++steps > budgets.steps()) { truncated = true; issues.add("Parameter inference budget exceeded"); return List.of(); }
                     Map<ChoiceKey, Variable> choices = merge(prefix.choices(), suffix.choices());
                     if (choices == null) continue;
-                    if (next.size() >= MAX_VALUES) { truncated = true; issues.add("Parameter value limit exceeded"); break outer; }
+                    if (next.size() >= budgets.values()) { truncated = true; issues.add("Parameter value limit exceeded"); break outer; }
                     var values = new ArrayList<>(prefix.values()); values.add(suffix);
                     next.add(new Arguments(List.copyOf(values), choices));
                 }

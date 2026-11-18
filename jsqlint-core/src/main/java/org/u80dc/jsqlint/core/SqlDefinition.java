@@ -29,6 +29,6 @@ public record SqlDefinition(String id, SourceLocation location, SqlNode template
     private SqlNodeRenderer.BoundSql rendered(SqlNodeRenderer.BoundSql bound) {
         var rendered = bound.rendered();
         return new SqlNodeRenderer.BoundSql(new SqlNodeRenderer.RenderedSql(rendered.sql().map(String::strip),
-                rendered.residual(), rendered.parameters(), rendered.diagnostics()), bound.bindings());
+                rendered.residual(), rendered.parameters(), rendered.diagnostics(), rendered.recoveryMode()), bound.bindings());
     }
 }

@@ -4,6 +4,7 @@ import org.u80dc.jsqlint.core.SqlDefinition;
 import org.u80dc.jsqlint.core.dataflow.FlowPoint.ValuePoint;
 import org.u80dc.jsqlint.core.dataflow.DataFlowAnalysis;
 import org.u80dc.jsqlint.core.dataflow.ValueTrace;
+import org.u80dc.jsqlint.core.node.SqlValueSnapshots;
 import java.util.*;
 
 /**
@@ -21,13 +22,14 @@ public record TemplateSqlInput(SqlDefinition definition, Map<String, Parameter> 
         parameters = Collections.unmodifiableMap(new LinkedHashMap<>(parameters));
         Objects.requireNonNull(fallback);
         Objects.requireNonNull(parameterMapName);
-        constants = Collections.unmodifiableMap(new LinkedHashMap<>(constants));
+        constants = SqlValueSnapshots.parameters(constants);
         Objects.requireNonNull(sqlSource);
         renderParameters = Collections.unmodifiableMap(new LinkedHashMap<>(renderParameters));
         for (String name : renderParameters.keySet())
             if (parameters.containsKey(name) || constants.containsKey(name) || parameterMapName.filter(name::equals).isPresent())
                 throw new IllegalArgumentException("Template render parameter conflicts with a business or reserved name: " + name);
     }
+    @Override public Map<String, Object> constants() { return SqlValueSnapshots.parameters(constants); }
     public TemplateSqlInput(SqlDefinition definition, Map<String, Parameter> parameters, Optional<Parameter> fallback,
                             Optional<String> parameterMapName, Map<String, Object> constants, Optional<ValueTrace> sqlSource) {
         this(definition, parameters, fallback, parameterMapName, constants, sqlSource, Map.of());

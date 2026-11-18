@@ -2,6 +2,8 @@ package org.u80dc.jsqlint.core.parameter;
 
 import org.u80dc.jsqlint.core.RawSql;
 import org.u80dc.jsqlint.core.dataflow.*;
+import org.u80dc.jsqlint.core.template.SqlTemplateProjection;
+import org.u80dc.jsqlint.core.template.RawSqlBuilder;
 import org.u80dc.jsqlint.core.node.SqlNode;
 import org.u80dc.jsqlint.core.spi.*;
 import sootup.core.signatures.MethodSignature;

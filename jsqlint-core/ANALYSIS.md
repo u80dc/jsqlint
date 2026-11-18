@@ -42,6 +42,16 @@ flowchart LR
 兼容模板按项目内已索引的调用上下文派生：唯一已知文本可以折叠，多个文本仍保留选择节点；
 未解析的入口输入继续保持符号值。完整模板对应这些调用上下文，其路径可行性继续由联合结果判断。
 
+纯 Java 运算模型位于 `core.semantics`，由来源追踪、参数重演和条件求值共用；
+SQL 恢复和模板投影实现位于 `core.template`。旧包中的同名入口保留弃用委托，支持既有调用方迁移。
+`ValueTrace.Computation` 使用独立操作种类表达非空检查、String 拷贝/转型和 `String.concat`，
+这些操作的显示文案不参与求值。旧快照使用的固定文案仅在构造边界转换为明确操作。
+
+独立重演和条件求解共用 `JavaValueOperations.evaluate` 执行带类型的已知操作数，
+来源选择与证据由重演器管理，符号比较、约束和搜索由求解器管理。
+联合求解及前缀剪枝均使用实际的参数文本长度预算。无参 `String.toLowerCase/toUpperCase`
+依赖目标 JVM 的默认 Locale，目前保留为未知操作，不使用分析进程的 Locale 生成确定值。
+
 MyBatis 自己校验框架标签、展开 include，将 XML/注解转换为 core 的不可变 SqlDefinition。
 Mapper 调用通过 TemplateSqlInput 关联真实实参，由 core 统一溯源、联合重演和参数化渲染。
 字节码参数名称与注解的读取位于 core，@Param 等框架规则由 MyBatis 模块解释。
@@ -130,7 +140,7 @@ analyzer.analyze(Path.of("project-c")); // 仍使用五分钟超时和结束清�
 
 | 配置归属 | 内容 |
 |---|---|
-| `AnalyzerConfig` | 默认超时、调用深度、数据依赖深度与节点预算、方法缓存容量、默认结束清理策略、输入扩展配置、联合求解预算、推断策略 |
+| `AnalyzerConfig` | 默认超时、调用深度、数据依赖深度与节点预算、方法缓存容量、默认结束清理策略、输入扩展配置、SQL 恢复/参数重演/联合求解预算、推断策略 |
 | `AnalysisOptions` | 本次超时覆盖、取消信号、监听器、输出标识、结束清理覆盖、推断策略覆盖 |
 
 配置优先级为：单次显式覆盖 → Analyzer 实例默认值；`AnalyzerConfig.defaults()` 提供系统默认值：
@@ -138,6 +148,27 @@ analyzer.analyze(Path.of("project-c")); // 仍使用五分钟超时和结束清�
 联合求解预算见下文。
 `withMaxTraceDepth` 现在只调整数据依赖展开深度，不再改变调用栈预算；调用深度使用 `withMaxCallDepth`。
 旧的四参数、五参数构造器仍将显式传入的共享深度同时用于调用和数据依赖，保持原构造方式的含义。
+
+SQL 恢复和参数重演有独立容量；提高来源追踪深度不会隐式放宽后续阶段。
+默认值保持原有行为，各项均须为正，可通过对应的 with 方法单项调整：
+
+| 阶段配置 | 默认容量 |
+|---|---|
+| `SqlRecoveryBudgets` | 候选 128、访问 10000 步、恢复深度 256、结构检查深度 128、文本 1000000 字符 |
+| `ReplayBudgets` | 候选 128、访问 10000 步、依赖深度 256、结果文本 1000000 字符 |
+
+```java
+var config = AnalyzerConfig.defaults()
+        .withMaxTraceDepth(1024)
+        .withReplayBudgets(ReplayBudgets.defaults().withDepth(1024))
+        .withSqlRecoveryBudgets(SqlRecoveryBudgets.defaults().withVariants(256));
+```
+
+预算随超时、清理和推断策略的单次覆盖保留。新增配置为 null 时恢复默认容量；
+原来的 `AnalyzerConfig` 构造器仍可使用，新增阶段沿用上述默认值。
+这些预算由 core 的标准提取、投影和参数重演管线消费。扩展自行调用恢复工具或提供专属表达式
+求值器时仍使用其显式选择的策略；例如 Provider 适配内部的模板准备保持默认工具预算，
+不由 Analyzer 自动替换扩展求值器或改变其配置。
 `AnalysisOptions.defaults()` 的 timeout 和 cleanupClassOutput 为 null，表示继承实例配置；
 显式传入 `Duration.ZERO` 表示本次不限时，显式传入 false 表示本次保留产物。
 `withTimeout(null)`、`withCleanupClassOutput(null)` 可恢复继承。
@@ -180,6 +211,8 @@ Path 入口将配置和本次输出路径一起交给选中的解析器；common
 
 主动关闭的阶段不会令分析返回 `PARTIAL`。来源恢复中的未知操作、预算截断仍会报告；
 `jointInference()` 为空表示没有进行路径求解，独立推断通过 `parameters()` 和 `bindings().inference()` 访问。
+已请求的参数重演发生截断时保存 `PARAMETER_INFERENCE_LIMIT`，整体返回 `PARTIAL`；
+普通未知参数不改变来源完整性，也不自动标记为预算截断。
 
 ```java
 var inference = InferenceOptions.defaults().withRandomSeed(42);
@@ -241,6 +274,12 @@ var sample = template.sample(Map.of("id", 7));
 绑定值另保留适配层 `options()` 和可选传播证据 `trace()`。
 样例覆盖准备点、执行点和批次加入点；可通过 `sample.source()` 中的调用点选择所需结果。
 相同文本的不同来源或批次分别保留。
+
+公共结果构造器校验模板与定义、绑定位置与值、证据与最终组合的一致性。
+`inferParameters` 拒绝重复名称，防止联合维度被静默覆盖；整体无解不能同时包含可满足或未知组合。
+模板模型通过 `BoundModel.rawSql()` 关联自己的候选，该候选中的唯一最终绑定快照同时供样例读取，
+不按 SQL 文本和绑定列表反向匹配。旧四参数 BoundModel 构造器保留无关联状态，可派生绑定，
+但不会猜测对应的 raw SQL 候选。恢复模式与持久数据容器的保护范围见 core README。
 
 代码样例只从单个联合 `Combination` 取出槽位和绑定值，不将独立候选列表再次组合。
 `UNSATISFIABLE` 候选继续保存在 `rawSqls()` 中供核查，不生成样例；
@@ -490,19 +529,22 @@ for (var sql : result.rawSqls()) {
   支持基本类型及包装类型、String、BigDecimal/BigInteger、UUID 和常用 java.time 类型。
   外部数组按所读取的元素类型与下标生成样例；不加载目标项目类，也不使用 Map 冒充对象。
 - 从入口向使用点重演赋值、参数传递、方法返回、分支、数组元素、字符串拼接/替换、
-  trim/strip、大小写转换、substring/charAt/repeat、长度判断、基本类型包装/拆箱/解析、
+  trim/strip、substring/charAt/repeat、长度判断、基本类型包装/拆箱/解析、
   算术运算、取负和类型转换。整数运算保留 Java 的溢出、整数除法及移位语义。
 - 同一语句内复用同一外部输入的样例。`ValueTrace.Variable.callContext()` 保存该变量所在的调用上下文，
   因此同一辅助方法的两次调用分别保留内部变量和返回分支，不会错误地合并选择。
   同一局部值按“调用上下文、变量、到达定义集合”关联分支，跨读取位置及原样传参仍保持选择一致；
   重新赋值改变定义集合后，不再沿用原选择。来源标识保留在链中，输入关闭后仍可读取。
   多个独立操作数的分支会组合成多个候选。这里是单参数候选列表，不保证多个参数任意组合后可行；
-  联合约束另见 `jointInference()`。大小写转换使用分析器 JVM 的默认 Locale。
+  联合约束另见 `jointInference()`。无参大小写转换依赖目标 JVM 的默认 Locale，目前保守返回 Unknown；
+  显式 Locale 重载尚未建模。
 - 未建模的方法、复杂对象/字段操作、格式解析失败、空指针或越界等重演异常保留为
   `SqlValue.Unknown(reason)`，不吞掉该路径或冒充 `Known(null)`。一个分支失败不丢弃其他分支。
   `complete()` 只说明重演是否完整，`sampled()` 用于区分推测样例与已知字面量推导结果。
-- 单次参数推断最多保留 128 个候选，受 10,000 步、256 层和 1,000,000 字符限制；
-  截断会记录诊断，并保留已得到的候选。分析取消/超时仍由 Analyzer 统一处理。
+- 单次参数推断默认最多保留 128 个候选，受 10,000 步、256 层和 1,000,000 字符限制；
+  可通过 `AnalyzerConfig.replayBudgets()` 调整，独立使用推断器也可显式传入 `ReplayBudgets`。
+  限制同时作用于字面量、生成的外部字符串及运算结果。截断保留已得到的候选，并记录
+  `truncated=true`；已请求的分析阶段报告 `PARTIAL`。分析取消/超时仍由 Analyzer 统一处理。
 
 例如入口传入 `"O'Neil"`，经过 `replace("'", "''")` 后候选值为 `"O''Neil"`，
 初始值列表仍保存原字符串；入口 `int id` 的 `id * 2` 会先生成整数样例，再计算乘积。
@@ -589,17 +631,21 @@ for (var sql : result.rawSqls()) {
 | `combinations` | 128 | 每条 SQL 保留的联合候选组合数 |
 | `attempts` | 512 | 每条 SQL 尝试的完整参数来源组数 |
 | `prefixChecks` | 4096 | 参数前缀相容性矛盾检查次数 |
-| `framePaths` | 64 | 每个调用帧保留的控制路径与条件选择组数 |
-| `frameSteps` | 4000 | 每个调用帧的控制流探索与条件依赖闭包步数 |
+| `framePaths` | 64 | 每个调用帧的控制路径数及条件依赖闭包保留的选择组数 |
+| `frameSteps` | 4000 | 每个调用帧的控制流探索容量及条件依赖闭包的工作步数 |
 | `historySteps` | 20000 | 框架快照历史化简的步数 |
 | `modelSteps` | 2048 | 条件模型搜索的步数 |
+| `dimensions` | 64 | 联合输入维度数，绑定键和值分别计入 |
+| `dependencyDepth` | 256 | 选择传播链及恢复条件表达式的依赖深度 |
+| `controlFlowDepth` | 512 | 每个调用帧内的控制路径深度 |
 
 ```java
 var budgets = JointBudgets.defaults().withCombinations(512).withFramePaths(128);
 var analyzer = new Analyzer(AnalyzerConfig.defaults().withJointBudgets(budgets));
 ```
 
-截断都有诊断，取消/超时继续生效。
+只有存在尚未处理的候选或路径时，达到容量上限才报告截断；完整枚举的结果数恰好等于上限仍保留完整覆盖。
+截断都有诊断，取消/超时继续生效。原七参数构造器继续使用新增字段的上述默认值。
 历史化简预算耗尽时直接使用原历史，不丢候选；真实独立分支仍可能触发枚举预算。
 
 循环展开、异常路径、堆别名、未知外部调用和完整浮点/引用身份约束
@@ -631,6 +677,12 @@ JDBC 关联规则：
 core 的 `dataflow` 包对 JDBC 没有依赖：`ProgramIndex` 使用应用类层次 CHA 解析虚调用/接口调用，
 静态/特殊调用按声明解析；`DataFlowAnalysis` 提供调用上下文、引用来源、过程间逆向 CFG 遍历和变量依赖树；
 `LocalDefinitions` 为 SQL 文本恢复及变量追踪共用到达定义算法。
+
+会话内 `ProgramIndex.statementIndex` 缓存真实语句的位置，复合调用键直接查找调用点；
+`FlowPoint.invocation(program)` 和 `ValuePoint.snapshot(program)` 使用该索引，旧无索引重载仍保留兼容行为。
+参数查询使用节点身份缓存，SQL 恢复使用私有结构编号保留来源与变换的结构去重语义；
+来源编号和完整性检查按唯一节点迭代处理。ValueTrace.Node 的公开结构 equals/hashCode 仍保持原 API，
+不能据此假定任意外部结构比较都具有常量成本。
 调用解析同时保存可分析的项目目标和外部/未解析分支；项目覆盖实现不会吞掉依赖库中的具体实现。
 依赖库的接口、抽象类和可继承类型视为开放的分派边界，不将项目实现当作其全部实现。
 这些分支同时用于返回值追踪、对象来源和过程间状态回溯。

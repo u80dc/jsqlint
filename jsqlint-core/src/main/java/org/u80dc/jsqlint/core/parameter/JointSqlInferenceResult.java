@@ -14,6 +14,11 @@ public record JointSqlInferenceResult(Status status, List<Combination> combinati
         Objects.requireNonNull(status); combinations = List.copyOf(combinations); issues = List.copyOf(issues);
         // 路径未覆盖完整时，不允许将当前已枚举候选的无解提升为整体无解。
         if (!coverageComplete) status = Status.UNKNOWN;
+        if (status == Status.UNSATISFIABLE && combinations.stream().anyMatch(value -> value.status() != Status.UNSATISFIABLE))
+            throw new IllegalArgumentException("An unsatisfiable joint result cannot contain satisfiable or unknown combinations");
+        if (status == Status.SATISFIABLE && !combinations.isEmpty()
+                && combinations.stream().noneMatch(value -> value.status() == Status.SATISFIABLE))
+            throw new IllegalArgumentException("A satisfiable joint result requires a satisfiable combination");
     }
     public JointSqlInferenceResult(Status status, List<Combination> combinations, List<String> issues) {
         this(status, combinations, issues, issues.isEmpty());
@@ -36,6 +41,8 @@ public record JointSqlInferenceResult(Status status, List<Combination> combinati
             parameters = Collections.unmodifiableMap(new LinkedHashMap<>(parameters));
             bindings = List.copyOf(bindings); conditions = List.copyOf(conditions);
             inputs = Collections.unmodifiableMap(new LinkedHashMap<>(inputs)); issues = List.copyOf(issues);
+            parameters.forEach((name, value) -> { Objects.requireNonNull(name); Objects.requireNonNull(value); });
+            inputs.forEach((variable, value) -> { Objects.requireNonNull(variable); Objects.requireNonNull(value); });
         }
     }
     /** keyValue 同样参与求解，避免动态 setter 下标与参数值脱离原分支。 */

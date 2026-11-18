@@ -19,7 +19,7 @@ final class ObjectContents {
         Origins allocated = new Origins(List.of(allocation), true);
         analysis.backward(use, false, (point, state) -> {
             if (point.equals(allocation.point())) return Decision.stop(false);
-            var site = point.invocation(analysis.program().view());
+            var site = point.invocation(analysis.program());
             if (site.isEmpty() || !site.get().invocation().getMethodSignature().getName().equals("<init>")
                     || !(site.get().invocation() instanceof AbstractInstanceInvokeExpr invoke)) return Decision.next(state);
             Origins receiver = analysis.origins(point.value(invoke.getBase()), ignored -> false);

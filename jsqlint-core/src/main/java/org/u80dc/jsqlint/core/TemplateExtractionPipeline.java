@@ -97,12 +97,20 @@ final class TemplateExtractionPipeline {
         }
         var savedJoint = jointResult;
         List<RawSql.Variant> variants = new ArrayList<>();
-        for (var model : models) model.bound().rendered().sql().ifPresent(text -> variants.add(
-                new RawSql.Variant(text, List.of(), input.sqlSource(), model.bindings(), savedJoint,
-                        List.of(new RawSql.BindingSnapshot(SqlBindingSnapshots.bound(model.bound(), definition.location(), model.bindings()), model.combination())))));
+        List<TemplateInferenceResult.BoundModel> associatedModels = new ArrayList<>();
+        for (var model : models) {
+            if (model.bound().rendered().sql().isPresent()) {
+                var snapshot = new RawSql.BindingSnapshot(
+                        SqlBindingSnapshots.bound(model.bound(), definition.location(), model.bindings()), model.combination());
+                var variant = new RawSql.Variant(model.bound().rendered().sql().orElseThrow(), List.of(),
+                        input.sqlSource(), model.bindings(), savedJoint, List.of(snapshot));
+                variants.add(variant);
+                associatedModels.add(model.withRawSql(variant));
+            } else associatedModels.add(model);
+        }
         var saved = new TemplateInferenceResult(traces, parameters, aliases, fallback, input.parameterMapName(), input.constants(),
-                jointResult, models, jointResult.map(JointSqlInferenceResult::issues).orElse(List.of()), renderAliases);
-        var bindings = models.stream().flatMap(model -> model.bindings().stream()).distinct().toList();
+                jointResult, associatedModels, jointResult.map(JointSqlInferenceResult::issues).orElse(List.of()), renderAliases);
+        var bindings = associatedModels.stream().flatMap(model -> model.bindings().stream()).distinct().toList();
         return new SqlExtraction.Statement(input.sqlSource(), definition.template(), bindings, source.batchEntry(), sourceIssues,
                 definition.issues(), new RawSql(variants, definition.issues()), Optional.of(definition), Optional.of(saved));
     }
@@ -195,7 +203,7 @@ final class TemplateExtractionPipeline {
         private int nodes;
         private TemplateSources(TemplateInferenceResult state, Map<String, InferredParameterValue> selected, FlowPoint point) {
             this.state = state; this.selected = selected;
-            position = TemplateExtractionPipeline.variable(point, "template-value", "java.lang.Object");
+            position = TemplateExtractionPipeline.this.variable(point, "template-value", "java.lang.Object");
         }
         private List<String> keys(SqlValueOrigin origin) {
             return inputs.computeIfAbsent(origin, ignored -> {
@@ -252,13 +260,13 @@ final class TemplateExtractionPipeline {
         }
     }
 
-    private static ValueTrace positionTrace(FlowPoint point, int position) {
+    private ValueTrace positionTrace(FlowPoint point, int position) {
         var variable = variable(point, "template-position:" + position, "int");
         return new ValueTrace(variable, point.context().snapshot(), new ValueTrace.Node(variable, ValueTrace.Kind.CONSTANT,
                 "Template binding position", List.of(), new ValueTrace.Computation(ValueTrace.Operation.LITERAL, Integer.toString(position))));
     }
-    private static ValueTrace.Variable variable(FlowPoint point, String expression, String type) {
-        return new ValueTrace.Variable(point.method().getSignature(), point.method().getBody().getStmts().indexOf(point.statement()),
+    private ValueTrace.Variable variable(FlowPoint point, String expression, String type) {
+        return new ValueTrace.Variable(point.method().getSignature(), flow.program().statementIndex(point.method(), point.statement()),
                 expression, type, point.context().snapshot());
     }
 

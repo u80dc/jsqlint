@@ -30,7 +30,11 @@ public final class SqlNodeRenderer {
                 fragment.node, context.values, List.copyOf(context.diagnostics));
     }
 
-    /** 参数节点输出占位符；未知绑定值不会否定已经确定的 SQL 文本。 */
+    /**
+     * 参数节点输出占位符；未知绑定值不会否定已经确定的 SQL 文本。
+     * 返回的 residual 保留原始模板，parameters 保存原始输入；再次 renderBound 会完整重演并重建绑定。
+     * 重演应使用相同求值器；自定义输入来源映射也需再次传入。
+     */
     public static BoundSql renderBound(SqlNode node, Map<String, ?> parameters, SqlExpressionEvaluator evaluator) {
         return renderBound(node, parameters, evaluator, () -> {});
     }
@@ -46,7 +50,8 @@ public final class SqlNodeRenderer {
         Context context = new Context(parameters, evaluator, true, inputs, new RenderBudget(checkpoint));
         Fragment fragment = renderFragment(node, context);
         return new BoundSql(new RenderedSql(fragment.complete ? Optional.of(flatText(fragment.node)) : Optional.empty(),
-                fragment.node, context.values, List.copyOf(context.diagnostics)), context.bindings);
+                node, new LinkedHashMap<>(context.initial), List.copyOf(context.diagnostics),
+                RenderedSql.RecoveryMode.BOUND_REPLAY), context.bindings);
     }
 
     private static Fragment renderFragment(SqlNode node, Context context) {
@@ -58,8 +63,17 @@ public final class SqlNodeRenderer {
         }
     }
 
+    /**
+     * 绑定列表是本次渲染的快照。补充 rendered.parameters 后用 rendered.residual 再次 renderBound，
+     * 从原始模板重建全部绑定及其来源，避免把前缀占位符当作无绑定的静态文本。
+     */
     public record BoundSql(RenderedSql rendered, List<BoundParameter> bindings) {
-        public BoundSql { Objects.requireNonNull(rendered); bindings = List.copyOf(bindings); }
+        public BoundSql {
+            Objects.requireNonNull(rendered); bindings = List.copyOf(bindings);
+            for (int i = 0; i < bindings.size(); i++)
+                if (bindings.get(i).position() != i + 1)
+                    throw new IllegalArgumentException("Bindings must follow consecutive rendering positions");
+        }
         public boolean valuesComplete() {
             return rendered.complete() && bindings.stream().allMatch(binding -> binding.value() instanceof SqlValue.Known);
         }
@@ -345,17 +359,31 @@ public final class SqlNodeRenderer {
     }
 
     /**
-     * sql 为空表示尚未得到完整 SQL。residual 可配合 parameters 和补充参数重新渲染；
+     * sql 为空表示尚未得到完整 SQL。render 的 residual 保存已求值前缀，parameters 保存局部绑定；
+     * renderBound 的 residual 保存原始模板，parameters 保存原始输入，供完整重演和重建绑定。
+     * 两种结果均可配合 parameters 和补充参数重新渲染；parameters 仅快照 Map 可枚举的条目，
+     * 使用隐式名称回退的自定义 Map 时，应再次提供包含该回退行为的输入 Map。
      * diagnostics 解释未完成原因，真实 null 可以保留在 parameters 中。
      */
     public record RenderedSql(Optional<String> sql, SqlNode residual,
-                              Map<String, Object> parameters, List<SqlDiagnostic> diagnostics) {
+                              Map<String, Object> parameters, List<SqlDiagnostic> diagnostics, RecoveryMode recoveryMode) {
+        public enum RecoveryMode { LITERAL_CONTINUATION, BOUND_REPLAY }
+
         public RenderedSql {
             Objects.requireNonNull(sql, "sql");
             Objects.requireNonNull(residual, "residual");
-            parameters = Collections.unmodifiableMap(new LinkedHashMap<>(parameters));
+            parameters = SqlValueSnapshots.parameters(parameters);
             diagnostics = List.copyOf(diagnostics);
+            Objects.requireNonNull(recoveryMode, "recoveryMode");
         }
+
+        /** 兼容字面量预览与手工构造的结果；参数化重演由 renderBound 显式标记。 */
+        public RenderedSql(Optional<String> sql, SqlNode residual, Map<String, Object> parameters,
+                           List<SqlDiagnostic> diagnostics) {
+            this(sql, residual, parameters, diagnostics, RecoveryMode.LITERAL_CONTINUATION);
+        }
+
+        @Override public Map<String, Object> parameters() { return SqlValueSnapshots.parameters(parameters); }
 
         public boolean complete() {
             return sql.isPresent();

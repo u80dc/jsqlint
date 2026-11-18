@@ -9,7 +9,7 @@ import sootup.core.jimple.common.expr.*;
 import sootup.core.jimple.common.ref.JArrayRef;
 import sootup.core.types.ClassType;
 import org.u80dc.jsqlint.core.spi.InvocationSite;
-import org.u80dc.jsqlint.core.parameter.JavaValueOperations;
+import org.u80dc.jsqlint.core.semantics.JavaValueOperations;
 import sootup.java.core.JavaSootMethod;
 
 import java.util.*;

@@ -19,7 +19,7 @@ record HeapExposure(List<Root> roots, List<Store> stores, boolean externalCall, 
         List<String> warnings = new ArrayList<>(issues);
         boolean external = externalCall;
         int at = position + 1;
-        var site = point.invocation(analysis.program().view());
+        var site = point.invocation(analysis.program());
         if (collectCalls && site.isPresent() && analysis.resolution(site.get(), point.context()).hasExternalTargets()) {
             external = true;
             var arguments = new ArrayList<>(site.get().invocation().getArgs());
@@ -41,7 +41,7 @@ record HeapExposure(List<Root> roots, List<Store> stores, boolean externalCall, 
                     && assignment.getRightOp().getType() instanceof sootup.core.types.ReferenceType) {
                 pending.add(new Store(container == null ? Optional.empty()
                         : Optional.of(analysis.origins(point.value(container), ignored -> false)),
-                        analysis.origins(point.value(assignment.getRightOp()), ignored -> false), at, point.value(left).snapshot().toString()));
+                        analysis.origins(point.value(assignment.getRightOp()), ignored -> false), at, point.value(left).snapshot(analysis.program()).toString()));
             }
         }
         // 两层字段的赋值顺序可能相反，暂存未连通的存储边并迭代展开，不能只检查当前一条赋值。

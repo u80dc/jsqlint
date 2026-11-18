@@ -22,7 +22,10 @@ class AnalyzerConfigTest {
     void independentBudgetsSurviveConfigurationAndInvocationOverrides() {
         AnalysisInputOptions input = new AnalysisInputOptions() {};
         var inference = InferenceOptions.defaults().withMode(InferenceOptions.Mode.PARAMETERS).withRandomSeed(42);
+        var replay = new ReplayBudgets(5, 40, 30, 300);
+        var recovery = new SqlRecoveryBudgets(7, 50, 60, 20, 400);
         var config = AnalyzerConfig.defaults().withInferenceOptions(inference).withJointBudgets(JointBudgets.defaults().withCombinations(7))
+                .withReplayBudgets(replay).withSqlRecoveryBudgets(recovery)
                 .withMaxCallDepth(3).withMaxTraceDepth(80).withMaxTraceNodes(99)
                 .withMethodCacheSize(4).withInputOptions(input).withTimeout(Duration.ofSeconds(10)).withCleanupClassOutput(true);
         var resolved = AnalysisOptions.defaults().withTimeout(Duration.ZERO).withCleanupClassOutput(false).resolveAgainst(config);
@@ -35,6 +38,12 @@ class AnalyzerConfigTest {
         assertFalse(resolved.cleanupClassOutput());
         assertSame(inference, resolved.inferenceOptions());
         assertEquals(7, resolved.jointBudgets().combinations());
+        assertEquals(replay, resolved.replayBudgets());
+        assertEquals(recovery, resolved.sqlRecoveryBudgets());
+        var extractionOnly = AnalysisOptions.defaults().withInferenceOptions(InferenceOptions.defaults()
+                .withMode(InferenceOptions.Mode.EXTRACT)).resolveAgainst(config);
+        assertEquals(replay, extractionOnly.replayBudgets());
+        assertEquals(recovery, extractionOnly.sqlRecoveryBudgets());
         assertEquals(Duration.ofSeconds(10), config.timeout());
         assertTrue(config.cleanupClassOutput());
     }
@@ -46,6 +55,9 @@ class AnalyzerConfigTest {
         assertThrows(IllegalArgumentException.class, () -> defaults.withMaxTraceDepth(0));
         assertThrows(IllegalArgumentException.class, () -> defaults.withMaxTraceNodes(0));
         assertThrows(IllegalArgumentException.class, () -> JointBudgets.defaults().withCombinations(0));
+        assertThrows(IllegalArgumentException.class, () -> JointBudgets.defaults().withDimensions(0));
+        assertThrows(IllegalArgumentException.class, () -> JointBudgets.defaults().withDependencyDepth(0));
+        assertThrows(IllegalArgumentException.class, () -> JointBudgets.defaults().withControlFlowDepth(0));
         assertThrows(NullPointerException.class, () -> new AnalyzerConfig(Duration.ZERO, 8, 16, false, null, 8, 100, null));
     }
 
@@ -56,9 +68,28 @@ class AnalyzerConfigTest {
         assertEquals(512, config.jointBudgets().attempts(), "单项调整不影响其余预算");
         assertEquals(JointBudgets.defaults(), AnalyzerConfig.defaults().jointBudgets());
         assertEquals(JointBudgets.defaults(), AnalyzerConfig.defaults().withJointBudgets(null).jointBudgets());
+        assertEquals(ReplayBudgets.defaults(), AnalyzerConfig.defaults().replayBudgets());
+        assertEquals(SqlRecoveryBudgets.defaults(), AnalyzerConfig.defaults().sqlRecoveryBudgets());
+        assertEquals(ReplayBudgets.defaults(), AnalyzerConfig.defaults().withReplayBudgets(null).replayBudgets());
+        assertEquals(SqlRecoveryBudgets.defaults(), AnalyzerConfig.defaults().withSqlRecoveryBudgets(null).sqlRecoveryBudgets());
         // 旧构造器默认携带默认联合预算，等价性不被新字段破坏。
         assertEquals(new AnalyzerConfig(Duration.ZERO, 7, 16, false, null, 7, 100, JointBudgets.defaults()),
                 new AnalyzerConfig(Duration.ZERO, 7, 16, false, null, 7, 100));
+    }
+
+    @Test
+    void jointDimensionsAndDepthsSurviveLegacyConstructorsAndAllSingleItemAdjustments() {
+        assertEquals(JointBudgets.defaults(), new JointBudgets(128, 512, 4096, 64, 4000, 20000, 2048));
+        var budgets = JointBudgets.defaults().withDimensions(9).withDependencyDepth(17).withControlFlowDepth(31)
+                .withCombinations(3).withAttempts(5).withPrefixChecks(7).withFramePaths(11)
+                .withFrameSteps(13).withHistorySteps(19).withModelSteps(23);
+        assertEquals(new JointBudgets(3, 5, 7, 11, 13, 19, 23, 9, 17, 31), budgets);
+        var config = AnalyzerConfig.defaults().withJointBudgets(budgets).withMaxTraceDepth(100)
+                .withTimeout(Duration.ofSeconds(5));
+        assertEquals(budgets, AnalysisOptions.defaults().withTimeout(Duration.ZERO).resolveAgainst(config).jointBudgets());
+        assertEquals(256, new JointBudgets(3, 5, 7, 11, 13, 19, 23).dependencyDepth());
+        assertEquals(512, new JointBudgets(3, 5, 7, 11, 13, 19, 23).controlFlowDepth());
+        assertEquals(64, new JointBudgets(3, 5, 7, 11, 13, 19, 23).dimensions());
     }
 
     @Test

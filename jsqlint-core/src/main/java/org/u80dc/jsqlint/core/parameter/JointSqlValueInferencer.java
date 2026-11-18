@@ -11,6 +11,7 @@ import static org.u80dc.jsqlint.core.parameter.JointSqlInferenceResult.*;
 /** 通用联合分析入口：先组合来源路径，再求解控制条件，最后用共享入口模型重演每个参数。 @author u80dc */
 public final class JointSqlValueInferencer {
     private final JointBudgets budgets;
+    private final ReplayBudgets replayBudgets;
     private final DataFlowAnalysis flow;
     private final JointPathExplorer explorer;
     private final PathPredicateSolver solver;
@@ -27,11 +28,17 @@ public final class JointSqlValueInferencer {
 
     public JointSqlValueInferencer(DataFlowAnalysis flow, JointBudgets budgets,
                                    Supplier<? extends ExternalValueGenerator> generators) {
+        this(flow, budgets, generators, ReplayBudgets.defaults());
+    }
+    public JointSqlValueInferencer(DataFlowAnalysis flow, JointBudgets budgets,
+                                   Supplier<? extends ExternalValueGenerator> generators, ReplayBudgets replayBudgets) {
         this.flow = Objects.requireNonNull(flow);
         this.budgets = Objects.requireNonNull(budgets);
         this.generators = Objects.requireNonNull(generators);
-        explorer = new JointPathExplorer(flow, budgets.framePaths(), budgets.frameSteps(), budgets.modelSteps());
-        solver = new PathPredicateSolver(flow::checkpoint, budgets.modelSteps());
+        this.replayBudgets = Objects.requireNonNull(replayBudgets);
+        explorer = new JointPathExplorer(flow, budgets.framePaths(), budgets.frameSteps(), budgets.modelSteps(),
+                budgets.dependencyDepth(), budgets.controlFlowDepth(), replayBudgets.length());
+        solver = new PathPredicateSolver(flow::checkpoint, budgets.modelSteps(), budgets.dependencyDepth(), replayBudgets.length());
     }
 
     public RawSql infer(RawSql raw, List<SqlExtraction.Binding> bindings, FlowPoint execution) {
@@ -56,7 +63,10 @@ public final class JointSqlValueInferencer {
                                                    List<List<ControlFlowEdge>> histories, List<String> snapshotIssues) {
         List<Dimension> dimensions = new ArrayList<>();
         Set<String> issues = new LinkedHashSet<>(snapshotIssues);
+        Set<String> names = new HashSet<>();
         for (var parameter : parameters) {
+            if (!names.add(parameter.name()))
+                throw new IllegalArgumentException("Duplicate joint parameter name: " + parameter.name());
             dimensions.add(new Dimension(parameter.name(), -1, false, parameter.possibleValues()));
             addLimits(issues, parameter);
         }
@@ -69,7 +79,7 @@ public final class JointSqlValueInferencer {
         for (var parameter : variant.parameters()) {
             dimensions.add(new Dimension(parameter.name(), -1, false, parameter.possibleValues())); addLimits(issues, parameter);
         }
-        var keyInferencer = new ParameterValueInferencer(Objects.requireNonNull(generators.get()), flow::checkpoint);
+        var keyInferencer = new ParameterValueInferencer(Objects.requireNonNull(generators.get()), flow::checkpoint, replayBudgets);
         for (int i = 0; i < bindings.size(); i++) {
             var binding = bindings.get(i);
             var keys = keyInferencer.infer(binding.keyTrace());
@@ -82,7 +92,7 @@ public final class JointSqlValueInferencer {
     private JointSqlInferenceResult solve(Optional<ValueTrace> sql, List<SqlExtraction.Binding> bindings, FlowPoint execution,
                                          List<List<ControlFlowEdge>> histories, List<String> snapshotIssues,
                                          List<Dimension> dimensions, Set<String> issues) {
-        if (dimensions.size() > 64 || dimensions.stream().anyMatch(d -> d.values().isEmpty()))
+        if (dimensions.size() > budgets.dimensions() || dimensions.stream().anyMatch(d -> d.values().isEmpty()))
             return new JointSqlInferenceResult(Status.UNKNOWN, List.of(), List.of("Joint parameters unavailable or dimension limit exceeded"));
         var query = new Query(sql, bindings, execution, dimensions, issues,
                 JointControlFlowHistories.simplify(histories, flow::checkpoint, budgets.historySteps()), snapshotIssues);
@@ -125,9 +135,10 @@ public final class JointSqlValueInferencer {
             }
             if (index == dimensions.size()) {
                 for (var history : histories) {
-                    if (attempts++ >= budgets.attempts() || results.size() >= budgets.combinations()) {
+                    if (attempts >= budgets.attempts() || results.size() >= budgets.combinations()) {
                         issues.add("Joint parameter combination limit exceeded"); break;
                     }
+                    attempts++;
                     evaluate(selected, history);
                 }
                 return;
@@ -139,9 +150,7 @@ public final class JointSqlValueInferencer {
                     enumerate(index + 1, selected);
                 selected.removeLast();
                 if (stopped) break;
-                if (attempts >= budgets.attempts() || results.size() >= budgets.combinations()) {
-                    issues.add("Joint parameter combination limit exceeded"); break;
-                }
+                // 容量恰好用完不表示遗漏；只有准备展开下一项时才报告截断。
             }
         }
 
@@ -172,7 +181,7 @@ public final class JointSqlValueInferencer {
                 var solution = solver.solve(path.conditions());
                 if (solution.status() == Status.UNSATISFIABLE) continue;
                 if (solution.status() == Status.UNKNOWN) coverageComplete = false;
-                var replay = new ParameterValueInferencer(Objects.requireNonNull(generators.get()), flow::checkpoint, solution.inputs());
+                var replay = new ParameterValueInferencer(Objects.requireNonNull(generators.get()), flow::checkpoint, solution.inputs(), replayBudgets);
                 List<InferredParameterValue> values = new ArrayList<>();
                 Set<String> localIssues = new LinkedHashSet<>(solution.issues());
                 localIssues.addAll(snapshotIssues);

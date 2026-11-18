@@ -67,6 +67,46 @@ class InferenceOptionsTest {
     }
 
     @Test
+    void independentReplayTruncationMarksPartialWithoutInvalidatingItsSource() throws Exception {
+        Path classes = compile("public void query(java.sql.Connection c, int n) throws Exception {"
+                + "n += 1;".repeat(140)
+                + "var p = c.prepareStatement(\"SELECT ?\"); p.setInt(1, n); p.executeQuery(); }");
+        var config = AnalyzerConfig.defaults().withMaxTraceDepth(1024).withMaxTraceNodes(50000)
+                .withInferenceOptions(InferenceOptions.defaults().withMode(PARAMETERS));
+        var analyzer = analyzer(config);
+        var result = analyzer.analyze(classes);
+        assertEquals(AnalysisResult.Status.PARTIAL, result.status(), result.diagnostics().toString());
+        var statement = only(execution(result).statements());
+        assertTrue(statement.sourcesComplete());
+        assertTrue(only(statement.bindings()).inference().truncated());
+        assertTrue(statement.jointInferences().isEmpty());
+        assertTrue(result.diagnostics().stream().anyMatch(diagnostic ->
+                diagnostic.code().equals("PARAMETER_INFERENCE_LIMIT") && diagnostic.incomplete()));
+
+        var extractionOnly = analyzer.analyze(classes, AnalysisOptions.defaults()
+                .withInferenceOptions(InferenceOptions.defaults().withMode(EXTRACT)));
+        assertEquals(AnalysisResult.Status.SUCCESS, extractionOnly.status(), extractionOnly.diagnostics().toString());
+        assertFalse(extractionOnly.diagnostics().stream().anyMatch(diagnostic ->
+                diagnostic.code().equals("PARAMETER_INFERENCE_LIMIT")));
+    }
+
+    @Test
+    void ordinaryUnknownParameterDoesNotMarkIndependentInferencePartial() throws Exception {
+        Path classes = compile("""
+                public void query(java.sql.Connection c, Object value) throws Exception {
+                    var p = c.prepareStatement("SELECT ?"); p.setObject(1, value); p.executeQuery();
+                }
+                """);
+        var result = analyzer(AnalyzerConfig.defaults()
+                .withInferenceOptions(InferenceOptions.defaults().withMode(PARAMETERS))).analyze(classes);
+        assertEquals(AnalysisResult.Status.SUCCESS, result.status(), result.diagnostics().toString());
+        var inferred = only(only(execution(result).statements()).bindings()).inference();
+        assertFalse(inferred.truncated());
+        assertInstanceOf(SqlValue.Unknown.class, only(inferred.possibleValues()).value());
+        assertTrue(result.diagnostics().isEmpty());
+    }
+
+    @Test
     void seededAnalysisReproducesSamplesAndSharesInputsBetweenSqlAndBindings() throws Exception {
         Path classes = compile("""
                 public void query(java.sql.Connection c, int n) throws Exception {

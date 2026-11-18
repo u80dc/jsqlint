@@ -3,6 +3,23 @@
 项目统一测试模块。所有模块的测试代码放在 `src/test/java`，测试资源放在
 `src/test/resources`；测试专用的辅助类也放在测试源码目录。
 
+当前四个 JDBC 样例的 Analyzer 重跑结果见 [JDBC SQL 提取覆盖率与正确率](JDBC_CURRENT_SQL_VALIDATION.md)。
+源码调用位置按独立字节码清单逐组核对，执行模型与运行时 SQL/绑定对照；
+完整恢复、已恢复结果正确率、UNKNOWN 和 Spring 初始化脚本分别计量。
+
+共享样例的 SQL 来源/调用点覆盖、运行时 SQL 与绑定正确性，以及联合路径证明边界，见
+[JDBC / MyBatis SQL 提取验证报告](SQL_EXTRACTION_VALIDATION.md)。`SampleSqlCoverageTest` 使用原始 JDBC
+构造代码和真实 MyBatis BoundSql 独立对照，并输出固定种子的指标与逐模型证据。
+共享目标项目与回归夹具的用法覆盖差异、尚未验证的场景及实现缺口，见
+[共享样例用法覆盖检查](SAMPLE_USAGE_COVERAGE.md)。
+第一批三个 JDBC 项目的审计基线见 [JDBC 样例用法审计](JDBC_SAMPLE_USAGE_AUDIT.md)。
+第二批增加 jdbc-standard-api 后的标准签名、状态边界与独立核验，见
+[JDBC 第二批补齐与验证](JDBC_SECOND_BATCH_VALIDATION.md)。`JdbcStandardApiCoverageTest`
+同时核对编译字节码的签名清单、位置/命名绑定和数据库自检，并单列数组别名的 UNKNOWN 边界。
+分批新增的独立样例和验证结果见 [样例补齐进度](SAMPLE_EXPANSION_PROGRESS.md)。
+`SampleSqlCoverageTest#comparesExpandedUsageMatricesWithRuntimeAndDatabaseOracles` 检查新增两个矩阵项目，
+并运行 H2 数据库自检；原始三个项目继续由独立的测试方法验证。
+
 测试沿用被测代码的 Java 包名，例如核心节点测试位于
 `src/test/java/org/u80dc/jsqlint/core/node`。当前包含节点解析、渲染、表达式求值、
 通用模板、节点结构相等性与不可变性、数值真假判断的测试，以及 commons 统一输入的

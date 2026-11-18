@@ -114,11 +114,29 @@ assert bound.bindings().getFirst().value().equals(new SqlValue.Known(7));
 绑定表达式、位置、类型提示及适配层选项分别保存；`SqlExpressionEvaluator.evaluateParameter`
 允许适配层为绑定路径指定不同于动态表达式的语法。
 `BoundParameter.origin()` 保存输入、字面量或派生表达式来源。`evaluateWithReferences` 默认通过只读
-Map 的实际访问跟踪依赖；适配求值器也可返回自身语言的结构化引用。core 根据这些引用关联 Java
+Map 的 `get` 和 `containsKey` 访问跟踪依赖，缺失名称也保留输入引用；适配求值器也可返回自身语言的结构化引用。core 根据这些引用关联 Java
 传播证据，保留 bind 转换和 foreach 元素来源；值与来源遵守同一局部作用域和回滚规则。
 字面量和参数化渲染均接受 checkpoint，使用 10000 步的节点/循环预算。预算耗尽时返回
 `RENDER_LIMIT`，回滚当前渲染的绑定和局部值，残余节点配合原始参数可重新渲染。
 `MixedSqlNode.separator` 默认空串，适配层可显式指定各层文本的连接方式。
+
+参数化渲染的 `bound.rendered().residual()` 保留原始模板，`parameters()` 保存原始输入快照。
+补充该快照后再次调用 `renderBound` 会完整重演模板，重建全部参数位置、值与来源。
+重演应继续使用相同的表达式求值器；使用自定义输入来源映射时，也应传入相同的映射回调。
+已完成的 SQL 中有未知绑定值时，也可用同一方式补齐。这样不会丢失前缀绑定，
+也不会将已经执行的 bind 叠加到局部快照上。快照仅包含输入 Map 可枚举的条目；
+自定义 Map 通过隐式名称回退提供参数时，再次渲染应继续传入包含该回退行为的 Map。
+
+`RenderedSql.recoveryMode()` 明确区分 `LITERAL_CONTINUATION` 与 `BOUND_REPLAY`：前者保存部分求值状态，
+后者保存完整重演输入。旧四参数构造器默认前者；封装参数化结果时应保留其模式。
+绑定位置必须从 1 连续编号，模型构造阶段校验模板、绑定值及来源的一致性。
+
+`SqlValue.Known`、渲染参数与模板常量快照隔离输入数组、List、Set 和 Map 的可变存储。
+数组保持运行时类型，读取时返回防御副本；集合视图只读，嵌套数组也与保存的数据隔离。
+因此修改原始输入或读取后取得的数组不会改变已有证据。数组及嵌套容器的 Known 值按内容比较，
+内容哈希和比较对共享数据图使用缓存。其他业务对象保留引用，调用方应保证其在结果存续期间不可变。
+循环容器、超过 256 层的容器、容器类型的 Map 键，以及无法容纳只读副本的具体集合类型数组不属于快照支持范围，
+捕获时会明确报错；普通 Object 数组、标量数组及 List/Map 接口类型数组继续保留原类型。
 
 ```java
 SqlNode node = SqlNodeBuilder.buildScript(
@@ -138,7 +156,8 @@ String sql = completed.sql().orElseThrow();
   缺失参数和不支持的表达式使用 `SqlValue.Unknown`。
 - 未知条件、绑定或循环保留在剩余节点树中。未完成的控制结构不提交内部绑定；
   后续节点也保持未求值，避免基于错误的变量状态生成结果。
-- 已完成的前缀绑定保存在 `parameters()` 中；继续渲染时应基于该快照补充参数。
+- 字面量 `render` 的已完成前缀局部绑定保存在 `parameters()` 中；继续渲染时应基于该快照补充参数。
+  参数化 `renderBound` 使用上面描述的原始模板与原始输入重演。
 - 文本直接拼接，不执行全局空白压缩或括号格式化。字符串字面量、行注释终止换行保持原样。
 - `#{}` 渲染为样例字面量，`${}` 渲染为原始文本；未知值不会变成 NULL 或空串。
   jdbcType 等绑定选项保存在 `ValueSqlNode.bindingOptions`；选项不参与执行语义模拟。
@@ -155,6 +174,10 @@ String sql = completed.sql().orElseThrow();
 size/length/isEmpty。数值零为 false、非零为 true；BigDecimal 与 BigInteger 使用精确判零，
 避免极小非零值在转换为 double 后被误判。它不是完整 OGNL 引擎；任意方法调用等不支持语法返回 Unknown。
 未来的框架适配层可通过 `SqlExpressionEvaluator` 注入无副作用的求值实现。
+默认对象属性访问为保持兼容会反射调用 getter 或 record 访问器，不能保证这些方法无副作用；
+调用方应提供纯访问器的参数对象或已冻结的数据 Map，也可注入自定义求值器控制访问策略。
+这些访问只针对调用方传入的参数对象。模板重演不加载目标代码、不重演原始 Java 控制流；
+传入对象的访问器仍由分析器 JVM 调用，其纯度由调用方保证。
 本模板对空白拼接、循环绑定作用域有上述明确定义，不保证逐字符复刻 MyBatis 的运行时行为；
 需要严格复刻时，由适配层在归一化阶段处理框架的隐式空格、绑定作用域等差异。
 渲染结果用于分析预览，不应直接作为数据库执行入口。

@@ -1,9 +1,10 @@
 package org.u80dc.jsqlint.core;
 
 import org.u80dc.jsqlint.core.dataflow.ValueTrace;
-import org.u80dc.jsqlint.core.dataflow.RawSqlBuilder;
-import org.u80dc.jsqlint.core.dataflow.SqlTemplateProjection;
+import org.u80dc.jsqlint.core.template.RawSqlBuilder;
+import org.u80dc.jsqlint.core.template.SqlTemplateProjection;
 import org.u80dc.jsqlint.core.node.SqlNode;
+import org.u80dc.jsqlint.core.node.SqlNodeRenderer.RenderedSql;
 import org.u80dc.jsqlint.core.spi.*;
 import org.u80dc.jsqlint.core.parameter.ParameterValueInferenceResult;
 import org.u80dc.jsqlint.core.parameter.ParameterValueInferencer;
@@ -41,6 +42,20 @@ public record SqlExtraction(String moduleId, SqlCallSite callSite, List<SqlCallS
             // 动态模板的不同模型可以产生不同绑定顺序，保留各 variant 的快照。
             if (definition.isEmpty()) rawSql = rawSql.withBindings(bindings);
             if (templateInference.isPresent() && definition.isEmpty()) throw new IllegalArgumentException("Template inference requires a definition");
+            if (definition.isPresent() && !template.equals(definition.get().template()))
+                throw new IllegalArgumentException("The saved template must match its SQL definition");
+            if (templateInference.isPresent()) {
+                var models = templateInference.get().models();
+                if (!bindings.equals(models.stream().flatMap(model -> model.bindings().stream()).distinct().toList()))
+                    throw new IllegalArgumentException("Statement bindings must preserve their template models");
+                for (var model : models) {
+                    if (model.bound().rendered().recoveryMode() == RenderedSql.RecoveryMode.BOUND_REPLAY
+                            && !template.equals(model.bound().rendered().residual()))
+                        throw new IllegalArgumentException("A bound model must replay its statement template");
+                    if (model.rawSql().isPresent() && !rawSql.variants().contains(model.rawSql().get()))
+                        throw new IllegalArgumentException("The statement must preserve each associated raw SQL model");
+                }
+            }
         }
         public Statement(Optional<ValueTrace> sql, SqlNode template, List<Binding> bindings, Optional<SourceLocation> batchEntry,
                          List<String> issues, List<String> templateIssues, RawSql rawSql) {
