@@ -69,6 +69,12 @@
                 </exclusion>
             </exclusions>
         </dependency>
+        <!-- 与 Maven 发行版一致，向旧插件提供 ArtifactCollector 等兼容 API 和组件。 -->
+        <dependency>
+            <groupId>org.apache.maven</groupId>
+            <artifactId>maven-compat</artifactId>
+            <version>${maven-embedder.version}</version>
+        </dependency>
         <!-- Maven 仓库连接与 HTTP 依赖下载。 -->
         <dependency>
             <groupId>org.apache.maven.resolver</groupId>

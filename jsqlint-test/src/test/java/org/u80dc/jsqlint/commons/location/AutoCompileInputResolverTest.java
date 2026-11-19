@@ -11,20 +11,26 @@ import org.u80dc.jsqlint.core.AnalysisOptions;
 import org.u80dc.jsqlint.core.Analyzer;
 import org.u80dc.jsqlint.core.AnalyzerConfig;
 import org.u80dc.jsqlint.core.spi.AnalysisInputResolver;
+import org.u80dc.jsqlint.core.spi.DiscoveryRegistry;
 import org.u80dc.jsqlint.core.spi.PreparedInput;
+import org.u80dc.jsqlint.core.spi.SqlAnalysisModule;
 import sootup.core.frontend.SootClassSource;
 import sootup.core.inputlocation.AnalysisInputLocation;
 import sootup.core.interceptor.BodyInterceptor;
 import sootup.core.model.SourceType;
 import sootup.core.types.ClassType;
 import sootup.core.views.View;
+import sootup.java.core.views.JavaView;
 
+import javax.tools.ToolProvider;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.jar.JarEntry;
+import java.util.jar.JarOutputStream;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Stream;
 
@@ -93,6 +99,42 @@ class AutoCompileInputResolverTest {
             assertTrue(Files.isRegularFile(output.resolve("Sample.class")));
         }
         assertFalse(Files.exists(defaultRoot()));
+    }
+
+    @Test
+    void separatesLibrariesFromApplicationScanningAndStillResolvesReferencedTypes() throws Exception {
+        Path source = Files.writeString(temporary.resolve("Sample.java"), "public interface Sample { int value(); }");
+        Path librarySource = Files.writeString(temporary.resolve("Helper.java"), "package dep; public class Helper {}");
+        Path libraryClasses = Files.createDirectories(temporary.resolve("library-classes"));
+        assertEquals(0, ToolProvider.getSystemJavaCompiler().run(null, null, null,
+                "-proc:none", "-d", libraryClasses.toString(), librarySource.toString()));
+        Path library = temporary.resolve("library.jar");
+        try (var jar = new JarOutputStream(Files.newOutputStream(library))) {
+            jar.putNextEntry(new JarEntry("dep/Helper.class"));
+            Files.copy(libraryClasses.resolve("dep/Helper.class"), jar);
+            jar.closeEntry();
+            // 未引用的损坏类可检测依赖是否被提前全量解析。
+            jar.putNextEntry(new JarEntry("dep/UnusedBroken.class"));
+            jar.write(new byte[]{0, 1, 2, 3});
+            jar.closeEntry();
+        }
+        var resolver = new AutoCompileInputResolver(new InputLocationOptions(InputMode.AUTO, List.of(library), List.of(), null));
+        try (var prepared = resolver.resolve(source, () -> {})) {
+            assertEquals(List.of(SourceType.Application, SourceType.Library),
+                    prepared.locations().stream().map(AnalysisInputLocation::getSourceType).toList());
+            var view = new JavaView(new ArrayList<>(prepared.locations()));
+            assertTrue(view.getClass(view.getIdentifierFactory().getClassType("dep.Helper")).orElseThrow().isLibraryClass());
+        }
+        List<String> discovered = new ArrayList<>();
+        var module = new SqlAnalysisModule() {
+            public String id() { return "application-scan"; }
+            public void register(DiscoveryRegistry registry) {
+                registry.method(method -> true, (method, seeds) -> discovered.add(method.getDeclClassType().toString()));
+            }
+        };
+        var result = new Analyzer(List.of(module), List.of(resolver)).analyze(source);
+        assertEquals(SUCCESS, result.status(), result.diagnostics().toString());
+        assertEquals(List.of("Sample"), discovered);
     }
 
     @Test

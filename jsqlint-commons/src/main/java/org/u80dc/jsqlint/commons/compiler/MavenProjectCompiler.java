@@ -14,7 +14,6 @@ import org.u80dc.jsqlint.commons.location.AnalysisInputException;
 import org.u80dc.jsqlint.commons.location.InputLocationOptions;
 import org.u80dc.jsqlint.commons.location.InputMode;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.net.URLEncoder;
@@ -48,7 +47,7 @@ public final class MavenProjectCompiler {
         }
         validateRepositoryArguments(options.buildArguments());
         var cli = new CapturingMavenCli(options.classOutputDirectory());
-        var output = new ByteArrayOutputStream();
+        var output = new BuildLog();
         int status;
         try (var settings = MavenBuildSettings.create(options.mavenRepositories())) {
             var arguments = new ArrayList<>(List.of("-B", "-ntp"));
@@ -72,7 +71,7 @@ public final class MavenProjectCompiler {
         if (status != 0 || cli.result == null || cli.result.hasExceptions()) {
             String details = cli.result == null ? "" : cli.result.getExceptions().toString();
             String message = "Maven compilation failed for " + root + " (exit " + status + ")\n"
-                    + details + "\n" + output.toString(StandardCharsets.UTF_8);
+                    + details + "\n" + output.text();
             for (var repository : options.mavenRepositories().remoteRepositories()) {
                 if (repository.password() != null && !repository.password().isEmpty()) {
                     message = message.replace(repository.password(), "***");

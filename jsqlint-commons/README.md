@@ -43,6 +43,11 @@ Analyzer 默认在分析结束后保留目录；可通过 `AnalyzerConfig.withCl
 `InputMode` 表示调用方选择的处理方式，可选 `AUTO`、`JAVA_SOURCE`、`MAVEN_PROJECT`、`GRADLE_PROJECT`；
 其中 `JAVA_SOURCE` 强制按普通 Java 源码处理。输入不合法时抛出 `IllegalArgumentException`；
 输入扫描、构建或源码编译失败时抛出 `AnalysisInputException`，保留诊断信息，不回退到已有字节码。
+Maven/Gradle 的 stdout 与 stderr 共用本次构建的有界日志，最多保留末尾 64 KiB；
+超出时标记早期日志已截断，失败诊断继续保留末尾错误，避免超大输出导致内存或字符串长度溢出。
+嵌入式 Maven 同时引入同版本的 `maven-compat`，向旧插件提供 `ArtifactCollector` 等兼容 API 及组件。
+路径解析器分别交付 Application 与 Library 输入；core 枚举应用代码时不遍历依赖 JAR，
+依赖类型仍可通过同一 JavaView 按需解析。直接使用自动编译输入位置时仍可枚举全部类。
 
 ## 使用
 

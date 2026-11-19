@@ -101,6 +101,21 @@ MySQL 回归覆盖 CASE/END、LIMIT/OFFSET、VALUE、锁定子句、窗口边界
 .\mvnw.cmd -pl jsqlint-test -am '-Dmaven.test.skip=false' '-DskipTests=false' test
 ```
 
+本地 DPM Mapper 用例 `MySQLDetailMapperProjectAnalysisTest` 默认禁用，显式启用后分析
+`D:/workspaces/SHSNC/snc-dpm-rebuild/snc-dpm-biz` 中的
+`MySQLDetailMapper.findBusynessWithNodeId(Map)`，并将 SQL 与绑定写入本模块
+`target/mysql-detail-mapper-find-busyness-sql.txt`。该用例通过 commons 从父 reactor 执行
+`-pl snc-dpm-biz -am`，一并编译目标模块及其兄弟模块源码依赖，
+需要访问项目的 Maven 私服。可以用 `jsqlint.dpm.project` 和 `jsqlint.dpm.repository` 覆盖项目及仓库地址。
+
+```powershell
+.\mvnw.cmd -T 1 -pl jsqlint-test -am `
+  '-Dtest=MySQLDetailMapperProjectAnalysisTest' `
+  '-Dsurefire.failIfNoSpecifiedTests=false' `
+  '-Djsqlint.dpm.test=true' `
+  '-Dmaven.test.skip=false' '-DskipTests=false' test
+```
+
 全项目验证：
 
 ```powershell

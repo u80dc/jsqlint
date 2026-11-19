@@ -227,6 +227,9 @@ public final class AutoCompileAnalysisInputLocation implements AnalysisInputLoca
         return new JavaView(List.of(this, new DefaultRuntimeAnalysisInputLocation()));
     }
 
+    /** 向解析器转交底层输入，保留独立的应用/库分类，避免应用扫描先解析全部库类。 */
+    List<AnalysisInputLocation> locations() { return locations; }
+
     @Override
     public @NonNull Optional<? extends SootClassSource> getClassSource(@NonNull ClassType type, @NonNull View view) {
         for (AnalysisInputLocation location : locations) {

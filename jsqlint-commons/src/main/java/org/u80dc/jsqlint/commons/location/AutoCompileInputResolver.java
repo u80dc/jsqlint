@@ -73,7 +73,7 @@ public final class AutoCompileInputResolver implements AnalysisInputResolver {
         var location = new AutoCompileAnalysisInputLocation(source, effectiveOptions);
         // 创建后立即转交所有权；统一入口再次检查取消，并负责关闭已经创建的输入。
         Path root = Files.isDirectory(source) ? source : source.getParent();
-        return new PreparedInput(List.of(location), List.of(new PathResourceSource(root, path -> {
+        return new PreparedInput(location.locations(), List.of(new PathResourceSource(root, path -> {
             // 这里只限定默认资源范围，具体文件类型由框架模块判断；特殊目录可显式传入。
             Path relative = root.relativize(path);
             for (Path part : relative)

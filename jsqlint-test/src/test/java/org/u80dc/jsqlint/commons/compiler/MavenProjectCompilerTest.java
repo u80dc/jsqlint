@@ -196,14 +196,18 @@ class MavenProjectCompilerTest {
             assertTrue(Files.isRegularFile(local.resolve("org/u80dc/fixture/repo/library/1/library-1.jar")));
             assertTrue(requests.contains("org/u80dc/fixture/repo/parent/1/parent-1.pom"));
             assertTrue(requests.contains("org/u80dc/fixture/repo/library/1/library-1.jar"));
+            assertTrue(requests.contains("org/u80dc/fixture/repo/legacy-plugin/1/legacy-plugin-1.jar"));
             assertTrue(requests.contains("org/apache/maven/plugins/maven-compiler-plugin/3.15.0/maven-compiler-plugin-3.15.0.jar"));
+            assertTrue(Files.readString(project.resolve("legacy-compatibility.txt")).contains("DefaultArtifactCollector"));
             assertNoTemporarySettings();
         } finally { server.stop(0); }
 
+        Files.delete(project.resolve("legacy-compatibility.txt"));
         var offline = new InputLocationOptions(InputMode.MAVEN_PROJECT, List.of(), List.of("-o"), null)
                 .withMavenRepositories(repositories).withClassOutputDirectory(temporary.resolve("offline-classes"));
         try (var input = new AutoCompileAnalysisInputLocation(project, offline)) {
             assertTrue(Files.isRegularFile(offline.classOutputDirectory().resolve("Example.class")));
+            assertTrue(Files.readString(project.resolve("legacy-compatibility.txt")).contains("DefaultArtifactCollector"));
             assertEquals(List.of(local.resolve("org/u80dc/fixture/repo/library/1/library-1.jar")), input.getDependencies());
             var view = input.createView();
             var type = view.getClass(view.getIdentifierFactory().getClassType("Example")).orElseThrow();
@@ -218,6 +222,23 @@ class MavenProjectCompilerTest {
         assertTrue(Files.isRegularFile(local.resolve("org/u80dc/fixture/repo/library/1/library-1.jar")));
     }
 
+    @Test
+    void failedBuildRetainsOriginalPomErrorAndReleasesTemporarySettings() throws Exception {
+        Path project = Files.createDirectories(temporary.resolve("broken-project"));
+        Files.writeString(project.resolve("pom.xml"), "<project><broken>");
+        var options = new InputLocationOptions(InputMode.MAVEN_PROJECT, List.of(), List.of("-o"), null)
+                .withMavenRepositories(MavenRepositoryOptions.defaults().withLocalRepository(temporary.resolve("empty-cache")));
+        var originalOut = System.out;
+        var originalError = System.err;
+        var failure = assertThrows(AnalysisInputException.class, () -> MavenProjectCompiler.compile(project, options));
+        assertTrue(failure.getMessage().contains("Maven compilation failed"), failure.getMessage());
+        assertTrue(failure.getMessage().contains("Non-readable POM"), failure.getMessage());
+        assertTrue(failure.getMessage().contains("pom.xml"), failure.getMessage());
+        assertSame(originalOut, System.out);
+        assertSame(originalError, System.err);
+        assertNoTemporarySettings();
+    }
+
     private void publishFixtures(Path repository) throws Exception {
         Path parent = Files.createDirectories(repository.resolve("org/u80dc/fixture/repo/parent/1"));
         Files.writeString(parent.resolve("parent-1.pom"), """
@@ -225,6 +246,8 @@ class MavenProjectCompilerTest {
                 <groupId>org.u80dc.fixture.repo</groupId><artifactId>parent</artifactId><version>1</version><packaging>pom</packaging>
                 <properties><maven.compiler.release>17</maven.compiler.release><project.build.sourceEncoding>UTF-8</project.build.sourceEncoding></properties>
                 <build><plugins>
+                <plugin><groupId>org.u80dc.fixture.repo</groupId><artifactId>legacy-plugin</artifactId><version>1</version>
+                <executions><execution><phase>initialize</phase><goals><goal>check</goal></goals></execution></executions></plugin>
                 <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-resources-plugin</artifactId><version>3.4.0</version></plugin>
                 <plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-compiler-plugin</artifactId><version>3.15.0</version></plugin>
                 </plugins></build></project>
@@ -242,6 +265,53 @@ class MavenProjectCompilerTest {
         try (var jar = new JarOutputStream(Files.newOutputStream(library.resolve("library-1.jar")))) {
             jar.putNextEntry(new JarEntry("fixture/Library.class"));
             Files.copy(classes.resolve("fixture/Library.class"), jar);
+            jar.closeEntry();
+        }
+        publishLegacyPlugin(repository);
+    }
+
+    private void publishLegacyPlugin(Path repository) throws Exception {
+        Path plugin = Files.createDirectories(repository.resolve("org/u80dc/fixture/repo/legacy-plugin/1"));
+        Files.writeString(plugin.resolve("legacy-plugin-1.pom"), """
+                <project xmlns="http://maven.apache.org/POM/4.0.0"><modelVersion>4.0.0</modelVersion>
+                <groupId>org.u80dc.fixture.repo</groupId><artifactId>legacy-plugin</artifactId><version>1</version>
+                <packaging>maven-plugin</packaging></project>
+                """);
+        Path source = temporary.resolve("LegacyMojo.java");
+        Files.writeString(source, """
+                package fixture;
+                public final class LegacyMojo extends org.apache.maven.plugin.AbstractMojo {
+                    private org.apache.maven.artifact.resolver.ArtifactCollector artifactCollector;
+                    private java.io.File basedir;
+                    public void execute() throws org.apache.maven.plugin.MojoExecutionException {
+                        if (artifactCollector == null) throw new org.apache.maven.plugin.MojoExecutionException("Missing legacy ArtifactCollector");
+                        try {
+                            java.nio.file.Files.writeString(basedir.toPath().resolve("legacy-compatibility.txt"), artifactCollector.getClass().getName());
+                        } catch (java.io.IOException error) { throw new org.apache.maven.plugin.MojoExecutionException("Cannot write marker", error); }
+                    }
+                }
+                """);
+        Path classes = Files.createDirectories(temporary.resolve("plugin-classes"));
+        assertEquals(0, ToolProvider.getSystemJavaCompiler().run(null, null, null, "-proc:none",
+                "-classpath", System.getProperty("java.class.path"), "-d", classes.toString(), source.toString()));
+        String descriptor = """
+                <plugin><name>Legacy compatibility fixture</name>
+                  <groupId>org.u80dc.fixture.repo</groupId><artifactId>legacy-plugin</artifactId><version>1</version>
+                  <goalPrefix>legacy</goalPrefix><mojos><mojo>
+                    <goal>check</goal><implementation>fixture.LegacyMojo</implementation><language>java</language>
+                    <description>Checks legacy ArtifactCollector injection.</description><instantiationStrategy>per-lookup</instantiationStrategy>
+                    <parameters><parameter><name>basedir</name><type>java.io.File</type><required>true</required><editable>false</editable></parameter></parameters>
+                    <configuration><basedir implementation="java.io.File" default-value="${project.basedir}"/></configuration>
+                    <requirements><requirement><role>org.apache.maven.artifact.resolver.ArtifactCollector</role><field-name>artifactCollector</field-name></requirement></requirements>
+                  </mojo></mojos><dependencies/>
+                </plugin>
+                """;
+        try (var jar = new JarOutputStream(Files.newOutputStream(plugin.resolve("legacy-plugin-1.jar")))) {
+            jar.putNextEntry(new JarEntry("fixture/LegacyMojo.class"));
+            Files.copy(classes.resolve("fixture/LegacyMojo.class"), jar);
+            jar.closeEntry();
+            jar.putNextEntry(new JarEntry("META-INF/maven/plugin.xml"));
+            jar.write(descriptor.getBytes(StandardCharsets.UTF_8));
             jar.closeEntry();
         }
     }

@@ -8,7 +8,6 @@ import org.u80dc.jsqlint.commons.location.AnalysisInputException;
 import org.u80dc.jsqlint.commons.location.InputLocationOptions;
 import org.u80dc.jsqlint.commons.location.InputMode;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileVisitResult;
@@ -53,13 +52,13 @@ public final class GradleProjectCompiler {
             Files.writeString(script, initScript(taskName, metadata, options.classOutputDirectory()), StandardCharsets.UTF_8);
             var arguments = new ArrayList<>(options.buildArguments());
             arguments.addAll(List.of("--init-script", script.toString(), "--console=plain", "--no-configuration-cache"));
-            var output = new ByteArrayOutputStream();
+            var output = new BuildLog();
             try (var connection = connector.connect()) {
                 connection.newBuild().forTasks(":" + taskName).withArguments(arguments.toArray(String[]::new))
                         .setStandardOutput(output).setStandardError(output).run();
             } catch (GradleConnectionException e) {
                 throw new AnalysisInputException("Gradle compilation failed for " + root + "\n"
-                        + output.toString(StandardCharsets.UTF_8), e);
+                        + output.text(), e);
             }
             if (!Files.isRegularFile(metadata)) {
                 throw new AnalysisInputException("Gradle did not report its compilation outputs: " + root);
