@@ -4,6 +4,8 @@
  * {@link org.u80dc.jsqlint.core.dataflow.CallContext} 可持有 SootUp 对象；对外保存的
  * {@link org.u80dc.jsqlint.core.dataflow.ValueTrace} 只包含签名、文本和不可变数据。
  * 本包记录数据依赖、正常完成前提和候选来源，不将“来源未知”直接判定为 SQL 注入漏洞。
+ * 指定方法入口可在共享程序索引上选择下游范围，调用上下文止于该入口；
+ * 范围和查询缓存属于一次分析，模型副本继承相同边界，默认查询仍枚举全程序调用上下文。
  *
  * <p>除下述兼容入口外，本包实现对 core 其他包的直接依赖仅允许 core.semantics 的 Java 语义模型
  * 和 core.spi 的 InvocationSite、SqlCallSite、SourceLocation；也可使用 SootUp 与 Java 标准库。

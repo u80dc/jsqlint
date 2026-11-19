@@ -70,7 +70,8 @@ final class ProviderSqlExtractor {
         var input = source.templateInput().orElseThrow();
         var values = arguments(provider, input, mapper, flow.program().view());
         var modeled = flow.withModel(active -> values(new ProviderArgumentModel(provider, values, active, CallContext.EMPTY, false,
-                base.metadata().getOrDefault("namespace", mapper.getDeclClassType().toString()), mapper.getName(), options.databaseId()), active));
+                base.metadata().getOrDefault("mapperType", base.metadata().getOrDefault("namespace", mapper.getDeclClassType().toString())),
+                mapper.getName(), options.databaseId()), active));
         var nodes = new ArrayList<Node>();
         for (var statement : provider.method().getBody().getStmts()) {
             flow.checkpoint();

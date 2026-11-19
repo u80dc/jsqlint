@@ -26,6 +26,7 @@ public final class DiscoveryRegistry {
     private final List<Predicate<InvocationSite>> sqlInvocations = new ArrayList<>();
     private final List<ExtractionRule> extractions = new ArrayList<>();
     private final List<DefinitionHandler> definitions = new ArrayList<>();
+    private final List<MethodDefinitionHandler> methodDefinitions = new ArrayList<>();
     private boolean callIndexRequired;
 
     /**
@@ -96,6 +97,22 @@ public final class DiscoveryRegistry {
     public List<DefinitionHandler> definitions() { return List.copyOf(definitions); }
     @FunctionalInterface
     public interface DefinitionHandler { void discover(Consumer<AnalysisSeed> seeds) throws Exception; }
+
+    /**
+     * 索引就绪后为直接指定的无方法体入口发出定义，不要求存在真实调用语句。
+     * signature 保留请求中的接口类型，method 是解析后的实际声明；两者在继承场景下可能不同。
+     * 仅方法范围入口调用此规则；全程序入口继续使用 afterDiscovery。
+     * 未关联此方法时不发出起点，让其他模块继续处理；已识别定义的解析失败使用现有诊断机制。
+     */
+    public void methodDefinition(MethodDefinitionHandler handler) {
+        methodDefinitions.add(Objects.requireNonNull(handler));
+    }
+    public List<MethodDefinitionHandler> methodDefinitions() { return List.copyOf(methodDefinitions); }
+    @FunctionalInterface
+    public interface MethodDefinitionHandler {
+        void discover(MethodSignature signature, JavaSootMethod method, JavaView view,
+                      Consumer<AnalysisSeed> seeds) throws Exception;
+    }
 
     public List<Rule<AnalysisResource>> resources() {
         return List.copyOf(resources);

@@ -10,6 +10,7 @@ import sootup.core.types.ClassType;
 import sootup.java.core.*;
 import sootup.java.core.views.JavaView;
 import java.util.*;
+import java.util.function.BiConsumer;
 
 /**
  * 共享程序索引：静态/特殊调用精确解析，虚调用按应用类层次 CHA 保守分派。
@@ -89,6 +90,38 @@ public final class ProgramIndex {
     /** 实际调用者索引在构造结束后冻结，包括每个目标签名对应的调用点列表。 */
     public Map<MethodSignature, List<InvocationSite>> callers() { return callers; }
     public List<FlowPoint> writes(FieldSignature field) { indexFields(); return List.copyOf(writes.getOrDefault(field, List.of())); }
+
+    /** 使用共享调用索引和分派缓存选择入口及下游方法，不改变完整程序视图。 */
+    public Set<MethodSignature> reachableMethods(JavaSootMethod entry, int maxCallDepth,
+                                                BiConsumer<String, String> incomplete) {
+        if (maxCallDepth < 1) throw new IllegalArgumentException("Call depth must be positive");
+        Map<MethodSignature, List<InvocationSite>> outgoing = new LinkedHashMap<>();
+        for (var site : invocations.values()) {
+            checkpoint.run();
+            outgoing.computeIfAbsent(site.method().getSignature(), ignored -> new ArrayList<>()).add(site);
+        }
+        record Pending(JavaSootMethod method, int depth) {}
+        Deque<Pending> pending = new ArrayDeque<>();
+        pending.add(new Pending(entry, 0));
+        Set<MethodSignature> selected = new LinkedHashSet<>();
+        while (!pending.isEmpty()) {
+            checkpoint.run();
+            var next = pending.removeFirst();
+            if (!selected.add(next.method().getSignature())) continue;
+            for (var site : outgoing.getOrDefault(next.method().getSignature(), List.of())) {
+                checkpoint.run();
+                for (var target : targets(site)) {
+                    if (target.getSignature().equals(entry.getSignature()))
+                        incomplete.accept("METHOD_SCOPE_RECURSION", "Recursive call to analysis entry " + entry.getSignature());
+                    if (selected.contains(target.getSignature())) continue;
+                    if (next.depth() >= maxCallDepth)
+                        incomplete.accept("METHOD_SCOPE_LIMIT", "Call depth limit from " + entry.getSignature() + " at " + site.location());
+                    else pending.addLast(new Pending(target, next.depth() + 1));
+                }
+            }
+        }
+        return Collections.unmodifiableSet(selected);
+    }
 
     public List<JavaSootMethod> targets(InvocationSite site) {
         return resolution(site).applicationTargets();

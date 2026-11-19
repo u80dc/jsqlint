@@ -68,8 +68,12 @@ final class MapperMethodMatcher {
 
     /** 依次尝试调用接口与真实声明所在的继承链，保持 MyBatis 的映射查找边界。 */
     List<String> definitionIds(InvocationSite site, JavaSootMethod method) {
+        return definitionIds(site.invocation().getMethodSignature(), method, site.view());
+    }
+    /** 方法入口和真实调用共用继承映射规则；签名保留使用接口的 namespace。 */
+    List<String> definitionIds(MethodSignature signature, JavaSootMethod method, JavaView view) {
         var result = new LinkedHashSet<String>();
-        definitionIds(site.invocation().getMethodSignature().getDeclClassType(), method, site.view(), new HashSet<>(), result);
+        definitionIds(signature.getDeclClassType(), method, view, new HashSet<>(), result);
         return List.copyOf(result);
     }
     private void definitionIds(ClassType type, JavaSootMethod method, JavaView view, Set<ClassType> visited, Set<String> ids) {

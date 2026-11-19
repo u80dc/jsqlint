@@ -30,6 +30,8 @@ public final class DataFlowAnalysis {
     private final int maxCallDepth, maxTraceDepth, maxTraceNodes;
     private final Runnable checkpoint;
     private final BiConsumer<String, String> incomplete;
+    private final Optional<MethodSignature> entry;
+    private final Set<MethodSignature> scopeMethods;
     private final Set<String> reported = new HashSet<>();
     private final Map<MethodSignature, List<ContextPath>> contextCache = new HashMap<>();
     private record ModeledCall(InvocationSite invocation, CallContext parent) {}
@@ -44,10 +46,18 @@ public final class DataFlowAnalysis {
     }
     public DataFlowAnalysis(ProgramIndex program, int maxCallDepth, int maxTraceDepth, int maxTraceNodes,
                             int cacheSize, Runnable checkpoint, BiConsumer<String, String> incomplete) {
+        this(program, maxCallDepth, maxTraceDepth, maxTraceNodes, cacheSize, checkpoint, incomplete,
+                Optional.empty(), Set.of());
+    }
+    /** 指定入口时，仅保留入口范围内的调用上下文；旧构造器继续枚举全程序上游。 */
+    public DataFlowAnalysis(ProgramIndex program, int maxCallDepth, int maxTraceDepth, int maxTraceNodes,
+                            int cacheSize, Runnable checkpoint, BiConsumer<String, String> incomplete,
+                            Optional<MethodSignature> entry, Set<MethodSignature> scopeMethods) {
         if (maxCallDepth < 1 || maxTraceDepth < 1 || maxTraceNodes < 1)
             throw new IllegalArgumentException("Trace budgets must be positive");
         this.program = program; this.maxCallDepth = maxCallDepth; this.maxTraceDepth = maxTraceDepth;
         this.maxTraceNodes = maxTraceNodes; this.checkpoint = checkpoint; this.incomplete = incomplete;
+        this.entry = Objects.requireNonNull(entry); this.scopeMethods = Set.copyOf(scopeMethods);
         definitions = new LocalDefinitions(cacheSize, checkpoint);
         completion = new NormalCompletion(this, maxCallDepth);
     }
@@ -55,6 +65,7 @@ public final class DataFlowAnalysis {
         program = source.program; definitions = source.definitions; maxCallDepth = source.maxCallDepth;
         maxTraceDepth = source.maxTraceDepth; maxTraceNodes = source.maxTraceNodes; checkpoint = source.checkpoint;
         incomplete = source.incomplete; models.putAll(source.models); implicitTargets.putAll(source.implicitTargets);
+        entry = source.entry; scopeMethods = source.scopeMethods;
         completion = new NormalCompletion(this, maxCallDepth);
     }
     public ProgramIndex program() { return program; }
@@ -77,6 +88,7 @@ public final class DataFlowAnalysis {
         return contextCache.computeIfAbsent(method.getSignature(), ignored -> findContexts(method));
     }
     private List<ContextPath> findContexts(JavaSootMethod method) {
+        if (entry.isPresent() && !scopeMethods.contains(method.getSignature())) return List.of();
         record Pending(JavaSootMethod method, List<InvocationSite> reversed, Set<MethodSignature> active) {}
         Deque<Pending> pending = new ArrayDeque<>();
         pending.add(new Pending(method, List.of(), Set.of()));
@@ -86,9 +98,13 @@ public final class DataFlowAnalysis {
             Pending next = pending.removeFirst();
             End end = null;
             var callers = program.callers().getOrDefault(next.method().getSignature(), List.of());
+            if (entry.isPresent()) callers = callers.stream()
+                    .filter(call -> scopeMethods.contains(call.method().getSignature())).toList();
             // 总路径容量耗尽时留一个显式截断结果；正常终点不消耗额外的调用展开深度。
             if (result.size() >= MAX_PATHS - 1 && !pending.isEmpty()) end = End.LIMIT;
-            else if (next.method().isMain(program.view().getIdentifierFactory())) end = End.ENTRY;
+            else if (entry.isPresent() && entry.get().equals(next.method().getSignature())) end = End.ENTRY;
+            else if (entry.isEmpty() && next.method().isMain(program.view().getIdentifierFactory())) end = End.ENTRY;
+            else if (entry.isPresent() && callers.isEmpty()) continue;
             else if (callers.isEmpty()) end = End.NO_CALLER;
             else if (next.active().contains(next.method().getSignature())) end = End.CYCLE;
             else if (next.reversed().size() >= maxCallDepth || result.size() + pending.size() >= MAX_PATHS) end = End.LIMIT;
@@ -201,7 +217,8 @@ public final class DataFlowAnalysis {
             }
             // 已知字面量或入口输入是正常终点，即使恰好处于深度边界也无需继续展开。
             if ((value instanceof JParameterRef || value instanceof JThisRef) && argument(input).isEmpty())
-                return leaf(input, point.method().isMain(program.view().getIdentifierFactory()) ? Kind.ENTRY : Kind.NO_CALLER,
+                return leaf(input, (entry.isPresent() && entry.get().equals(point.method().getSignature())
+                        || entry.isEmpty() && point.method().isMain(program.view().getIdentifierFactory())) ? Kind.ENTRY : Kind.NO_CALLER,
                         "project input: " + value);
             if (depth >= maxTraceDepth) return leaf(input, Kind.LIMIT, "data dependency depth budget exceeded");
             if (value instanceof Local local) {

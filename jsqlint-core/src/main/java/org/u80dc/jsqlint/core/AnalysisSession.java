@@ -6,6 +6,7 @@ import org.u80dc.jsqlint.core.SqlDiscovery.Pending;
 import org.u80dc.jsqlint.core.node.*;
 import org.u80dc.jsqlint.core.dataflow.*;
 import org.u80dc.jsqlint.core.spi.*;
+import sootup.core.signatures.MethodSignature;
 
 import java.util.*;
 import java.util.function.Consumer;
@@ -83,19 +84,19 @@ final class AnalysisSession {
         }
     }
 
-    Status execute(AnalysisRequest request, List<SqlAnalysisModule> extensions) throws Exception {
+    Status execute(AnalysisRequest request, List<SqlAnalysisModule> extensions, Optional<MethodSignature> entry) throws Exception {
         var discovery = new SqlDiscovery(this::checkpoint, this::recover, event -> {
             resources = event.resources(); methods = event.methods(); candidates = event.candidates();
             progress(event.stage());
         }, this::reportCallSite);
-        var plan = discovery.discover(request, extensions);
+        var plan = discovery.discover(request, extensions, entry, config.maxCallDepth(), this::incomplete);
         var pending = plan.seeds();
         var extractionRequests = plan.extractions();
         progress(Stage.ANALYZING);
         // 此时所有资源定义和应用调用点已就绪，避免分析结果受发现顺序影响。
-        var program = new ProgramIndex(plan.view(), plan.classes(), plan.calls(), this::checkpoint);
+        var program = plan.program();
         var flow = new DataFlowAnalysis(program, config.maxCallDepth(), config.maxTraceDepth(), config.maxTraceNodes(),
-                config.methodCacheSize(), this::checkpoint, this::incomplete);
+                config.methodCacheSize(), this::checkpoint, this::incomplete, plan.entry(), plan.methods());
         var pipeline = new SqlExtractionPipeline(flow, config, this::checkpoint, this::incomplete, this::recover);
         var compatibility = new SqlSeedCompatibility(extractionRequests);
         if (extensions.isEmpty()) diagnostic("NO_MODULES", "No SQL discovery modules registered");

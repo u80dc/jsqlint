@@ -9,6 +9,7 @@ import sootup.core.jimple.common.constant.StringConstant;
 import sootup.java.core.AnnotationUsage;
 import sootup.java.core.JavaSootMethod;
 import sootup.core.signatures.MethodSignature;
+import sootup.java.core.views.JavaView;
 
 import java.net.URI;
 import java.util.*;
@@ -76,6 +77,26 @@ final class MybatisDefinitionIndex {
                 } else seeds.accept(new DefinitionSeed(definition));
             }
         }
+    }
+
+    /** 没有调用方的 Mapper 入口仅发出该方法关联的定义；匹配和 Provider 恢复复用现有实现。 */
+    void seeds(MethodSignature signature, JavaSootMethod method, JavaView view,
+               MapperMethodMatcher matcher, Consumer<AnalysisSeed> seeds) {
+        if (!method.isAbstract() || !view.getClass(method.getDeclClassType()).orElseThrow().isInterface()) return;
+        method(method);
+        var associated = matcher.definitionIds(signature, method, view).stream().map(this::resolve)
+                .flatMap(Optional::stream).findFirst();
+        // 没有关联时由 core 汇总各模块的发现结果；不能把其他模块支持的接口判为 MyBatis 失败。
+        if (associated.isEmpty()) return;
+        var definition = associated.get();
+        var metadata = new LinkedHashMap<>(definition.metadata());
+        metadata.put("method", signature.toString());
+        metadata.put("mapperType", signature.getDeclClassType().toString());
+        definition = new SqlDefinition(definition.id(), definition.location(), definition.template(), definition.evaluator(),
+                metadata, definition.issues());
+        if (metadata.getOrDefault("command", "").endsWith("provider") && definition.complete())
+            seeds.accept(new ProviderSeed(definition, method, new ProviderSqlExtractor(options)));
+        else seeds.accept(new DefinitionSeed(definition));
     }
 
     Optional<SqlDefinition> resolve(String id) {

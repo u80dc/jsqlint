@@ -115,6 +115,70 @@ AnalysisResult result = analyzer.analyze(request);
 commons 的项目资源默认扫描项目目录，排除 src/test、target、build、.git、.gradle、.idea；
 特殊资源目录、构建生成资源或依赖中的资源可通过 AnalysisRequest 显式提供。
 
+## 指定方法及下游 SQL
+
+`analyze` 的方法范围重载同时接收完整 SootUp 方法签名和 JVM 方法引用，返回同一 `AnalysisResult`：
+
+```java
+String entry = "<com.example.OrderService: void queryOrders(java.sql.Connection,java.lang.String)>";
+AnalysisResult result = analyzer.analyze(Path.of("target/classes"), AnalysisOptions.defaults(), entry);
+AnalysisResult withDependencies = analyzer.analyze(Path.of("target/classes"), Path.of("libraries"),
+        AnalysisOptions.defaults(), entry);
+AnalysisResult prepared = analyzer.analyze(request, entry);
+
+var sqls = result.rawSqls();
+var definitions = result.definitions();
+var problems = result.diagnostics();
+```
+
+完整签名包含所属类型、返回类型、方法名及全部参数类型，按擦除后的字节码类型区分重载。
+以下两种写法等价，三个方法范围重载都支持这两种格式，忽略输入首尾空白：
+
+```text
+<com.example.UserMapper: java.util.List findUsers(java.lang.String)>
+com/example/UserMapper.findUsers:(Ljava/lang/String;)Ljava/util/List;
+```
+
+JVM 方法引用格式为 `owner.method:(参数描述符)返回描述符`。所属类和对象类型使用 `/` 分隔包名，
+嵌套类保留 `$`；例如 `com/example/Outer$Inner`。裸描述符 `(Ljava/lang/String;)Ljava/util/List;`
+不包含所属类和方法名，无法定位目标方法，因此不接受。
+基本类型使用 `B`（byte）、`C`（char）、`D`（double）、`F`（float）、`I`（int）、`J`（long）、
+`S`（short）、`Z`（boolean），无返回值使用 `V`；对象类型使用 `L内部类名;`，数组每一维增加一个 `[`。
+例如 `String[]` 为 `[Ljava/lang/String;`，`int[][]` 为 `[[I`；构造器使用 `<init>`，返回类型为 `V`。
+两种输入都转换为同一个 SootUp 方法签名后复用现有分析流程，结果中的方法签名保持 SootUp 标准格式。
+
+签名格式错误在执行前抛出 `IllegalArgumentException`；方法不存在按现有执行失败机制返回
+`FAILED` 和诊断。没有关联 SQL 且分析完成时，返回 `SUCCESS` 和空集合。
+
+分析范围包含指定方法以及现有调用解析能力能够关联的下游方法，保留同一入口内不同调用点的上下文。
+指定方法作为独立入口，其参数与接收者状态沿用现有外部值和推断机制，不枚举上游调用者的实参。
+调用索引仍基于完整应用代码建立，输入准备、模块注册、资源索引和类路径解析与原入口共用。
+原有 `analyze` 重载保持全程序分析范围；一次调用的入口状态不会保存在 Analyzer 实例中。
+
+支持直接指定没有调用方、没有方法体的 Mapper 接口方法：
+
+```java
+AnalysisResult mapper = analyzer.analyze(Path.of("target/classes"), AnalysisOptions.defaults(),
+        "<com.example.UserMapper: java.util.List findUsers(java.lang.String)>");
+```
+
+启用 MyBatis 模块后，XML、SQL 注解及 Provider 的定义关联复用该模块现有规则。
+直接 Mapper 入口产生定义结果，实际下游 Mapper 调用仍产生调用提取结果；不会伪造 Java 调用语句。
+继承方法保留请求接口的 namespace，默认方法按普通 Java 方法体分析。
+同一文本的不同调用点和来源继续分别保存在现有结果中。
+
+无法关联 Mapper 定义、必要模块未启用、未知项目/第三方下游调用、反射、未支持的动态调用、
+递归入口或调用预算截断均通过现有诊断机制返回 `PARTIAL`，保留已经提取的 SQL。
+直接指定未纳入应用代码索引的库方法体时，同样报告范围受限，不将空集合判定为完整覆盖。
+SQL 集合为空时也保留整体诊断。运行时基础库不展开为应用方法体；已支持的标量字符串拼接
+按共享 Java 语义处理，未知运行时回调不承诺完整覆盖。
+
+方法定义扩展可以在 `DiscoveryRegistry.methodDefinition(...)` 中注册回调。
+该回调在资源和代码索引就绪后执行，接收请求签名、解析后的方法声明、程序视图与
+`Consumer<AnalysisSeed>`，输出仍使用 `SqlInput.Definition` 或 `SqlInput.ComputedDefinition`。
+原有方法级起点可直接复用；全程序定义发现继续使用 `afterDiscovery(...)`。
+模块未关联到该方法时发出零个起点，由 core 汇总全部模块；所有模块均未提供来源时才报告入口定义不可用。
+
 ## 实例配置与单次选项
 
 可复用的默认配置在创建 Analyzer 时传入，只对该实例生效：

@@ -2,12 +2,15 @@ package org.u80dc.jsqlint.core;
 
 import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
+import org.objectweb.asm.Type;
 import org.u80dc.jsqlint.core.input.BytecodeInputResolver;
 import org.u80dc.jsqlint.core.spi.AnalysisInputResolver;
 import org.u80dc.jsqlint.core.spi.PreparedInput;
 import org.u80dc.jsqlint.core.spi.SqlAnalysisModule;
 import sootup.core.inputlocation.AnalysisInputLocation;
 import sootup.core.model.SourceType;
+import sootup.core.signatures.MethodSignature;
+import sootup.java.core.JavaIdentifierFactory;
 import sootup.java.bytecode.frontend.inputlocation.DefaultRuntimeAnalysisInputLocation;
 import sootup.java.bytecode.frontend.inputlocation.JavaClassPathAnalysisInputLocation;
 
@@ -106,6 +109,88 @@ public final class Analyzer {
      * dependencies 可为依赖 JAR 或目录，null 表示不额外指定分析依赖，不参与源码编译配置。
      */
     public @NonNull AnalysisResult analyze(Path source, @Nullable Path dependencies, AnalysisOptions options) {
+        return analyzePath(source, dependencies, options, Optional.empty());
+    }
+
+    /**
+     * 接受完整 SootUp 签名或 JVM 方法引用，独立分析该方法及下游调用，不枚举上游实参。
+     * 两种写法等价，例如 {@code <com.example.UserMapper: java.util.List findUsers(java.lang.String)>}
+     * 和 {@code com/example/UserMapper.findUsers:(Ljava/lang/String;)Ljava/util/List;}。
+     * 泛型使用擦除后的类型；JVM 格式的包名使用斜杠，嵌套类名保留 {@code $}。
+     *
+     * @throws IllegalArgumentException 方法签名格式不完整或非法
+     */
+    public @NonNull AnalysisResult analyze(Path source, AnalysisOptions options, String methodSignature) {
+        return analyze(source, null, options, methodSignature);
+    }
+
+    /** 指定入口方法及额外依赖；支持完整 SootUp 签名或 JVM 方法引用，资源所有权与原路径入口相同。 */
+    public @NonNull AnalysisResult analyze(Path source, @Nullable Path dependencies, AnalysisOptions options,
+                                         String methodSignature) {
+        return analyzePath(source, dependencies, options, Optional.of(parseSignature(methodSignature)));
+    }
+
+    private static MethodSignature parseSignature(String signature) {
+        Objects.requireNonNull(signature, "methodSignature");
+        String text = signature.strip();
+        if (text.startsWith("<")) {
+            if (!text.endsWith(">")) throw new IllegalArgumentException("Expected a complete SootUp method signature: " + signature);
+            return JavaIdentifierFactory.getInstance().parseMethodSignature(text);
+        }
+        try {
+            return parseJvmSignature(text);
+        } catch (RuntimeException invalid) {
+            throw new IllegalArgumentException("Expected a complete SootUp signature or JVM method reference owner.method:(arguments)return: " + signature, invalid);
+        }
+    }
+
+    private static MethodSignature parseJvmSignature(String text) {
+        int colon = text.indexOf(':');
+        int dot = text.lastIndexOf('.', colon);
+        if (dot <= 0 || dot >= colon - 1) throw new IllegalArgumentException("Missing owner or method name");
+        String owner = text.substring(0, dot), name = text.substring(dot + 1, colon);
+        if (!internalClassName(owner) || name.chars().anyMatch(character ->
+                ".;[/():".indexOf(character) >= 0 || Character.isWhitespace(character) || Character.isSpaceChar(character))
+                || !Set.of("<init>", "<clinit>").contains(name) && (name.contains("<") || name.contains(">")))
+            throw new IllegalArgumentException("Invalid JVM owner or method name");
+        String descriptor = text.substring(colon + 1);
+        // ASM 解码类型，但不会校验描述符的全部语法和尾部；先确保完整消费合法字段类型。
+        if (!descriptor.startsWith("(")) throw new IllegalArgumentException("Missing method descriptor");
+        int index = 1;
+        while (index < descriptor.length() && descriptor.charAt(index) != ')') index = descriptorTypeEnd(descriptor, index, false);
+        if (index >= descriptor.length() || descriptorTypeEnd(descriptor, index + 1, true) != descriptor.length())
+            throw new IllegalArgumentException("Incomplete or trailing method descriptor");
+        Type method = Type.getMethodType(descriptor);
+        Type[] arguments = method.getArgumentTypes();
+        if (Arrays.stream(arguments).mapToInt(Type::getSize).sum() > 255
+                || Set.of("<init>", "<clinit>").contains(name) && method.getReturnType().getSort() != Type.VOID
+                || name.equals("<clinit>") && arguments.length != 0)
+            throw new IllegalArgumentException("Invalid JVM parameter slots or initializer descriptor");
+        return JavaIdentifierFactory.getInstance().getMethodSignature(owner.replace('/', '.'), name,
+                method.getReturnType().getClassName(), Arrays.stream(arguments).map(Type::getClassName).toList());
+    }
+
+    private static int descriptorTypeEnd(String descriptor, int index, boolean allowVoid) {
+        int dimensions = 0;
+        while (index < descriptor.length() && descriptor.charAt(index) == '[') { index++; dimensions++; }
+        if (index >= descriptor.length() || dimensions > 255) throw new IllegalArgumentException("Invalid descriptor type or array dimensions");
+        char type = descriptor.charAt(index);
+        if ("BCDFIJSZ".indexOf(type) >= 0 || type == 'V' && allowVoid && dimensions == 0) return index + 1;
+        if (type == 'L') {
+            int end = descriptor.indexOf(';', index + 1);
+            if (end > index + 1 && internalClassName(descriptor.substring(index + 1, end))) return end + 1;
+        }
+        throw new IllegalArgumentException("Invalid JVM descriptor type");
+    }
+
+    private static boolean internalClassName(String name) {
+        return !name.isEmpty() && !name.startsWith("/") && !name.endsWith("/") && !name.contains("//")
+                && name.chars().noneMatch(character -> ".;[()<>:".indexOf(character) >= 0
+                    || Character.isWhitespace(character) || Character.isSpaceChar(character));
+    }
+
+    private AnalysisResult analyzePath(Path source, @Nullable Path dependencies, AnalysisOptions options,
+                                       Optional<MethodSignature> entry) {
         Objects.requireNonNull(source, "source");
         Objects.requireNonNull(options, "options");
         AnalyzerConfig effectiveConfig = options.resolveAgainst(config);
@@ -148,7 +233,7 @@ public final class Analyzer {
             for (Path path : libraries)
                 owned.add(new JavaClassPathAnalysisInputLocation(path.toString(), SourceType.Library));
             owned.add(new DefaultRuntimeAnalysisInputLocation());
-            status = session.execute(new AnalysisRequest(owned, prepared.resources(), options), modules);
+            status = session.execute(new AnalysisRequest(owned, prepared.resources(), options), modules, entry);
         } catch (Exception e) {
             status = fail(session, e);
         } finally {
@@ -179,13 +264,22 @@ public final class Analyzer {
 
     /** 统一请求入口；会话只使用请求中的输入，所有权仍由调用方持有。 */
     public AnalysisResult analyze(AnalysisRequest request) {
+        return analyzeRequest(request, Optional.empty());
+    }
+
+    /** 接受完整 SootUp 签名或 JVM 方法引用；允许直接指定没有方法体的 Mapper 方法。 */
+    public AnalysisResult analyze(AnalysisRequest request, String methodSignature) {
+        return analyzeRequest(request, Optional.of(parseSignature(methodSignature)));
+    }
+
+    private AnalysisResult analyzeRequest(AnalysisRequest request, Optional<MethodSignature> entry) {
         Objects.requireNonNull(request, "request");
         AnalysisSession session = new AnalysisSession(request.options().resolveAgainst(config), request.options());
         Status status;
         try {
             session.checkpoint();
             session.progress(AnalysisListener.Stage.PREPARING);
-            status = session.execute(request, modules);
+            status = session.execute(request, modules, entry);
         } catch (Exception e) {
             status = fail(session, e);
         }

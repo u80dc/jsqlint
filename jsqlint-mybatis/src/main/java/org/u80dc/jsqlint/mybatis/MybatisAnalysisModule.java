@@ -25,6 +25,7 @@ public final class MybatisAnalysisModule implements SqlAnalysisModule {
                 (resource, seeds) -> definitions.resource(resource, methods));
         registry.method(method -> method.isAbstract(), (method, seeds) -> definitions.method(method));
         registry.afterDiscovery(definitions::seeds);
+        registry.methodDefinition((signature, method, view, seeds) -> definitions.seeds(signature, method, view, methods, seeds));
         registry.extraction(site -> {
             if (!methods.isSqlInvocation(site)) return false;
             // 引用依赖接口上的继承注解时按需索引，不扫描依赖库全部方法体。

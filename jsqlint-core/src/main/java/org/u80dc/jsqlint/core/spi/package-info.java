@@ -4,6 +4,8 @@
  * SQL 模块通过 {@link org.u80dc.jsqlint.core.spi.DiscoveryRegistry} 注册发现规则，
  * 并通过提取回调使用 core 提供的数据流能力。
  * 本协议明确使用 SootUp 和 core 分析引擎，扩展模块须遵守这些能力的执行期契约。
+ * 方法定义回调允许按完整签名关联没有方法体的入口，复用同一分析起点与定义数据，
+ * 不要求构造实际调用位置；请求接口和解析后的声明类型在继承场景下分别保留。
  *
  * <p>对 core 根包的直接依赖仅允许 {@link org.u80dc.jsqlint.core.SqlDefinition}。
  * 对 core.dataflow 的直接依赖允许 DataFlowAnalysis、FlowPoint（含 ValuePoint）、
