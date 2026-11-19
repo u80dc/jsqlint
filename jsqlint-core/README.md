@@ -2,6 +2,7 @@
 
 包职责、依赖边界、生命周期及可执行检查见 [包结构约定](PACKAGES.md)。
 统一分析入口、可选模块 SPI、资源输入及长任务控制见 [分析器使用说明](ANALYSIS.md)。
+固定目标及依赖、连续执行全程序或方法分析见 [路径绑定入口](ANALYSIS.md#路径绑定入口)。
 指定方法及下游 SQL、无调用方 Mapper 定义分析见 [方法范围入口](ANALYSIS.md#指定方法及下游-sql)，支持完整 SootUp 签名和 JVM 方法引用。
 上一轮十项修复、能力边界及验证结果见 [core 改进记录](CORE_IMPROVEMENTS.md)。
 本次六项设计契约修复与验证见 [core 设计修复记录](CORE_DESIGN_FIXES.md)。

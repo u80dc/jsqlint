@@ -65,6 +65,27 @@ public final class Analyzer {
         this.resolvers = all.stream().sorted(Comparator.comparingInt(AnalysisInputResolver::priority).reversed()).toList();
     }
 
+    /**
+     * 绑定目标路径，复用本实例的配置、模块和解析器。绑定时规范化路径，分析时准备输入。
+     *
+     * @param source 字节码文件、类目录或 JAR；引入 commons 后也支持源码及项目目录
+     * @return 轻量的不可变绑定入口，每次分析仍创建独立会话
+     */
+    public @NonNull BoundAnalyzer bind(Path source) {
+        return bind(source, null);
+    }
+
+    /**
+     * 同时绑定目标及额外分析依赖。绑定时不检查文件是否存在、不扫描依赖、不编译。
+     *
+     * @param source 目标路径，绑定时转换为规范化的绝对路径
+     * @param dependencies 额外分析依赖 JAR 或目录；null 表示不额外指定，不参与源码编译配置
+     * @return 复用本实例的绑定入口；文件校验、输入关闭和输出清理由每次分析管理
+     */
+    public @NonNull BoundAnalyzer bind(Path source, @Nullable Path dependencies) {
+        return new BoundAnalyzer(this, source, dependencies);
+    }
+
     private static Status fail(AnalysisSession session, Exception error) {
         try {
             return session.failure(error);

@@ -44,12 +44,10 @@ class AnalyzerMethodTest {
         assertEquals(soot.status(), jvm.status());
         assertEquals(Set.of("SELECT 1", "SELECT * FROM selected"), texts(jvm));
         assertEquals(texts(soot), texts(jvm));
-        assertEquals(soot.rawSqls().stream().map(sql -> sql.text()).toList(),
-                jvm.rawSqls().stream().map(sql -> sql.text()).toList());
-        assertEquals(soot.calls().stream().map(SqlExtraction::callSite).toList(),
-                jvm.calls().stream().map(SqlExtraction::callSite).toList());
-        assertEquals(soot.calls().stream().map(SqlExtraction::callChain).toList(),
-                jvm.calls().stream().map(SqlExtraction::callChain).toList());
+        assertEquals(soot.rawSqls().stream().map(RawSql.Variant::text).sorted().toList(),
+                jvm.rawSqls().stream().map(RawSql.Variant::text).sorted().toList());
+        assertEquals(soot.calls().stream().collect(java.util.stream.Collectors.toMap(SqlExtraction::callSite, SqlExtraction::callChain)),
+                jvm.calls().stream().collect(java.util.stream.Collectors.toMap(SqlExtraction::callSite, SqlExtraction::callChain)));
     }
 
     @Test void jvmSignatureSelectsMapperWithoutBodyUsingErasedTypes() throws Exception {

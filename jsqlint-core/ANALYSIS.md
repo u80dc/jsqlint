@@ -115,6 +115,31 @@ AnalysisResult result = analyzer.analyze(request);
 commons 的项目资源默认扫描项目目录，排除 src/test、target、build、.git、.gradle、.idea；
 特殊资源目录、构建生成资源或依赖中的资源可通过 AnalysisRequest 显式提供。
 
+## 路径绑定入口
+
+同一目标需要多次分析时，可通过 `bind` 固定路径并复用原 Analyzer 的配置、模块和输入解析器：
+
+```java
+var analyzer = new Analyzer(AnalyzerConfig.defaults());
+var bound = analyzer.bind(Path.of("target/classes"));
+var withDependencies = analyzer.bind(Path.of("target/classes"), Path.of("libraries"));
+
+AnalysisResult all = bound.analyze();
+AnalysisResult allWithOptions = bound.analyze(AnalysisOptions.defaults());
+String entry = "com/example/UserMapper.findUsers:(Ljava/lang/String;)Ljava/util/List;";
+AnalysisResult selected = withDependencies.analyze(entry);
+AnalysisResult selectedWithOptions = withDependencies.analyze(AnalysisOptions.defaults(), entry);
+```
+
+`bind(Path)` 和 `bind(Path, Path)` 返回不可变的 `BoundAnalyzer`，仅保存原 Analyzer 及规范化的绝对路径。
+依赖参数允许 null，其 JAR、类目录和递归依赖扫描规则与原 Path 入口相同，仅用于额外分析依赖。
+绑定时不检查文件存在性、不扫描依赖、不编译；允许先绑定尚未生成的编译输出目录，文件校验仍在分析时执行。
+
+四个 `analyze` 方法全部委托原入口，沿用同一个结果契约、两种完整方法签名格式、默认配置和单次选项规则。
+绑定对象不保存监听器、取消信号或方法范围；切换目标时创建另一绑定对象，原 Analyzer 仍可分析其他输入。
+每次分析读取当时的程序内容，重新准备输入并创建独立会话、程序视图和索引。
+输入关闭、输出清理及并发约定沿用原入口；绑定对象不持有活动输入，无需关闭。
+
 ## 指定方法及下游 SQL
 
 `analyze` 的方法范围重载同时接收完整 SootUp 方法签名和 JVM 方法引用，返回同一 `AnalysisResult`：
