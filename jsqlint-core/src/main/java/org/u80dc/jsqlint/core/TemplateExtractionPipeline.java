@@ -8,7 +8,6 @@ import org.u80dc.jsqlint.core.spi.*;
 
 import java.util.*;
 import java.util.function.Consumer;
-import java.util.function.BiConsumer;
 
 /** 将资源模板与真实调用实参接入通用溯源、联合求解和参数化渲染。 @author u80dc */
 final class TemplateExtractionPipeline {
@@ -17,7 +16,9 @@ final class TemplateExtractionPipeline {
     private final Consumer<ValueTrace> traceLimits;
     private final AnalysisErrorHandler errors;
     private final InferParameter inferParameter;
-    private final BiConsumer<String, String> incomplete;
+    private final AnalysisIssueReporter incomplete;
+    private final ReplayBudgets replayBudgets;
+    private final SqlRenderBudgets renderBudgets;
 
     @FunctionalInterface
     interface InferParameter {
@@ -25,16 +26,19 @@ final class TemplateExtractionPipeline {
     }
 
     TemplateExtractionPipeline(DataFlowAnalysis flow, Runnable checkpoint, Consumer<ValueTrace> traceLimits,
-                               AnalysisErrorHandler errors, InferParameter inferParameter, BiConsumer<String, String> incomplete) {
+                               AnalysisErrorHandler errors, InferParameter inferParameter, AnalysisIssueReporter incomplete,
+                               ReplayBudgets replayBudgets, SqlRenderBudgets renderBudgets) {
         this.flow = flow; this.checkpoint = checkpoint; this.traceLimits = traceLimits;
         this.errors = errors; this.inferParameter = inferParameter;
         this.incomplete = incomplete;
+        this.replayBudgets = replayBudgets;
+        this.renderBudgets = renderBudgets;
     }
 
     SqlExtraction.Statement extract(SqlTraceSource source, FlowPoint point, @Nullable ParameterValueInferencer inference,
                                     @Nullable JointSqlValueInferencer joint, List<String> sourceIssues) {
         var input = source.templateInput().orElseThrow();
-        var definition = input.definition();
+        var definition = input.definition().withReplayBudgets(replayBudgets);
         Map<TemplateSqlInput.Parameter, String> keys = new LinkedHashMap<>();
         Map<String, String> aliases = new LinkedHashMap<>();
         input.parameters().forEach((alias, parameter) -> aliases.put(alias, key(keys, parameter)));
@@ -57,12 +61,14 @@ final class TemplateExtractionPipeline {
         if (joint != null) {
             try { jointResult = Optional.of(joint.inferParameters(parameters.values(), point, source.controlFlowPaths(), sourceIssues)); }
             catch (Exception e) {
-                errors.recover("JOINT_PATH_INFERENCE", definition.location().toString(), e, true);
+                errors.recover("JOINT_PATH_INFERENCE", definition.location().toString(), e, true, Set.of(SqlAssessment.Dimension.PATH_COVERAGE));
                 jointResult = Optional.of(new JointSqlInferenceResult(JointSqlInferenceResult.Status.UNKNOWN, List.of(),
                         List.of("Joint template inference failed: " + e.getMessage()), false));
             }
             // 模板条件尚未加入 Java 路径约束；一个已知模型不能证明覆盖所有模板分支。
-            if (conditional(definition.template())) {
+            if (jointResult.orElseThrow().status() != JointSqlInferenceResult.Status.UNSATISFIABLE
+                    && SqlNodeGraphs.containsControl(definition.template(), replayBudgets, checkpoint,
+                        message -> incomplete.incomplete("SQL_TEMPLATE_LIMIT", message, Set.of(SqlAssessment.Dimension.PATH_COVERAGE)))) {
                 var result = jointResult.orElseThrow();
                 var issues = new ArrayList<>(result.issues()); issues.add("Template control conditions are not included in joint path solving");
                 var combinations = result.combinations().stream().map(combination -> new JointSqlInferenceResult.Combination(
@@ -89,11 +95,26 @@ final class TemplateExtractionPipeline {
                     append(sourceIssues, "Joint path inference was not requested")));
         }
         var renderLimits = models.stream().flatMap(model -> model.bound().rendered().diagnostics().stream())
-                .filter(diagnostic -> diagnostic.code().equals("RENDER_LIMIT")).map(SqlDiagnostic::message).distinct().toList();
-        renderLimits.forEach(message -> incomplete.accept("SQL_RENDER_LIMIT", message));
+                .filter(SqlDiagnostic::limited).map(SqlDiagnostic::message).distinct().toList();
+        renderLimits.forEach(message -> incomplete.incomplete("SQL_RENDER_LIMIT", message, Set.of(SqlAssessment.Dimension.VALUES)));
         if (!renderLimits.isEmpty() && jointResult.isPresent()) {
             var result = jointResult.get(); var issues = new ArrayList<>(result.issues()); issues.addAll(renderLimits);
             jointResult = Optional.of(new JointSqlInferenceResult(JointSqlInferenceResult.Status.UNKNOWN, result.combinations(), issues, false));
+        }
+        List<String> graphLimits = new ArrayList<>();
+        var bindings = SqlBindingSnapshots.modelBindings(models, replayBudgets, checkpoint, graphLimits::add);
+        graphLimits.forEach(message -> incomplete.incomplete("VALUE_GRAPH_LIMIT", message, Set.of(SqlAssessment.Dimension.VALUES, SqlAssessment.Dimension.PATH_COVERAGE)));
+        if (!graphLimits.isEmpty() && jointResult.isPresent()) {
+            for (int i = 0; i < models.size(); i++) {
+                var model = models.get(i);
+                var unknown = model.combination().map(value -> new JointSqlInferenceResult.Combination(
+                        JointSqlInferenceResult.Status.UNKNOWN, value.parameters(), value.bindings(), value.conditions(), value.inputs(),
+                        java.util.stream.Stream.concat(value.issues().stream(), graphLimits.stream()).distinct().toList()));
+                models.set(i, new TemplateInferenceResult.BoundModel(model.bound(), model.bindings(), unknown, model.issues()));
+            }
+            var result = jointResult.get(); var issues = new ArrayList<>(result.issues()); issues.addAll(graphLimits);
+            jointResult = Optional.of(new JointSqlInferenceResult(JointSqlInferenceResult.Status.UNKNOWN,
+                    models.stream().flatMap(model -> model.combination().stream()).toList(), issues, false));
         }
         var savedJoint = jointResult;
         List<RawSql.Variant> variants = new ArrayList<>();
@@ -109,8 +130,7 @@ final class TemplateExtractionPipeline {
             } else associatedModels.add(model);
         }
         var saved = new TemplateInferenceResult(traces, parameters, aliases, fallback, input.parameterMapName(), input.constants(),
-                jointResult, associatedModels, jointResult.map(JointSqlInferenceResult::issues).orElse(List.of()), renderAliases);
-        var bindings = associatedModels.stream().flatMap(model -> model.bindings().stream()).distinct().toList();
+                jointResult, associatedModels, jointResult.map(JointSqlInferenceResult::issues).orElse(graphLimits), renderAliases);
         return new SqlExtraction.Statement(input.sqlSource(), definition.template(), bindings, source.batchEntry(), sourceIssues,
                 definition.issues(), new RawSql(variants, definition.issues()), Optional.of(definition), Optional.of(saved));
     }
@@ -123,7 +143,8 @@ final class TemplateExtractionPipeline {
                                                       Optional<JointSqlInferenceResult.Combination> combination, List<String> issues) {
         var selected = combination.map(JointSqlInferenceResult.Combination::parameters).orElse(Map.of());
         var environment = state.environment(selected);
-        var bound = definition.render(environment, reference -> inputOrigin(state, environment, reference), checkpoint);
+        var bound = definition.render(environment, reference -> inputOrigin(state, environment, reference),
+                new SqlEvaluationContext(replayBudgets, renderBudgets, checkpoint));
         var sources = new TemplateSources(state, selected, point);
         List<SqlExtraction.Binding> bindings = new ArrayList<>();
         List<JointSqlInferenceResult.BindingValue> values = new ArrayList<>();
@@ -272,18 +293,5 @@ final class TemplateExtractionPipeline {
 
     private static List<String> append(List<String> issues, String issue) {
         var result = new ArrayList<>(issues); result.add(issue); return result;
-    }
-    private boolean conditional(SqlNode node) {
-        checkpoint.run();
-        return switch (node) {
-            case IfSqlNode ignored -> true;
-            case ChooseSqlNode ignored -> true;
-            case ForEachSqlNode ignored -> true;
-            case MixedSqlNode mixed -> mixed.contents().stream().anyMatch(this::conditional);
-            case WhereSqlNode where -> conditional(where.contents());
-            case SetSqlNode set -> conditional(set.contents());
-            case TrimSqlNode trim -> conditional(trim.contents());
-            default -> false;
-        };
     }
 }

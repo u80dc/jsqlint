@@ -16,6 +16,11 @@ public record SqlDefinition(String id, SourceLocation location, SqlNode template
         this(id, location, template, SqlExpressionEvaluator.simple(), Map.of(), List.of());
     }
     public boolean complete() { return issues.isEmpty(); }
+    /** 保存 Java 来源的重演策略；整次 SQL 渲染的预算、取消及活动值由执行上下文提供。 */
+    public SqlDefinition withReplayBudgets(ReplayBudgets budgets) {
+        var configured = evaluator.withReplayBudgets(budgets);
+        return configured == evaluator ? this : new SqlDefinition(id, location, template, configured, metadata, issues);
+    }
     public SqlNodeRenderer.BoundSql render(Map<String, ?> parameters) {
         return render(parameters, () -> {});
     }
@@ -25,6 +30,13 @@ public record SqlDefinition(String id, SourceLocation location, SqlNode template
     public SqlNodeRenderer.BoundSql render(Map<String, ?> parameters,
             Function<SqlExpressionEvaluator.Reference, SqlValueOrigin> inputs, Runnable checkpoint) {
         return rendered(SqlNodeRenderer.renderBound(template, parameters, evaluator, inputs, checkpoint));
+    }
+    public SqlNodeRenderer.BoundSql render(Map<String, ?> parameters, SqlEvaluationContext context) {
+        return rendered(SqlNodeRenderer.renderBound(template, parameters, evaluator, context));
+    }
+    public SqlNodeRenderer.BoundSql render(Map<String, ?> parameters,
+            Function<SqlExpressionEvaluator.Reference, SqlValueOrigin> inputs, SqlEvaluationContext context) {
+        return rendered(SqlNodeRenderer.renderBound(template, parameters, evaluator, inputs, context));
     }
     private SqlNodeRenderer.BoundSql rendered(SqlNodeRenderer.BoundSql bound) {
         var rendered = bound.rendered();

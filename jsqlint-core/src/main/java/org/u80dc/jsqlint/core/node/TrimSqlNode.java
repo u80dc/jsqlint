@@ -20,7 +20,7 @@ public record TrimSqlNode(String prefix, String suffix, String prefixOverrides, 
 
     @Override
     public boolean isDynamic() {
-        return contents.isDynamic();
+        return SqlNodeGraphs.isDynamic(this);
     }
 
     @Override

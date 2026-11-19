@@ -1,6 +1,8 @@
 # jsqlint-core
 
 统一分析入口、可选模块 SPI、资源输入及长任务控制见 [分析器使用说明](ANALYSIS.md)。
+上一轮十项修复、能力边界及验证结果见 [core 改进记录](CORE_IMPROVEMENTS.md)。
+本次六项设计契约修复与验证见 [core 设计修复记录](CORE_DESIGN_FIXES.md)。
 core 独立提供核心分析能力；commons、jdbc、mybatis 按需引入。
 
 核心节点位于 `org.u80dc.jsqlint.core.node`，作为通用动态 SQL 中间表示，
@@ -116,7 +118,8 @@ assert bound.bindings().getFirst().value().equals(new SqlValue.Known(7));
 `BoundParameter.origin()` 保存输入、字面量或派生表达式来源。`evaluateWithReferences` 默认通过只读
 Map 的 `get` 和 `containsKey` 访问跟踪依赖，缺失名称也保留输入引用；适配求值器也可返回自身语言的结构化引用。core 根据这些引用关联 Java
 传播证据，保留 bind 转换和 foreach 元素来源；值与来源遵守同一局部作用域和回滚规则。
-字面量和参数化渲染均接受 checkpoint，使用 10000 步的节点/循环预算。预算耗尽时返回
+字面量和参数化渲染均接受 checkpoint；`SqlRenderBudgets` 单独限制节点工作、深度和输出长度，
+默认 10000 步、128 层、1000000 字符，表达式和 Java 来源重演使用 `ReplayBudgets`。预算耗尽时返回
 `RENDER_LIMIT`，回滚当前渲染的绑定和局部值，残余节点配合原始参数可重新渲染。
 `MixedSqlNode.separator` 默认空串，适配层可显式指定各层文本的连接方式。
 
@@ -137,6 +140,16 @@ Map 的 `get` 和 `containsKey` 访问跟踪依赖，缺失名称也保留输入
 内容哈希和比较对共享数据图使用缓存。其他业务对象保留引用，调用方应保证其在结果存续期间不可变。
 循环容器、超过 256 层的容器、容器类型的 Map 键，以及无法容纳只读副本的具体集合类型数组不属于快照支持范围，
 捕获时会明确报错；普通 Object 数组、标量数组及 List/Map 接口类型数组继续保留原类型。
+
+默认表达式求值在一次活动求值中保留输入身份，最终结果才冻结：数组按引用比较，集合沿用自身的
+`equals`，数字按数值比较。传入 `Known` 时使用独立的活动副本；重复读取和同源别名保持一致，
+依赖跟踪不会为自反比较枚举无关字段。`Known.toString()` 只输出有长度上限的标量或容器摘要。
+`Evaluation` 显式携带活动值句柄、结构化来源与容量状态；句柄只在一次执行中有效。
+旧三参数结果通过接口边界补全直接来源，旧 `SqlValue` 返回扩展通过有界结果关联桥接传递活动身份，
+透明求值器包装与 record/getter 属性访问遵循相同契约，渲染器不识别具体求值器实现。
+`directReference` 仅表示表达式直接引用根参数，属性的精确活动来源通过 `ActivityValue.reference` 传递。
+参数化渲染的子作用域共享追加绑定缓冲，失败按作用域起点回滚；foreach 不再复制全部历史绑定。
+必要的定义绑定渲染失败会令分析返回 `PARTIAL`，已保存的来源和其他成功定义仍可读取。
 
 ```java
 SqlNode node = SqlNodeBuilder.buildScript(
@@ -186,6 +199,22 @@ size/length/isEmpty。数值零为 false、非零为 true；BigDecimal 与 BigIn
 普通 SQL 的 JDBC 占位符绑定需要由 JDBC 适配层处理。
 
 ## 验证
+
+冻结的 Java 模板表达式保存 `AnalyzerConfig.replayBudgets()`，后续定义重演沿用该策略。
+单次执行可以通过 `SqlEvaluationContext` 提供预算、取消检查和容量回调；旧渲染入口仍可使用。
+`SqlDefinition.withReplayBudgets` 配置来源重演；整次 SQL 节点遍历的限制通过显式执行上下文传入。
+
+```java
+var context = new SqlEvaluationContext(ReplayBudgets.defaults().withSteps(2000),
+        SqlRenderBudgets.defaults().withSteps(4000),
+        checkpoint, message -> reportLimit(message));
+var bound = definition.render(parameters, context);
+```
+
+预算及取消检查属于每次执行，保存的定义不引用已结束的分析会话。
+数组别名在同次模板执行中共享活动身份，公开结果继续提供防御快照。
+深层 SQL 节点和表达式引用处理受容量保护，超限保存未完成结果并报告 `RENDER_LIMIT`。
+本轮第 1–9 项修正及验证结果见 [维护修复记录](CORE_MAINTENANCE_FIXES.md)。
 
 测试源码统一位于 `jsqlint-test` 模块，在仓库根目录执行：
 

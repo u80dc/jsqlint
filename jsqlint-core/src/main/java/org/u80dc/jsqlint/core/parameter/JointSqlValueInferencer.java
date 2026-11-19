@@ -37,8 +37,8 @@ public final class JointSqlValueInferencer {
         this.generators = Objects.requireNonNull(generators);
         this.replayBudgets = Objects.requireNonNull(replayBudgets);
         explorer = new JointPathExplorer(flow, budgets.framePaths(), budgets.frameSteps(), budgets.modelSteps(),
-                budgets.dependencyDepth(), budgets.controlFlowDepth(), replayBudgets.length());
-        solver = new PathPredicateSolver(flow::checkpoint, budgets.modelSteps(), budgets.dependencyDepth(), replayBudgets.length());
+                budgets.dependencyDepth(), budgets.controlFlowDepth(), replayBudgets.length(), budgets.predicateSteps());
+        solver = new PathPredicateSolver(flow::checkpoint, budgets.modelSteps(), budgets.dependencyDepth(), replayBudgets.length(), budgets.predicateSteps());
     }
 
     public RawSql infer(RawSql raw, List<SqlExtraction.Binding> bindings, FlowPoint execution) {
@@ -58,6 +58,11 @@ public final class JointSqlValueInferencer {
     }
 
     private record Dimension(String name, int binding, boolean key, List<InferredParameterValue> values) {}
+    private record InferredKey(SqlValue value, Object trace, List<InferredParameterValue.InitialValue> initials, List<String> issues) {}
+    private record BoundKey(String key, InferredKey keyValue, InferredKey value) {}
+    private record ConditionKey(Object trace, boolean expected) {}
+    private record CombinationKey(Status status, Map<String, InferredKey> parameters, List<BoundKey> bindings,
+                                  List<ConditionKey> conditions, Map<ValueTrace.Variable, SqlValue> inputs, List<String> issues) {}
     /** 联合重演通用输入，不创建虚构的 SQL 文本或 SQL 传播树。 */
     public JointSqlInferenceResult inferParameters(Collection<ParameterValueInferenceResult> parameters, FlowPoint execution,
                                                    List<List<ControlFlowEdge>> histories, List<String> snapshotIssues) {
@@ -119,6 +124,8 @@ public final class JointSqlValueInferencer {
         final List<List<ControlFlowEdge>> histories;
         final List<String> snapshotIssues;
         final List<Combination> results = new ArrayList<>();
+        final ValueTraceGraphs.Keys graphKeys = new ValueTraceGraphs.Keys(budgets.predicateSteps(), budgets.dependencyDepth(), flow::checkpoint);
+        final Set<CombinationKey> resultKeys = new HashSet<>();
         int attempts, prefixChecks;
         boolean stopped;
         boolean coverageComplete = true;
@@ -220,7 +227,27 @@ public final class JointSqlValueInferencer {
             List<BindingValue> bindingValues = new ArrayList<>();
             for (int i = 0; i < bindings.size(); i++) bindingValues.add(new BindingValue(bindings.get(i).key(), keys.get(i), bound.get(i)));
             var combination = new Combination(status, parameters, bindingValues, conditions, inputs, localIssues);
-            if (!results.contains(combination)) results.add(combination);
+            try {
+                var work = new ValueTraceGraphs.Work(budgets.predicateSteps(), flow::checkpoint);
+                Map<String, InferredKey> parameterKeys = new LinkedHashMap<>();
+                for (var entry : parameters.entrySet()) { work.step(); parameterKeys.put(entry.getKey(), key(entry.getValue(), work)); }
+                List<BoundKey> bindingKeys = new ArrayList<>();
+                for (BindingValue value : bindingValues) { work.step(); bindingKeys.add(new BoundKey(value.key(), key(value.keyValue(), work), key(value.value(), work))); }
+                List<ConditionKey> conditionKeys = new ArrayList<>();
+                for (Condition condition : conditions) { work.step(); conditionKeys.add(new ConditionKey(graphKeys.key(condition.expression(), work), condition.expected())); }
+                var resultKey = new CombinationKey(status, parameterKeys, bindingKeys, conditionKeys, inputs, localIssues);
+                if (resultKeys.add(resultKey)) results.add(combination);
+            } catch (ValueTraceGraphs.Limit limit) {
+                // A deduplication limit cannot discard a source candidate or turn absence into UNSAT.
+                coverageComplete = false;
+                String issue = "Joint result graph comparison limit exceeded: " + limit.getMessage();
+                issues.add(issue); var unresolved = new ArrayList<>(localIssues); unresolved.add(issue);
+                results.add(new Combination(Status.UNKNOWN, parameters, bindingValues, conditions, inputs, unresolved));
+            }
+        }
+        private InferredKey key(InferredParameterValue value, ValueTraceGraphs.Work work) {
+            work.step();
+            return new InferredKey(value.value(), graphKeys.key(value.propagationPath(), work), value.initialValues(), value.issues());
         }
     }
 }

@@ -20,6 +20,19 @@ public record TemplateInferenceResult(Map<String, ValueTrace> sources,
         Objects.requireNonNull(fallback); Objects.requireNonNull(parameterMapName); constants = SqlValueSnapshots.parameters(constants);
         Objects.requireNonNull(jointInference); models = List.copyOf(models); issues = List.copyOf(issues);
         renderAliases = immutable(renderAliases);
+        if (jointInference.isPresent()) {
+            var joint = jointInference.get();
+            if (joint.status() == JointSqlInferenceResult.Status.UNSATISFIABLE && !models.isEmpty())
+                throw new IllegalArgumentException("An unsatisfiable template result cannot have rendering models");
+            for (var model : models) {
+                if (model.combination().isPresent()) {
+                    if (!joint.combinations().contains(model.combination().get()))
+                        throw new IllegalArgumentException("A template model must belong to its saved joint result");
+                } else if (joint.status() != JointSqlInferenceResult.Status.UNKNOWN || !joint.combinations().isEmpty()) {
+                    throw new IllegalArgumentException("An unassociated template model requires an unknown joint result without combinations");
+                }
+            }
+        }
         for (String name : renderAliases.keySet())
             if (aliases.containsKey(name) || constants.containsKey(name) || parameterMapName.filter(name::equals).isPresent())
                 throw new IllegalArgumentException("Template render alias conflicts with a business or reserved name: " + name);
@@ -39,10 +52,7 @@ public record TemplateInferenceResult(Map<String, ValueTrace> sources,
                 && models.stream().flatMap(model -> model.bindings().stream()).allMatch(SqlExtraction.Binding::complete);
     }
     public boolean valuesComplete() {
-        return !models.isEmpty() && models.stream().allMatch(model -> model.bound().valuesComplete()
-                && model.bindings().stream().allMatch(binding -> binding.inference().complete())
-                && model.combination().map(combination -> combination.parameters().values().stream()
-                    .allMatch(InferredParameterValue::complete)).orElse(parameters.isEmpty()));
+        return SqlAssessmentPolicy.templateValues(this);
     }
 
     public record BoundModel(BoundSql bound, List<SqlExtraction.Binding> bindings,
@@ -87,13 +97,16 @@ public record TemplateInferenceResult(Map<String, ValueTrace> sources,
     /** 回退只处理一个名称；属性和下标访问仍交给表达式适配器。 */
     public Map<String, Object> environment(Map<String, InferredParameterValue> model) {
         var values = new LinkedHashMap<String, Object>();
-        aliases.forEach((alias, key) -> values.put(alias, value(model, key)));
+        // A canonical input is one activity value even when the template exposes several names.
+        // Known accessors still protect the persisted model, so copy once per input, not per alias.
+        var activity = new HashMap<String, Object>();
+        aliases.forEach((alias, key) -> values.put(alias, value(model, key, activity)));
         // 根参数 Map 在加入保留名称前复制，避免自引用或别名覆盖根对象。
         parameterMapName.ifPresent(name -> values.put(name, immutable(values)));
         values.putAll(constants());
-        renderAliases.forEach((alias, key) -> values.put(alias, value(model, key)));
+        renderAliases.forEach((alias, key) -> values.put(alias, value(model, key, activity)));
         if (fallback.isEmpty()) return Collections.unmodifiableMap(values);
-        Object single = value(model, fallback.get());
+        Object single = value(model, fallback.get(), activity);
         return Collections.unmodifiableMap(new AbstractMap<>() {
             @Override public Set<Entry<String, Object>> entrySet() { return values.entrySet(); }
             @Override public boolean containsKey(Object key) { return values.containsKey(key) || identifier(key); }
@@ -103,9 +116,12 @@ public record TemplateInferenceResult(Map<String, ValueTrace> sources,
     private static boolean identifier(Object key) {
         return key instanceof String name && name.matches("[\\p{L}_$][\\p{L}\\p{N}_$]*");
     }
-    private static Object value(Map<String, InferredParameterValue> model, String key) {
+    private static Object value(Map<String, InferredParameterValue> model, String key, Map<String, Object> activity) {
+        if (activity.containsKey(key)) return activity.get(key);
         var inferred = model.get(key);
-        if (inferred == null) return new SqlValue.Unknown("Template parameter inference was not requested: " + key);
-        return inferred.value() instanceof SqlValue.Known known ? known.value() : inferred.value();
+        Object value = inferred == null ? new SqlValue.Unknown("Template parameter inference was not requested: " + key)
+                : inferred.value() instanceof SqlValue.Known known ? known.value() : inferred.value();
+        activity.put(key, value);
+        return value;
     }
 }

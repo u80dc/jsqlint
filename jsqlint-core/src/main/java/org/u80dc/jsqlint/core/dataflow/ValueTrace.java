@@ -24,6 +24,8 @@ public record ValueTrace(Variable variable, List<SqlCallSite> callChain, Node ro
         public Node(Variable variable, Kind kind, String detail, List<Node> inputs) {
             this(variable, kind, detail, inputs, new Computation(Operation.OPAQUE, ""));
         }
+        @Override public boolean equals(Object other) { return ValueTraceGraphs.equalNodes(this, other); }
+        @Override public int hashCode() { return ValueTraceGraphs.hashNode(this); }
         public boolean complete() {
             Set<Node> seen = Collections.newSetFromMap(new IdentityHashMap<>());
             Deque<Node> pending = new ArrayDeque<>(); pending.addLast(this);
@@ -60,7 +62,11 @@ public record ValueTrace(Variable variable, List<SqlCallSite> callChain, Node ro
     }
     /** ARRAY_INPUT 的两个输入依次为选中的下标和入口数组，重演时不能将元素与数组模型分离。 */
     public enum Operation { OPAQUE, LITERAL, NULL, IDENTITY, ALTERNATIVES, CONCAT, STRINGIFY, ARRAY_READ, ARRAY_INPUT, REPLACE,
-        BINARY, NEGATE, CAST, CALL, MAP_LITERAL, REQUIRE_NON_NULL, STRING_COPY, STRING_CAST, STRING_CONCAT }
+        BINARY, NEGATE, CAST, CALL, MAP_LITERAL, REQUIRE_NON_NULL, STRING_COPY, STRING_CAST, STRING_CONCAT,
+        /** 已建模方法在接收者、实参上的正常完成前提；Java 异常为 false，分析容量失败仍未知。 */
+        NORMAL_COMPLETION,
+        /** 输入为元素值、Java int 下标、Java int 分配长度；验证正常完成后返回元素。 */
+        ARRAY_ACCESS_CHECK }
     public enum Kind {
         DEFINITION, PARAMETER, RECEIVER, EXPRESSION, RETURN, CONSTANT, ENTRY, NO_CALLER,
         FIELD, ARRAY_ELEMENT, EXTERNAL_CALL, ALLOCATION, UNRESOLVED, CYCLE, LIMIT

@@ -3,8 +3,14 @@ package org.u80dc.jsqlint.core.semantics;
 import org.u80dc.jsqlint.core.dataflow.ValueTrace.Computation;
 import org.u80dc.jsqlint.core.dataflow.ValueTrace.Operation;
 import sootup.core.signatures.MethodSignature;
+import sootup.core.jimple.common.Value;
+import sootup.core.jimple.common.constant.StringConstant;
 import sootup.core.jimple.common.expr.AbstractInvokeExpr;
+import sootup.core.jimple.common.expr.AbstractInstanceInvokeExpr;
 import sootup.core.jimple.common.expr.JDynamicInvokeExpr;
+import sootup.core.jimple.common.expr.AbstractBinopExpr;
+import sootup.core.jimple.common.expr.JDivExpr;
+import sootup.core.jimple.common.expr.JRemExpr;
 import java.util.*;
 
 /** 显式的 Java 纯值语义模型；从不反射调用目标项目的方法。 @author u80dc */
@@ -68,6 +74,14 @@ public final class JavaValueOperations {
                 yield cast(operands.getFirst(), computation.text());
             }
             case CALL -> call(computation.method().orElseThrow(), operands, maxLength);
+            case NORMAL_COMPLETION -> normalCompletion(computation.method().orElseThrow(), operands, maxLength);
+            case ARRAY_ACCESS_CHECK -> {
+                requireOperands(operands, 3);
+                int index = arrayInt(operands.get(1)), length = arrayInt(operands.get(2));
+                if (length < 0) throw new NegativeArraySizeException("Negative allocated array length");
+                if (index < 0 || index >= length) throw new ArrayIndexOutOfBoundsException("Index " + index + " outside array length " + length);
+                yield operands.getFirst();
+            }
             case MAP_LITERAL -> {
                 if (operands.size() % 2 != 0) throw new IllegalArgumentException("Invalid map snapshot operands");
                 var map = new LinkedHashMap<Object, Object>();
@@ -83,6 +97,69 @@ public final class JavaValueOperations {
 
     private static void requireOperands(List<Object> operands, int expected) {
         if (operands.size() != expected) throw new IllegalArgumentException("Invalid value operation operands");
+    }
+
+    /** 整数除法和余数的正常完成要求除数非零；浮点零除遵循 IEEE 语义。 */
+    public static Optional<Value> nonZeroDivisor(Value expression) {
+        if (expression instanceof AbstractBinopExpr binary && (expression instanceof JDivExpr || expression instanceof JRemExpr)
+                && Set.of("int", "long").contains(expression.getType().toString())) return Optional.of(binary.getOp2());
+        return Optional.empty();
+    }
+
+    /** 方法的值运算及其有序依赖；追踪返回值和检查丢弃返回值的调用共用同一识别入口。 */
+    public record InvocationOperation(Computation computation, List<Value> operands) {
+        public InvocationOperation { operands = List.copyOf(operands); }
+    }
+
+    public static Optional<InvocationOperation> invocation(AbstractInvokeExpr invocation) {
+        var modeled = methodComputation(invocation.getMethodSignature());
+        if (modeled.isEmpty()) return Optional.empty();
+        Computation computation = modeled.get();
+        List<Value> operands = new ArrayList<>();
+        if (computation.operation() == Operation.REQUIRE_NON_NULL || computation.operation() == Operation.STRING_COPY)
+            operands.add(invocation.getArg(0));
+        else {
+            if (invocation instanceof AbstractInstanceInvokeExpr instance) operands.add(instance.getBase());
+            operands.addAll(invocation.getArgs());
+        }
+        // 保留已有 SQL 投影所用的显式 replace 运算，其求值仍与 CALL 共用实现。
+        if (invocation instanceof AbstractInstanceInvokeExpr && invocation.getMethodSignature().getDeclClassType().toString().equals("java.lang.String")
+                && invocation.getMethodSignature().getName().equals("replace") && invocation.getArgCount() == 2
+                && invocation.getArg(0) instanceof StringConstant && invocation.getArg(1) instanceof StringConstant)
+            computation = new Computation(Operation.REPLACE, "String.replace");
+        return Optional.of(new InvocationOperation(computation, operands));
+    }
+
+    private static Optional<Computation> methodComputation(MethodSignature method) {
+        String owner = method.getDeclClassType().toString(), name = method.getName();
+        var types = method.getParameterTypes().stream().map(Object::toString).toList();
+        if (owner.equals("java.util.Objects") && name.equals("requireNonNull")
+                && (types.equals(List.of("java.lang.Object")) || types.equals(List.of("java.lang.Object", "java.lang.String"))
+                || types.equals(List.of("java.lang.Object", "java.util.function.Supplier"))))
+            return Optional.of(new Computation(Operation.REQUIRE_NON_NULL, "Objects.requireNonNull"));
+        if (owner.equals("java.lang.String")) {
+            if (name.equals("valueOf") && types.size() == 1 && !types.getFirst().equals("char[]"))
+                return Optional.of(new Computation(Operation.STRINGIFY, types.getFirst()));
+            if (name.equals("concat") && types.equals(List.of("java.lang.String")))
+                return Optional.of(new Computation(Operation.STRING_CONCAT, "String.concat"));
+            if (name.equals("<init>") && types.equals(List.of("java.lang.String")))
+                return Optional.of(new Computation(Operation.STRING_COPY, "String constructor"));
+        }
+        return supports(method) ? Optional.of(new Computation(Operation.CALL, name, Optional.of(method))) : Optional.empty();
+    }
+
+    private static boolean normalCompletion(MethodSignature method, List<Object> operands, int maxLength) {
+        Computation computation = methodComputation(method)
+                .orElseThrow(() -> new IllegalArgumentException("Unmodeled normal completion: " + method));
+        try {
+            if (method.getDeclClassType().toString().equals("java.lang.String") && method.getName().equals("repeat")
+                    && integer(operands.get(1)) < 0) return false;
+            evaluate(computation, method.getType().toString(), operands, maxLength);
+            return true;
+        } catch (NullPointerException | NumberFormatException | IndexOutOfBoundsException | ArithmeticException failure) {
+            return false;
+        }
+        // 容量限制、错误模型类型和未支持的语义不能被解释为目标程序必然抛异常。
     }
 
     /** 只有标量和 String 的 JVM 拼接不会调用目标对象的 toString。 */
@@ -274,5 +351,11 @@ public final class JavaValueOperations {
         return (Number) Objects.requireNonNull(value, "Numeric operand is null");
     }
     private static int integer(Object value) { return number(value).intValue(); }
+    /** JVM 数组下标和长度接受 int 及其窄整数来源，不能截断 long/浮点值。 */
+    private static int arrayInt(Object value) {
+        if (value instanceof Character character) return character;
+        if (value instanceof Byte || value instanceof Short || value instanceof Integer) return ((Number) value).intValue();
+        throw new IllegalArgumentException("Array index and length must have Java int semantics");
+    }
     private static IllegalArgumentException unsupported(String operator) { return new IllegalArgumentException("Unmodeled binary operator: " + operator); }
 }

@@ -37,10 +37,7 @@ final class SqlSeedCompatibility {
     /** 每个原始 seed 交付一次；其他规则的 SQL 输入不会混入，没有匹配结果时由会话恢复原始输入。 */
     void replay(Consumer<Replay> deliver) {
         for (var entry : pending.entrySet()) for (var legacy : entry.getValue()) {
-            var templates = statements.getOrDefault(entry.getKey(), List.of()).stream()
-                    .filter(statement -> sourceMatches(statement, legacy.input())).map(SqlExtraction.Statement::template).toList();
-            deliver.accept(new Replay(legacy.item(), legacy.input(), templates.isEmpty() ? Optional.empty()
-                    : Optional.of(SqlTemplateProjection.alternatives(templates))));
+            deliver.accept(new Replay(legacy.item(), legacy.input(), statements.getOrDefault(entry.getKey(), List.of())));
         }
     }
 
@@ -56,7 +53,18 @@ final class SqlSeedCompatibility {
         return new Point(request.moduleId(), request.site().method().getSignature(), request.site().statement());
     }
 
-    record Replay(Pending item, SqlInput.ValueAt input, Optional<SqlNode> template) {}
+    /** 投影在会话的局部恢复边界内执行，交付枚举本身不启动图遍历。 */
+    record Replay(Pending item, SqlInput.ValueAt input, List<SqlExtraction.Statement> statements) {
+        Optional<SqlNode> template(SqlRecoveryBudgets budgets, Runnable checkpoint) {
+            List<SqlNode> templates = new ArrayList<>();
+            for (var statement : statements) {
+                checkpoint.run();
+                if (sourceMatches(statement, input)) templates.add(statement.template());
+            }
+            return templates.isEmpty() ? Optional.empty()
+                    : Optional.of(SqlTemplateProjection.alternatives(templates, budgets, checkpoint));
+        }
+    }
     private record Legacy(Pending item, SqlInput.ValueAt input) {}
     private record Point(String moduleId, MethodSignature method, Stmt statement) {}
 }

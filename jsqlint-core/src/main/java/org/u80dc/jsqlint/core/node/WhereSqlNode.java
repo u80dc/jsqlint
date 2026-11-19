@@ -15,7 +15,7 @@ public record WhereSqlNode(SqlNode contents) implements SqlNode {
 
     @Override
     public boolean isDynamic() {
-        return contents.isDynamic();
+        return SqlNodeGraphs.isDynamic(this);
     }
 
     @Override

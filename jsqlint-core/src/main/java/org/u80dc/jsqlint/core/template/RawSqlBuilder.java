@@ -79,6 +79,17 @@ public final class RawSqlBuilder {
                     : alternatives(node.inputs(), hint, use, depth);
             case CONCAT, STRING_CONCAT -> concat(node, hint, depth);
             case REPLACE -> replace(node, hint, depth);
+            case ARRAY_ACCESS_CHECK -> {
+                if (node.inputs().size() != 3) yield unknown(node, hint, "Invalid checked array access");
+                var index = constantInt(node.inputs().get(1));
+                var length = constantInt(node.inputs().get(2));
+                // 只有已证明合法的本地下标才展开元素文本；符号边界保留整个检查槽位供重演和联合求解。
+                if (index.isEmpty() || length.isEmpty()) yield placeholder(node, chooseName(node, hint));
+                if (length.getAsInt() < 0 || index.getAsInt() < 0 || index.getAsInt() >= length.getAsInt())
+                    yield unknown(node, hint, "Array access cannot complete within allocation bounds");
+                yield visit(node.inputs().getFirst(), hint, use, depth + 1).stream()
+                        .map(fragment -> fragment.withSources(join(fragment.sources(), node.inputs().subList(1, 3)))).toList();
+            }
             case ARRAY_READ -> {
                 List<Node> sources = node.inputs().subList(Math.min(1, node.inputs().size()), node.inputs().size());
                 if (sources.isEmpty()) yield unknown(node, hint, "Array element source is unavailable");
@@ -91,8 +102,25 @@ public final class RawSqlBuilder {
                 yield variants.stream().map(variant -> variant.withSources(join(
                         node.inputs().subList(0, Math.min(1, node.inputs().size())), variant.sources()))).toList();
             }
-            case OPAQUE, BINARY, NEGATE, CAST, CALL, ARRAY_INPUT, MAP_LITERAL -> unknown(node, chooseName(node, hint), "Unmodeled SQL value: " + node.detail());
+            case OPAQUE, BINARY, NEGATE, CAST, CALL, ARRAY_INPUT, MAP_LITERAL, NORMAL_COMPLETION -> unknown(node, chooseName(node, hint), "Unmodeled SQL value: " + node.detail());
         };
+    }
+
+    private OptionalInt constantInt(Node node) {
+        Set<Node> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+        while (seen.add(node)) {
+            checkpoint.run();
+            if (++steps > budgets.steps()) { issues.add("Raw SQL array-bound inspection budget exceeded"); return OptionalInt.empty(); }
+            if (!node.variable().type().equals("int")) return OptionalInt.empty();
+            if (node.computation().operation() == Operation.LITERAL) {
+                try { return OptionalInt.of(Integer.parseInt(node.computation().text())); }
+                catch (NumberFormatException ignored) { return OptionalInt.empty(); }
+            }
+            if (node.inputs().size() != 1 || !Set.of(Operation.IDENTITY, Operation.ALTERNATIVES).contains(node.computation().operation()))
+                return OptionalInt.empty();
+            node = node.inputs().getFirst();
+        }
+        return OptionalInt.empty();
     }
 
     private boolean hasStructure(Node node, int depth) {

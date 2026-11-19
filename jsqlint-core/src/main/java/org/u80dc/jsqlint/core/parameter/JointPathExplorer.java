@@ -2,6 +2,7 @@ package org.u80dc.jsqlint.core.parameter;
 
 import org.u80dc.jsqlint.core.dataflow.*;
 import org.u80dc.jsqlint.core.spi.*;
+import org.u80dc.jsqlint.core.semantics.JavaValueOperations;
 import sootup.core.jimple.common.Local;
 import sootup.core.jimple.common.stmt.*;
 import sootup.core.jimple.javabytecode.stmt.JSwitchStmt;
@@ -40,6 +41,9 @@ final class JointPathExplorer {
     private final Map<ConditionKey, ValueTrace> conditionCache = new LinkedHashMap<>(16, .75f, true) {
         @Override protected boolean removeEldestEntry(Map.Entry<ConditionKey, ValueTrace> entry) { return size() > 1024; }
     };
+    private final Map<ConditionKey, List<ValueTrace>> completionCache = new LinkedHashMap<>(16, .75f, true) {
+        @Override protected boolean removeEldestEntry(Map.Entry<ConditionKey, List<ValueTrace>> entry) { return size() > 1024; }
+    };
 
     /** 预算来自 AnalyzerConfig 的联合求解配置；路径与步数分别对应每帧保留的候选与处理的工作量。 */
     JointPathExplorer(DataFlowAnalysis flow, int maxPaths, int maxSteps, int modelSteps) {
@@ -53,11 +57,16 @@ final class JointPathExplorer {
 
     JointPathExplorer(DataFlowAnalysis flow, int maxPaths, int maxSteps, int modelSteps,
                       int maxDependencyDepth, int maxControlFlowDepth, int maxLength) {
-        if (maxPaths < 1 || maxSteps < 1 || modelSteps < 1 || maxDependencyDepth < 1 || maxControlFlowDepth < 1 || maxLength < 1)
+        this(flow, maxPaths, maxSteps, modelSteps, maxDependencyDepth, maxControlFlowDepth, maxLength, 20_000);
+    }
+
+    JointPathExplorer(DataFlowAnalysis flow, int maxPaths, int maxSteps, int modelSteps,
+                      int maxDependencyDepth, int maxControlFlowDepth, int maxLength, int predicateSteps) {
+        if (maxPaths < 1 || maxSteps < 1 || modelSteps < 1 || maxDependencyDepth < 1 || maxControlFlowDepth < 1 || maxLength < 1 || predicateSteps < 1)
             throw new IllegalArgumentException("Joint path budgets must be positive");
         this.flow = flow; this.maxPaths = maxPaths; this.maxSteps = maxSteps;
         this.maxDependencyDepth = maxDependencyDepth; this.maxControlFlowDepth = maxControlFlowDepth;
-        solver = new PathPredicateSolver(flow::checkpoint, modelSteps, maxDependencyDepth, maxLength);
+        solver = new PathPredicateSolver(flow::checkpoint, modelSteps, maxDependencyDepth, maxLength, predicateSteps);
     }
 
     Result explore(FlowPoint execution, List<Node> roots, List<ControlFlowEdge> history) {
@@ -70,8 +79,11 @@ final class JointPathExplorer {
         Map<DispatchKey, Optional<MethodSignature>> dispatches = new LinkedHashMap<>();
         Map<Frame, Map<Integer, Integer>> successors = new HashMap<>();
         add(execution.value(sootup.core.jimple.common.constant.IntConstant.getInstance(0)).snapshot(flow.program()), required);
-        Set<Node> seen = Collections.newSetFromMap(new IdentityHashMap<>());
-        for (Node root : roots) collect(root, required, definitions, seen, conflict, issues, dispatches, successors);
+        try { collect(roots, required, definitions, conflict, issues, dispatches, successors); }
+        catch (ValueTraceGraphs.Limit limit) {
+            issues.add("Joint trace inspection limit exceeded: " + limit.getMessage());
+            return new Result(List.of(), List.copyOf(issues));
+        }
         for (ControlFlowEdge edge : history) {
             var from = edge.from().value(sootup.core.jimple.common.constant.IntConstant.getInstance(0)).snapshot(flow.program());
             var to = edge.to().value(sootup.core.jimple.common.constant.IntConstant.getInstance(0)).snapshot(flow.program());
@@ -97,7 +109,11 @@ final class JointPathExplorer {
                     Map.copyOf(definitions.getOrDefault(entry.getKey(), Map.of())),
                     Map.copyOf(successors.getOrDefault(entry.getKey(), Map.of())), Set.of()));
         }
-        return complete(requirements, issues, dispatches);
+        try { return complete(requirements, issues, dispatches); }
+        catch (ValueTraceGraphs.Limit limit) {
+            issues.add("Joint condition graph limit exceeded: " + limit.getMessage());
+            return new Result(List.of(), List.copyOf(issues));
+        }
     }
 
     private record Search(Map<Frame, Requirement> requirements, Map<Frame, Path> paths,
@@ -110,68 +126,72 @@ final class JointPathExplorer {
         pending.add(new Search(requirements, Map.of(), Map.copyOf(dispatches)));
         List<Selection> selections = new ArrayList<>();
         int steps = 0;
-        while (!pending.isEmpty()) {
-            flow.checkpoint();
-            if (++steps > maxSteps || selections.size() >= maxPaths || pending.size() > maxSteps) {
-                issues.add("Joint condition dependency/path limit exceeded"); break;
-            }
-            Search state = pending.removeLast();
-            Requirement missing = state.requirements().values().stream().filter(requirement -> {
-                Path path = state.paths().get(requirement.frame());
-                return path == null || !path.order().containsAll(requirement.statements())
-                        || !requirement.returns().isEmpty() && Collections.disjoint(path.order(), requirement.returns());
-            }).findFirst().orElse(null);
-            if (missing != null) {
-                Requirement refined = lock(missing, state.paths().get(missing.frame()));
-                Paths candidates = cache.computeIfAbsent(refined, this::paths);
-                issues.addAll(candidates.issues());
-                for (Path path : candidates.values()) {
-                    var selected = new LinkedHashMap<>(state.paths()); selected.put(path.frame(), path);
-                    if (!solver.contradicts(conditions(selected, state.dispatches(), false)))
-                        pending.add(new Search(state.requirements(), selected, state.dispatches()));
+        try {
+            while (!pending.isEmpty()) {
+                flow.checkpoint();
+                if (++steps > maxSteps || selections.size() >= maxPaths || pending.size() > maxSteps) {
+                    issues.add("Joint condition dependency/path limit exceeded"); break;
                 }
-                continue;
-            }
-            List<Condition> conditions = conditions(state.paths(), state.dispatches(), true);
-            Node returned = null;
-            for (Condition condition : conditions) {
-                returned = unselectedReturn(condition.expression().root(), state.paths(), 0);
-                if (returned != null) break;
-            }
-            if (returned == null) {
-                if (!solver.contradicts(conditions)) selections.add(new Selection(Map.copyOf(state.paths()), conditions, state.dispatches()));
-                continue;
-            }
-            Map<Frame, Set<Integer>> targets = new LinkedHashMap<>();
-            boolean external = false;
-            for (Node input : returned.inputs()) {
-                Frame frame = Frame.of(input.variable());
-                if (returnSource(input, Frame.of(returned.variable())))
-                    targets.computeIfAbsent(frame, ignored -> new LinkedHashSet<>()).add(input.variable().statementIndex());
-                else external = true;
-            }
-            for (var target : targets.entrySet()) {
-                var choices = new LinkedHashMap<>(state.dispatches());
-                if (!chooseFrame(choices, target.getKey())) continue;
-                var next = new LinkedHashMap<>(state.requirements());
-                Requirement prior = next.get(target.getKey());
-                next.put(target.getKey(), new Requirement(target.getKey(), prior == null ? Set.of() : prior.statements(),
-                        prior == null ? Map.of() : prior.definitions(), prior == null ? Map.of() : prior.successors(), Set.copyOf(target.getValue())));
-                // 调用链上的每个调用位置都必须实际经过，不能只验证最内层返回值。
-                for (int i = 0; i < target.getKey().context().size(); i++) {
-                    InvocationSite call = call(target.getKey().context().get(i));
-                    Frame owner = new Frame(call.method().getSignature(), target.getKey().context().subList(0, i));
-                    Requirement old = next.getOrDefault(owner, new Requirement(owner, Set.of(), Map.of(), Map.of(), Set.of()));
-                    var statements = new LinkedHashSet<>(old.statements()); statements.add(call.statementIndex());
-                    next.put(owner, new Requirement(owner, Set.copyOf(statements), old.definitions(), old.successors(), old.returns()));
+                Search state = pending.removeLast();
+                Requirement missing = state.requirements().values().stream().filter(requirement -> {
+                    Path path = state.paths().get(requirement.frame());
+                    return path == null || !path.order().containsAll(requirement.statements())
+                            || !requirement.returns().isEmpty() && Collections.disjoint(path.order(), requirement.returns());
+                }).findFirst().orElse(null);
+                if (missing != null) {
+                    Requirement refined = lock(missing, state.paths().get(missing.frame()));
+                    Paths candidates = cache.computeIfAbsent(refined, this::paths);
+                    issues.addAll(candidates.issues());
+                    for (Path path : candidates.values()) {
+                        var selected = new LinkedHashMap<>(state.paths()); selected.put(path.frame(), path);
+                        if (!solver.contradicts(conditions(selected, state.dispatches(), false)))
+                            pending.add(new Search(state.requirements(), selected, state.dispatches()));
+                    }
+                    continue;
                 }
-                pending.add(new Search(next, state.paths(), Map.copyOf(choices)));
+                List<Condition> conditions = conditions(state.paths(), state.dispatches(), true);
+                Node returned = null;
+                for (Condition condition : conditions) {
+                    returned = unselectedReturn(condition.expression().root(), state.paths());
+                    if (returned != null) break;
+                }
+                if (returned == null) {
+                    if (!solver.contradicts(conditions)) selections.add(new Selection(Map.copyOf(state.paths()), conditions, state.dispatches()));
+                    continue;
+                }
+                Map<Frame, Set<Integer>> targets = new LinkedHashMap<>();
+                boolean external = false;
+                for (Node input : returned.inputs()) {
+                    Frame frame = Frame.of(input.variable());
+                    if (returnSource(input, Frame.of(returned.variable())))
+                        targets.computeIfAbsent(frame, ignored -> new LinkedHashSet<>()).add(input.variable().statementIndex());
+                    else external = true;
+                }
+                for (var target : targets.entrySet()) {
+                    var choices = new LinkedHashMap<>(state.dispatches());
+                    if (!chooseFrame(choices, target.getKey())) continue;
+                    var next = new LinkedHashMap<>(state.requirements());
+                    Requirement prior = next.get(target.getKey());
+                    next.put(target.getKey(), new Requirement(target.getKey(), prior == null ? Set.of() : prior.statements(),
+                            prior == null ? Map.of() : prior.definitions(), prior == null ? Map.of() : prior.successors(), Set.copyOf(target.getValue())));
+                    // 调用链上的每个调用位置都必须实际经过，不能只验证最内层返回值。
+                    for (int i = 0; i < target.getKey().context().size(); i++) {
+                        InvocationSite call = call(target.getKey().context().get(i));
+                        Frame owner = new Frame(call.method().getSignature(), target.getKey().context().subList(0, i));
+                        Requirement old = next.getOrDefault(owner, new Requirement(owner, Set.of(), Map.of(), Map.of(), Set.of()));
+                        var statements = new LinkedHashSet<>(old.statements()); statements.add(call.statementIndex());
+                        next.put(owner, new Requirement(owner, Set.copyOf(statements), old.definitions(), old.successors(), old.returns()));
+                    }
+                    pending.add(new Search(next, state.paths(), Map.copyOf(choices)));
+                }
+                if (external || targets.isEmpty()) {
+                    var choices = new LinkedHashMap<>(state.dispatches());
+                    if (choose(choices, dispatchKey(returned), Optional.empty()))
+                        pending.add(new Search(state.requirements(), state.paths(), Map.copyOf(choices)));
+                }
             }
-            if (external || targets.isEmpty()) {
-                var choices = new LinkedHashMap<>(state.dispatches());
-                if (choose(choices, dispatchKey(returned), Optional.empty()))
-                    pending.add(new Search(state.requirements(), state.paths(), Map.copyOf(choices)));
-            }
+        } catch (ValueTraceGraphs.Limit limit) {
+            issues.add("Joint condition graph limit exceeded: " + limit.getMessage());
         }
         return new Result(List.copyOf(selections), List.copyOf(issues));
     }
@@ -193,16 +213,27 @@ final class JointPathExplorer {
                 && method(Frame.of(node.variable())).getBody().getStmts().get(node.variable().statementIndex()) instanceof JReturnStmt;
     }
 
-    private Node unselectedReturn(Node node, Map<Frame, Path> paths, int depth) {
-        if (depth > maxDependencyDepth) return null;
-        if (node.kind() == Kind.RETURN && node.computation().operation() == Operation.ALTERNATIVES) {
-            boolean matched = node.inputs().stream().anyMatch(input -> returnSource(input, Frame.of(node.variable()))
-                    && paths.containsKey(Frame.of(input.variable())) && paths.get(Frame.of(input.variable())).order().contains(input.variable().statementIndex()));
-            if (!matched) return node;
-        } else if (node.computation().operation() == Operation.ALTERNATIVES && node.inputs().size() > 1) return null;
-        for (Node input : node.inputs()) {
-            Node found = unselectedReturn(input, paths, depth + 1);
-            if (found != null) return found;
+    private record Inspection(Node node, int depth) {}
+    private Node unselectedReturn(Node root, Map<Frame, Path> paths) {
+        var work = new ValueTraceGraphs.Work(maxSteps, flow::checkpoint);
+        var seen = Collections.newSetFromMap(new IdentityHashMap<Node, Boolean>());
+        Deque<Inspection> pending = new ArrayDeque<>(); pending.addLast(new Inspection(root, 0));
+        while (!pending.isEmpty()) {
+            work.step(); var item = pending.removeLast(); Node node = item.node();
+            if (item.depth() > maxDependencyDepth) throw new ValueTraceGraphs.Limit("Joint condition depth limit exceeded");
+            if (!seen.add(node) || node.kind() == Kind.LIMIT || node.kind() == Kind.CYCLE || node.kind() == Kind.UNRESOLVED) continue;
+            if (node.kind() == Kind.RETURN && node.computation().operation() == Operation.ALTERNATIVES) {
+                boolean matched = false;
+                for (Node input : node.inputs()) {
+                    work.step();
+                    if (returnSource(input, Frame.of(node.variable())) && paths.containsKey(Frame.of(input.variable()))
+                            && paths.get(Frame.of(input.variable())).order().contains(input.variable().statementIndex())) { matched = true; break; }
+                }
+                if (!matched) return node;
+            } else if (node.computation().operation() == Operation.ALTERNATIVES && node.inputs().size() > 1) continue;
+            for (int i = node.inputs().size() - 1; i >= 0; i--) {
+                work.step(); pending.addLast(new Inspection(node.inputs().get(i), item.depth() + 1));
+            }
         }
         return null;
     }
@@ -241,42 +272,52 @@ final class JointPathExplorer {
         return new DispatchKey(owner, SqlCallSite.invocation(site));
     }
 
-    private void collect(Node node, Map<Frame, Set<Integer>> required, Map<Frame, Map<Use, Integer>> definitions,
-                         Set<Node> seen, boolean[] conflict, Set<String> issues,
+    private void collect(List<Node> roots, Map<Frame, Set<Integer>> required, Map<Frame, Map<Use, Integer>> definitions,
+                         boolean[] conflict, Set<String> issues,
                          Map<DispatchKey, Optional<MethodSignature>> dispatches, Map<Frame, Map<Integer, Integer>> successors) {
-        flow.checkpoint();
-        if (!seen.add(node)) return;
-        if (seen.size() > maxSteps) { issues.add("Joint trace inspection limit exceeded"); return; }
-        add(node.variable(), required);
-        // 符号槽位可以携带尚未选定的分支，不能要求这些互斥来源同时执行。
-        if (node.computation().operation() == Operation.ALTERNATIVES && node.inputs().size() > 1) return;
-        for (ControlEdge edge : node.computation().history()) {
-            add(edge.from(), required); add(edge.to(), required);
-            if (edge.exceptional()) issues.add("Joint value snapshot includes exceptional control flow");
-            if (!Frame.of(edge.from()).equals(Frame.of(edge.to()))) continue;
-            var choices = successors.computeIfAbsent(Frame.of(edge.from()), ignored -> new HashMap<>());
-            var old = choices.putIfAbsent(edge.from().statementIndex(), edge.to().statementIndex());
-            if (old != null && old != edge.to().statementIndex()) conflict[0] = true;
-        }
-        // 外部实现也是独立的分派分支，不能与同次调用已经选定的项目实现拼成一组参数。
-        if (node.kind() == Kind.RETURN && node.inputs().size() == 1 && node.inputs().getFirst().kind() == Kind.EXTERNAL_CALL
-                && !returnSource(node.inputs().getFirst(), Frame.of(node.variable()))
-                && !choose(dispatches, dispatchKey(node), Optional.empty())) conflict[0] = true;
-        if (node.kind() == Kind.DEFINITION && node.inputs().size() == 1) {
-            Node selected = node.inputs().getFirst();
-            Variable source = selected.variable();
-            if (Frame.of(source).equals(Frame.of(node.variable())) && selected.kind() != Kind.UNRESOLVED
-                    && selected.kind() != Kind.CYCLE && selected.kind() != Kind.LIMIT && source.statementIndex() >= 0
-                    && method(Frame.of(source)).getBody().getStmts().get(source.statementIndex()) instanceof AbstractDefinitionStmt definition
-                    && definition.getLeftOp().toString().equals(node.variable().expression())) {
-                var choices = definitions.computeIfAbsent(Frame.of(source), ignored -> new HashMap<>());
-                Integer old = choices.putIfAbsent(new Use(node.variable().statementIndex(), node.variable().expression()), source.statementIndex());
-                if (old != null && old != source.statementIndex()) conflict[0] = true;
+        var work = new ValueTraceGraphs.Work(maxSteps, flow::checkpoint);
+        var seen = Collections.newSetFromMap(new IdentityHashMap<Node, Boolean>());
+        Deque<Inspection> pending = new ArrayDeque<>();
+        for (int i = roots.size() - 1; i >= 0; i--) { work.step(); pending.addLast(new Inspection(roots.get(i), 0)); }
+        while (!pending.isEmpty()) {
+            work.step(); var item = pending.removeLast(); Node node = item.node();
+            if (item.depth() > maxDependencyDepth) throw new ValueTraceGraphs.Limit("Joint trace depth limit exceeded");
+            if (!seen.add(node)) continue;
+            add(node.variable(), required);
+            // 符号槽位可以携带尚未选定的分支，不能要求这些互斥来源同时执行。
+            if (node.computation().operation() == Operation.ALTERNATIVES && node.inputs().size() > 1) continue;
+            for (ControlEdge edge : node.computation().history()) {
+                work.step();
+                add(edge.from(), required); add(edge.to(), required);
+                if (edge.exceptional()) issues.add("Joint value snapshot includes exceptional control flow");
+                if (!Frame.of(edge.from()).equals(Frame.of(edge.to()))) continue;
+                var choices = successors.computeIfAbsent(Frame.of(edge.from()), ignored -> new HashMap<>());
+                var old = choices.putIfAbsent(edge.from().statementIndex(), edge.to().statementIndex());
+                if (old != null && old != edge.to().statementIndex()) conflict[0] = true;
+            }
+            // 外部实现也是独立的分派分支，不能与同次调用已经选定的项目实现拼成一组参数。
+            if (node.kind() == Kind.RETURN && node.inputs().size() == 1 && node.inputs().getFirst().kind() == Kind.EXTERNAL_CALL
+                    && !returnSource(node.inputs().getFirst(), Frame.of(node.variable()))
+                    && !choose(dispatches, dispatchKey(node), Optional.empty())) conflict[0] = true;
+            if (node.kind() == Kind.DEFINITION && node.inputs().size() == 1) {
+                Node selected = node.inputs().getFirst();
+                Variable source = selected.variable();
+                if (Frame.of(source).equals(Frame.of(node.variable())) && selected.kind() != Kind.UNRESOLVED
+                        && selected.kind() != Kind.CYCLE && selected.kind() != Kind.LIMIT && source.statementIndex() >= 0
+                        && method(Frame.of(source)).getBody().getStmts().get(source.statementIndex()) instanceof AbstractDefinitionStmt definition
+                        && definition.getLeftOp().toString().equals(node.variable().expression())) {
+                    var choices = definitions.computeIfAbsent(Frame.of(source), ignored -> new HashMap<>());
+                    Integer old = choices.putIfAbsent(new Use(node.variable().statementIndex(), node.variable().expression()), source.statementIndex());
+                    if (old != null && old != source.statementIndex()) conflict[0] = true;
+                }
+            }
+            if (node.kind() == Kind.CYCLE || node.kind() == Kind.LIMIT || node.kind() == Kind.FIELD)
+                issues.add("Joint path contains unresolved cycle, limit or heap dependency");
+            if (node.kind() == Kind.CYCLE || node.kind() == Kind.LIMIT) continue;
+            for (int i = node.inputs().size() - 1; i >= 0; i--) {
+                work.step(); pending.addLast(new Inspection(node.inputs().get(i), item.depth() + 1));
             }
         }
-        if (node.kind() == Kind.CYCLE || node.kind() == Kind.LIMIT || node.kind() == Kind.FIELD)
-            issues.add("Joint path contains unresolved cycle, limit or heap dependency");
-        for (Node input : node.inputs()) collect(input, required, definitions, seen, conflict, issues, dispatches, successors);
     }
 
     private Paths paths(Requirement requirement) {
@@ -285,7 +326,22 @@ final class JointPathExplorer {
         var graph = method.getBody().getControlFlowGraph();
         Map<Stmt, Integer> positions = new HashMap<>();
         for (int i = 0; i < statements.size(); i++) positions.put(statements.get(i), i);
-        var slice = new JointControlFlowSlice(method, requirement.statements(), requirement.returns(), flow::checkpoint);
+        var context = new CallContext(requirement.frame().context().stream().map(this::call).toList());
+        var sliceStatements = new HashSet<>(requirement.statements());
+        for (int i = 0; i < statements.size(); i++) {
+            Stmt stmt = statements.get(i);
+            FlowPoint point = new FlowPoint(method, stmt, context);
+            boolean allocation = stmt instanceof AbstractDefinitionStmt definition
+                    && (definition.getRightOp() instanceof sootup.core.jimple.common.expr.JNewArrayExpr
+                    || definition.getRightOp() instanceof sootup.core.jimple.common.expr.JNewMultiArrayExpr);
+            boolean arithmetic = stmt instanceof AbstractDefinitionStmt definition
+                    && JavaValueOperations.nonZeroDivisor(definition.getRightOp()).isPresent();
+            if (stmt.containsArrayRef() || allocation || arithmetic || point.invocation(flow.program())
+                    .map(call -> JavaValueOperations.invocation(call.invocation()).isPresent()
+                            || !flow.resolution(call, context).applicationTargets().isEmpty()).orElse(false)) sliceStatements.add(i);
+        }
+        // 数组、整数零除、已建模库方法和应用调用影响可达性，不能被“值无关”的分支汇合优化跳过。
+        var slice = new JointControlFlowSlice(method, sliceStatements, requirement.returns(), flow::checkpoint);
         record State(Stmt statement, List<Integer> order, Map<String, Integer> latest,
                      Map<Use, Integer> definitions, List<Edge> branches) {}
         record StateKey(Stmt statement, Set<Integer> visited, Map<String, Integer> latest,
@@ -313,19 +369,11 @@ final class JointPathExplorer {
             boolean compatible = requirement.definitions().entrySet().stream().filter(e -> e.getKey().statement() == index)
                     .allMatch(e -> Objects.equals(state.latest().get(e.getKey().local()), e.getValue()));
             if (!compatible) continue;
-            var order = new ArrayList<>(state.order()); order.add(index);
-            var used = new HashMap<>(state.definitions());
-            // 只保存真正读取的局部量，避免为每条语句复制整张“所有历史局部量”表。
-            for (var value : state.statement().getUses()) if (value instanceof Local local && slice.relevant(local)) {
-                Integer definition = state.latest().get(local.toString());
-                if (definition != null) used.put(new Use(index, local.toString()), definition);
-            }
-            if (order.containsAll(requirement.statements()) && (requirement.returns().isEmpty() || requirement.returns().contains(index))) {
-                found.add(new Path(requirement.frame(), List.copyOf(order), Map.copyOf(used), state.branches())); continue;
-            }
             if (!graph.exceptionalSuccessors(state.statement()).isEmpty()) {
-                var remaining = new HashSet<>(requirement.statements()); remaining.removeAll(order);
-                for (Stmt handler : graph.exceptionalSuccessors(state.statement()).values()) {
+                var remaining = new HashSet<>(requirement.statements()); remaining.removeAll(state.order()); remaining.remove(index);
+                var remainingReturns = new HashSet<>(requirement.returns()); remainingReturns.removeAll(state.order()); remainingReturns.remove(index);
+                // 即使语句必然失败，其 catch 分支仍可能到达目标；这类路径暂不建模，必须保留未知诊断。
+                if (!remaining.isEmpty() || !remainingReturns.isEmpty()) for (Stmt handler : graph.exceptionalSuccessors(state.statement()).values()) {
                     var destinations = reachable.computeIfAbsent(handler, start -> {
                         Set<Integer> reached = new HashSet<>();
                         Deque<Stmt> work = new ArrayDeque<>(); work.add(start);
@@ -336,9 +384,29 @@ final class JointPathExplorer {
                         }
                         return reached;
                     });
-                    // 直接退出/重抛且不可能再经过目标 SQL 的异常边，不影响该候选的可达性。
-                    if (destinations.containsAll(remaining)) issues.add("Joint exceptional control flow is not modeled");
+                    if (destinations.containsAll(remaining) && (remainingReturns.isEmpty()
+                            || !Collections.disjoint(destinations, remainingReturns))) issues.add("Joint exceptional control flow is not modeled");
                 }
+            }
+            FlowPoint currentPoint = new FlowPoint(method, state.statement(), context);
+            var order = new ArrayList<>(state.order()); order.add(index);
+            boolean reached = order.containsAll(requirement.statements())
+                    && (requirement.returns().isEmpty() || requirement.returns().contains(index));
+            // 调用位置可只是进入目标所在 callee 的终点，不要求目标之后的整个 callee 正常返回。
+            boolean entryCall = reached && currentPoint.invocation(flow.program())
+                    .map(call -> !flow.resolution(call, context).applicationTargets().isEmpty()).orElse(false);
+            if (!entryCall) {
+                if (flow.requiresUnresolvedDispatch(currentPoint)) issues.add("Joint call can return through unresolved dispatch targets");
+                if (flow.cannotCompleteNormally(currentPoint)) continue;
+            }
+            var used = new HashMap<>(state.definitions());
+            // 只保存真正读取的局部量，避免为每条语句复制整张“所有历史局部量”表。
+            for (var value : state.statement().getUses()) if (value instanceof Local local && slice.relevant(local)) {
+                Integer definition = state.latest().get(local.toString());
+                if (definition != null) used.put(new Use(index, local.toString()), definition);
+            }
+            if (reached) {
+                found.add(new Path(requirement.frame(), List.copyOf(order), Map.copyOf(used), state.branches())); continue;
             }
             var latest = new HashMap<>(state.latest());
             if (state.statement() instanceof AbstractDefinitionStmt definition && definition.getLeftOp() instanceof Local local && slice.relevant(local))
@@ -371,6 +439,14 @@ final class JointPathExplorer {
         for (Path path : selected.values()) {
             var method = method(path.frame());
             var context = new CallContext(path.frame().context().stream().map(this::call).toList());
+            for (int index : path.order()) {
+                FlowPoint point = new FlowPoint(method, method.getBody().getStmts().get(index), context);
+                List<ValueTrace> completions = selectedCalleePath(point, selected, index == path.order().getLast())
+                        ? flow.statementSafetyConditions(point)
+                        : completionCache.computeIfAbsent(new ConditionKey(path.frame(), index), ignored -> flow.normalCompletionConditions(point));
+                for (ValueTrace trace : completions)
+                    conditions.add(new Condition(select(trace, selected, dispatches, keepReturns), true));
+            }
             for (Edge edge : path.branches()) {
                 Stmt stmt = method.getBody().getStmts().get(edge.statement());
                 FlowPoint point = new FlowPoint(method, stmt, context);
@@ -396,34 +472,66 @@ final class JointPathExplorer {
         return List.copyOf(conditions);
     }
 
+    /** 返回点证明完整调用；调用帧终点还可只证明进入已选择的 callee 前缀。 */
+    private boolean selectedCalleePath(FlowPoint caller, Map<Frame, Path> selected, boolean acceptPrefix) {
+        var invocation = caller.invocation(flow.program());
+        if (invocation.isEmpty()) return false;
+        var context = new ArrayList<>(caller.context().snapshot()); context.add(SqlCallSite.invocation(invocation.get()));
+        boolean descendant = false;
+        for (Path callee : selected.values()) {
+            if (!callee.frame().context().equals(context)) {
+                var nested = callee.frame().context();
+                descendant |= nested.size() > context.size() && nested.subList(0, context.size()).equals(context);
+                continue;
+            }
+            if (callee.order().isEmpty()) continue;
+            Stmt last = method(callee.frame()).getBody().getStmts().get(callee.order().getLast());
+            return last instanceof ReturnStmt || acceptPrefix;
+        }
+        // 完成闭包可能先选择最内层目标，再补中间帧；不能在补帧之前用整个 callee 返回剪掉该前缀。
+        return acceptPrefix && descendant;
+    }
+
     ValueTrace select(ValueTrace trace, Selection selection) {
         return select(trace, selection.paths(), selection.dispatches(), false);
     }
 
     private ValueTrace select(ValueTrace trace, Map<Frame, Path> paths, Map<DispatchKey, Optional<MethodSignature>> dispatches, boolean keepReturns) {
-        return new ValueTrace(trace.variable(), trace.callChain(), select(trace.root(), paths, dispatches, keepReturns, 0));
+        Node selected;
+        try {
+            selected = ValueTraceGraphs.transform(trace.root(), maxSteps, maxDependencyDepth, flow::checkpoint,
+                    (node, work) -> selectInputs(node, paths, dispatches, keepReturns, work));
+        } catch (ValueTraceGraphs.Limit limit) {
+            selected = new Node(trace.root().variable(), Kind.LIMIT, "Joint condition graph limit exceeded: " + limit.getMessage(),
+                    List.of(trace.root()), new Computation(Operation.OPAQUE, ""));
+        }
+        return new ValueTrace(trace.variable(), trace.callChain(), selected);
     }
 
-    private Node select(Node node, Map<Frame, Path> paths, Map<DispatchKey, Optional<MethodSignature>> dispatches, boolean keepReturns, int depth) {
-        flow.checkpoint();
-        if (depth > maxDependencyDepth) return new Node(node.variable(), Kind.LIMIT, "Joint condition depth limit exceeded", List.of());
+    private Node selectInputs(Node node, Map<Frame, Path> paths, Map<DispatchKey, Optional<MethodSignature>> dispatches,
+                              boolean keepReturns, ValueTraceGraphs.Work work) {
         List<Node> inputs = node.inputs();
         Path path = paths.get(Frame.of(node.variable()));
         if (node.kind() == Kind.DEFINITION && path != null) {
             Integer definition = path.definitions().get(new Use(node.variable().statementIndex(), node.variable().expression()));
-            if (definition != null) inputs = inputs.stream().filter(input -> input.variable().statementIndex() == definition).toList();
+            if (definition != null) {
+                List<Node> matched = new ArrayList<>();
+                for (Node input : inputs) { work.step(); if (input.variable().statementIndex() == definition) matched.add(input); }
+                inputs = matched;
+            }
         } else if (node.kind() == Kind.RETURN && node.computation().operation() == Operation.ALTERNATIVES) {
             if (Optional.empty().equals(dispatches.get(dispatchKey(node))))
                 return new Node(node.variable(), Kind.UNRESOLVED, "Condition includes external or unresolved return", List.of());
-            var matched = inputs.stream().filter(input -> {
+            var matched = new ArrayList<Node>();
+            for (Node input : inputs) {
+                work.step();
                 Path callee = paths.get(Frame.of(input.variable()));
-                return returnSource(input, Frame.of(node.variable())) && callee != null && callee.order().contains(input.variable().statementIndex());
-            }).toList();
+                if (returnSource(input, Frame.of(node.variable())) && callee != null && callee.order().contains(input.variable().statementIndex())) matched.add(input);
+            }
             if (!matched.isEmpty()) inputs = matched;
             else if (!keepReturns) return new Node(node.variable(), Kind.UNRESOLVED, "Condition callee control flow was not selected", List.of());
         }
-        return new Node(node.variable(), node.kind(), node.detail(), inputs.stream()
-                .map(input -> select(input, paths, dispatches, keepReturns, depth + 1)).toList(), node.computation());
+        return inputs == node.inputs() ? node : new Node(node.variable(), node.kind(), node.detail(), inputs, node.computation());
     }
 
     private JavaSootMethod method(Frame frame) { return flow.program().view().getMethod(frame.method()).orElseThrow(); }

@@ -10,9 +10,20 @@ public final class SqlSampleRenderer {
     private SqlSampleRenderer() {}
 
     public static List<SqlSample> render(SqlResult source) {
+        return render(source, Optional.empty());
+    }
+
+    /** 显式样例派生可限制文本工作并协作取消；已有模板模型继续读取冻结快照。 */
+    public static List<SqlSample> render(SqlResult source, SqlEvaluationContext context) {
+        Objects.requireNonNull(context);
+        return context.evaluate(() -> render(source, Optional.of(context)));
+    }
+
+    private static List<SqlSample> render(SqlResult source, Optional<SqlEvaluationContext> context) {
         Objects.requireNonNull(source);
+        context.ifPresent(SqlEvaluationContext::check);
         return switch (source) {
-            case SqlExtraction extraction -> render(extraction);
+            case SqlExtraction extraction -> render(extraction, context);
             case SqlTemplateResult template -> template.definition().isPresent()
                     ? List.of(definition(template, template.bound().orElseGet(() -> new SqlNodeRenderer.BoundSql(
                         unavailable(template, SqlNodeRenderer.RenderedSql.RecoveryMode.BOUND_REPLAY), List.of()))))
@@ -28,13 +39,19 @@ public final class SqlSampleRenderer {
         return template(source, SqlNodeRenderer.render(source.template(), parameters));
     }
 
+    public static SqlSample render(SqlTemplateResult source, Map<String, ?> parameters, SqlEvaluationContext context) {
+        Objects.requireNonNull(source); Objects.requireNonNull(context);
+        if (source.definition().isPresent()) return definition(source, source.definition().get().render(parameters, context));
+        return template(source, SqlNodeRenderer.render(source.template(), parameters, SqlExpressionEvaluator.simple(), context));
+    }
+
     private static SqlNodeRenderer.RenderedSql unavailable(SqlTemplateResult source) {
         return unavailable(source, SqlNodeRenderer.RenderedSql.RecoveryMode.LITERAL_CONTINUATION);
     }
 
     private static SqlNodeRenderer.RenderedSql unavailable(SqlTemplateResult source, SqlNodeRenderer.RenderedSql.RecoveryMode mode) {
         return new SqlNodeRenderer.RenderedSql(Optional.empty(), source.template(), Map.of(),
-                List.of(new SqlDiagnostic("RENDER_UNAVAILABLE", "No saved rendering snapshot; provide explicit sample parameters")), mode);
+                List.of(new SqlDiagnostic("RENDER_UNAVAILABLE", "No saved rendering snapshot; provide explicit sample parameters", SqlDiagnostic.Effect.UNAVAILABLE)), mode);
     }
 
     private static SqlSample definition(SqlTemplateResult source, SqlNodeRenderer.BoundSql bound) {
@@ -43,64 +60,66 @@ public final class SqlSampleRenderer {
         source.diagnostics().forEach(diagnostic -> issues.add(diagnostic.code() + ": " + diagnostic.message()));
         bound.rendered().diagnostics().forEach(diagnostic -> issues.add(diagnostic.code() + ": " + diagnostic.message()));
         var bindings = SqlBindingSnapshots.bound(bound, definition.location(), List.of());
-        boolean sources = source.assessment().sourcesComplete();
         boolean limited = bound.rendered().diagnostics().stream().anyMatch(diagnostic ->
-                diagnostic.code().equals("RENDER_LIMIT") || diagnostic.code().equals("RENDER_UNAVAILABLE"));
+                diagnostic.limited() || diagnostic.unavailable());
+        var assessment = SqlAssessmentPolicy.templateSample(source, bound.valuesComplete());
+        var feasibility = SqlAssessmentPolicy.feasibility(limited ? SqlSample.Feasibility.UNKNOWN : SqlSample.Feasibility.UNVERIFIED,
+                assessment);
         return new SqlSample(source, Optional.empty(), bound.rendered(), bindings,
-                sources && !limited ? SqlSample.Feasibility.UNVERIFIED : SqlSample.Feasibility.UNKNOWN,
-                new SqlAssessment(sources, source.assessment().textComplete(), bound.valuesComplete(), Optional.empty()),
+                feasibility, assessment,
                 new ArrayList<>(issues), Optional.empty(), Optional.empty(), source.definition());
     }
 
     private static SqlSample template(SqlTemplateResult source, SqlNodeRenderer.RenderedSql rendered) {
-        boolean sources = source.assessment().sourcesComplete();
         var issues = new LinkedHashSet<String>();
         source.diagnostics().forEach(diagnostic -> issues.add(diagnostic.code() + ": " + diagnostic.message()));
         rendered.diagnostics().forEach(diagnostic -> issues.add(diagnostic.code() + ": " + diagnostic.message()));
+        var assessment = SqlAssessmentPolicy.templateSample(source, rendered.complete());
         return new SqlSample(source, Optional.empty(), rendered, List.of(),
-                sources ? SqlSample.Feasibility.UNVERIFIED : SqlSample.Feasibility.UNKNOWN,
-                new SqlAssessment(sources, source.assessment().textComplete(), rendered.complete(), Optional.empty()),
+                SqlAssessmentPolicy.feasibility(SqlSample.Feasibility.UNVERIFIED, assessment), assessment,
                 new ArrayList<>(issues), Optional.empty(), Optional.empty());
     }
 
-    private static List<SqlSample> render(SqlExtraction source) {
+    private static List<SqlSample> render(SqlExtraction source, Optional<SqlEvaluationContext> context) {
         List<SqlSample> samples = new ArrayList<>();
         for (var statement : source.statements()) {
+            context.ifPresent(SqlEvaluationContext::check);
             if (statement.templateInference().isPresent()) {
-                for (var model : statement.templateInference().get().models()) samples.add(templateSample(source, statement, model));
+                for (var model : statement.templateInference().get().models()) {
+                    context.ifPresent(SqlEvaluationContext::check);
+                    samples.add(templateSample(source, statement, model));
+                }
                 continue;
             }
             if (statement.rawSql().variants().isEmpty()) {
                 samples.add(sample(source, statement, Optional.empty(), Optional.empty(), Map.of(),
                         unknownBindings(statement, "SQL source is unavailable"), SqlSample.Feasibility.UNKNOWN,
-                        List.of("SQL source is unavailable")));
+                        List.of("SQL source is unavailable"), context));
             }
             for (var variant : statement.rawSql().variants()) {
+                context.ifPresent(SqlEvaluationContext::check);
                 var joint = variant.jointInference();
                 if (joint.isPresent() && joint.get().status() == JointSqlInferenceResult.Status.UNSATISFIABLE) continue;
                 if (joint.isEmpty() || joint.get().combinations().isEmpty()) {
                     String reason = joint.isEmpty() ? "Joint path inference was not requested" : "No joint parameter combination is available";
                     samples.add(sample(source, statement, Optional.of(variant), Optional.empty(), Map.of(),
                             unknownBindings(statement, reason), joint.isEmpty() ? SqlSample.Feasibility.UNVERIFIED : SqlSample.Feasibility.UNKNOWN,
-                            List.of(reason)));
+                            List.of(reason), context));
                     continue;
                 }
                 // 不将独立参数的 possibleValues 再组合，SQL 槽位和绑定值只取自同一个 Combination。
-                for (var combination : joint.get().combinations()) {
-                    if (combination.status() == JointSqlInferenceResult.Status.UNSATISFIABLE) continue;
+                for (var snapshot : variant.bindingSnapshots()) {
+                    context.ifPresent(SqlEvaluationContext::check);
+                    var combination = snapshot.combination().orElseThrow();
                     Map<String, Object> parameters = new LinkedHashMap<>();
                     combination.parameters().forEach((name, value) -> parameters.put(name,
                             value.value() instanceof SqlValue.Known known
                                     ? known.value() instanceof String ? known.value() : new SqlValue.Unknown("SQL slot is not a string: " + name)
                                     : value.value()));
                     var issues = new ArrayList<>(combination.issues());
-                    if (combination.bindings().size() != statement.bindings().size()) issues.add("Joint binding snapshot size differs from its source");
-                    var bindings = variant.bindingSnapshots().stream().filter(snapshot -> snapshot.combination().filter(combination::equals).isPresent())
-                            .findFirst().map(RawSql.BindingSnapshot::bindings)
-                            .orElseGet(() -> SqlBindingSnapshots.unknown(statement.bindings(), "Joint binding snapshot is unavailable"));
-                    samples.add(sample(source, statement, Optional.of(variant), Optional.of(combination), parameters, bindings,
+                    samples.add(sample(source, statement, Optional.of(variant), Optional.of(combination), parameters, snapshot.bindings(),
                             combination.status() == JointSqlInferenceResult.Status.SATISFIABLE
-                                    ? SqlSample.Feasibility.SATISFIABLE : SqlSample.Feasibility.UNKNOWN, issues));
+                                    ? SqlSample.Feasibility.SATISFIABLE : SqlSample.Feasibility.UNKNOWN, issues, context));
                 }
             }
         }
@@ -116,17 +135,11 @@ public final class SqlSampleRenderer {
         issues.addAll(model.issues()); model.combination().ifPresent(value -> issues.addAll(value.issues()));
         rendered.diagnostics().forEach(diagnostic -> issues.add(diagnostic.code() + ": " + diagnostic.message()));
         var bindings = model.bindingSnapshot(statement.definition().orElseThrow().location());
-        boolean sources = source.issues().isEmpty() && statement.sourcesComplete();
-        boolean values = model.bound().valuesComplete() && model.bindings().stream().allMatch(binding -> binding.inference().complete())
-                && model.combination().map(value -> value.parameters().values()
-                .stream().allMatch(InferredParameterValue::complete)).orElse(saved.parameters().isEmpty());
+        var assessment = SqlAssessmentPolicy.modelSample(source, statement, model);
         var feasibility = model.combination().map(value -> value.status() == JointSqlInferenceResult.Status.SATISFIABLE
                 ? SqlSample.Feasibility.SATISFIABLE : SqlSample.Feasibility.UNKNOWN)
                 .orElse(saved.jointInference().isPresent() ? SqlSample.Feasibility.UNKNOWN : SqlSample.Feasibility.UNVERIFIED);
-        if (!sources || !statement.templateComplete() || feasibility == SqlSample.Feasibility.SATISFIABLE && !values)
-            feasibility = SqlSample.Feasibility.UNKNOWN;
-        var assessment = new SqlAssessment(sources, statement.templateComplete(), values,
-                saved.jointInference().map(JointSqlInferenceResult::coverageComplete));
+        feasibility = SqlAssessmentPolicy.feasibility(feasibility, assessment);
         return new SqlSample(source, statement.batchEntry(), rendered, bindings, feasibility, assessment,
                 new ArrayList<>(issues), model.rawSql(), model.combination(), statement.definition());
     }
@@ -134,28 +147,78 @@ public final class SqlSampleRenderer {
     private static SqlSample sample(SqlExtraction source, SqlExtraction.Statement statement,
                                     Optional<RawSql.Variant> variant, Optional<JointSqlInferenceResult.Combination> combination,
                                     Map<String, Object> parameters, List<SqlSample.Binding> bindings,
-                                    SqlSample.Feasibility feasibility, List<String> localIssues) {
-        var rendered = SqlNodeRenderer.render(variant.map(RawSql.Variant::template).orElse(statement.template()), parameters);
+                                    SqlSample.Feasibility feasibility, List<String> localIssues, Optional<SqlEvaluationContext> context) {
+        var rendered = variant.map(value -> project(value, parameters, context, statement.template())).orElseGet(() -> context
+                .map(execution -> SqlNodeRenderer.render(statement.template(), parameters, SqlExpressionEvaluator.simple(), execution))
+                .orElseGet(() -> SqlNodeRenderer.render(statement.template(), parameters)));
         var issues = new LinkedHashSet<>(source.issues());
         issues.addAll(statement.issues()); issues.addAll(statement.rawSql().issues()); issues.addAll(localIssues);
         variant.flatMap(RawSql.Variant::jointInference).ifPresent(joint -> issues.addAll(joint.issues()));
         rendered.diagnostics().forEach(diagnostic -> issues.add(diagnostic.code() + ": " + diagnostic.message()));
-        boolean values = rendered.complete() && bindings.stream().allMatch(binding ->
-                binding.keyValue() instanceof SqlValue.Known && binding.value() instanceof SqlValue.Known)
-                && combination.map(value -> value.bindings().size() == statement.bindings().size()
-                    && value.parameters().values().stream().allMatch(InferredParameterValue::complete)
-                    && value.bindings().stream().allMatch(binding -> binding.keyValue().complete() && binding.value().complete())).orElse(true);
-        boolean sources = source.issues().isEmpty() && statement.sourcesComplete();
-        var assessment = new SqlAssessment(sources, statement.rawSql().complete(), values,
-                variant.flatMap(RawSql.Variant::jointInference).map(JointSqlInferenceResult::coverageComplete));
-        if (!sources || !statement.rawSql().complete()
-                || feasibility == SqlSample.Feasibility.SATISFIABLE && (!assessment.textComplete() || !values))
-            feasibility = SqlSample.Feasibility.UNKNOWN;
+        var assessment = SqlAssessmentPolicy.rawSample(source, statement, variant, rendered, bindings, combination);
+        feasibility = SqlAssessmentPolicy.feasibility(feasibility, assessment);
         return new SqlSample(source, statement.batchEntry(), rendered, bindings, feasibility, assessment,
                 new ArrayList<>(issues), variant, combination);
     }
 
     private static List<SqlSample.Binding> unknownBindings(SqlExtraction.Statement statement, String reason) {
         return SqlBindingSnapshots.unknown(statement.bindings(), reason);
+    }
+
+    /** 已保存 SQL 槽位是转换后的字符串，直接按位置投影，不重新解释表达式或启动另一套默认预算。 */
+    private static SqlNodeRenderer.RenderedSql project(RawSql.Variant variant, Map<String, Object> parameters,
+                                                       Optional<SqlEvaluationContext> context, SqlNode fallback) {
+        var projection = new Projection(context);
+        try {
+            int start = 0;
+            for (var slot : variant.placeholders()) {
+                projection.literal(variant.text().substring(start, slot.start()));
+                Object value = parameters.get(slot.name());
+                if (value instanceof String text) projection.literal(text);
+                else projection.unknown(slot.name(), value);
+                start = slot.end();
+            }
+            projection.literal(variant.text().substring(start));
+            SqlNode residual = projection.complete ? new StaticTextSqlNode(projection.text.toString()) : new MixedSqlNode(projection.parts);
+            return new SqlNodeRenderer.RenderedSql(projection.complete ? Optional.of(projection.text.toString()) : Optional.empty(),
+                    residual, parameters, List.copyOf(projection.diagnostics));
+        } catch (ProjectionLimit limit) {
+            context.ifPresent(execution -> execution.limit(limit.getMessage()));
+            return new SqlNodeRenderer.RenderedSql(Optional.empty(), fallback, parameters,
+                    List.of(new SqlDiagnostic("RENDER_LIMIT", limit.getMessage(), SqlDiagnostic.Effect.LIMIT)));
+        }
+    }
+
+    private static final class Projection {
+        final Optional<SqlEvaluationContext> context;
+        final StringBuilder text = new StringBuilder();
+        final List<SqlNode> parts = new ArrayList<>();
+        final Set<SqlDiagnostic> diagnostics = new LinkedHashSet<>();
+        int steps;
+        boolean complete = true;
+        Projection(Optional<SqlEvaluationContext> context) { this.context = context; }
+        void step() {
+            context.ifPresent(execution -> {
+                execution.check();
+                if (++steps > execution.renderBudgets().steps()) throw new ProjectionLimit("SQL sample projection work budget exceeded");
+            });
+        }
+        void literal(String value) {
+            step();
+            long length = (long) text.length() + value.length();
+            if (length > Integer.MAX_VALUE || context.map(execution -> length > execution.renderBudgets().length()).orElse(false))
+                throw new ProjectionLimit("SQL sample projection text length budget exceeded");
+            text.append(value);
+            if (!value.isEmpty()) parts.add(new StaticTextSqlNode(value));
+        }
+        void unknown(String name, Object value) {
+            step(); complete = false; parts.add(ValueSqlNode.raw(name, "null"));
+            String reason = value instanceof SqlValue.Unknown unknown ? unknown.reason() : "Saved SQL slot is unavailable";
+            diagnostics.add(new SqlDiagnostic("UNKNOWN_VALUE", name + ": " + reason));
+        }
+    }
+
+    private static final class ProjectionLimit extends RuntimeException {
+        ProjectionLimit(String message) { super(message, null, false, false); }
     }
 }

@@ -18,7 +18,7 @@ public record MixedSqlNode(List<SqlNode> contents, String separator) implements 
 
     @Override
     public boolean isDynamic() {
-        return contents.stream().anyMatch(SqlNode::isDynamic);
+        return SqlNodeGraphs.isDynamic(this);
     }
 
     @Override

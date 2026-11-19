@@ -59,14 +59,12 @@ public record SqlTemplateResult(String moduleId, SourceLocation location, SqlNod
     }
 
     public SqlAssessment assessment() {
-        // 渲染预算影响执行终态和值快照，不否定已保存的来源和模板结构。
-        boolean sources = definition.map(SqlDefinition::complete).orElse(true) && diagnostics.stream()
-                .noneMatch(diagnostic -> diagnostic.incomplete() && !diagnostic.code().equals("SQL_RENDER_LIMIT"));
-        boolean values = definition.isPresent() ? bound.map(BoundSql::valuesComplete).orElse(false)
-                : rendered.map(RenderedSql::complete).orElse(false);
-        return new SqlAssessment(sources, sources, values, Optional.empty());
+        return SqlAssessmentPolicy.template(this);
     }
 
     /** 显式参数仅用于此模板的样例，不影响原始结果或其恢复状态。 */
     public SqlSample sample(Map<String, ?> parameters) { return SqlSampleRenderer.render(this, parameters); }
+    public SqlSample sample(Map<String, ?> parameters, org.u80dc.jsqlint.core.node.SqlEvaluationContext context) {
+        return SqlSampleRenderer.render(this, parameters, context);
+    }
 }

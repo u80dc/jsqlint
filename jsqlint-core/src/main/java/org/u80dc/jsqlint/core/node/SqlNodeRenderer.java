@@ -1,5 +1,6 @@
 package org.u80dc.jsqlint.core.node;
 
+import org.u80dc.jsqlint.core.ReplayBudgets;
 import java.lang.reflect.Array;
 import java.util.*;
 import java.util.function.Function;
@@ -23,11 +24,27 @@ public final class SqlNodeRenderer {
     }
 
     public static RenderedSql render(SqlNode node, Map<String, ?> parameters, SqlExpressionEvaluator evaluator, Runnable checkpoint) {
+        return render(node, parameters, evaluator, SqlEvaluationContext.defaults(checkpoint, ignored -> {}));
+    }
+
+    public static RenderedSql render(SqlNode node, Map<String, ?> parameters, SqlExpressionEvaluator evaluator,
+                                     ReplayBudgets budgets, Runnable checkpoint) {
+        return render(node, parameters, evaluator, new SqlEvaluationContext(budgets, checkpoint));
+    }
+
+    public static RenderedSql render(SqlNode node, Map<String, ?> parameters, SqlExpressionEvaluator evaluator,
+                                     SqlEvaluationContext execution) {
         Objects.requireNonNull(node, "node");
-        Context context = new Context(parameters, evaluator, false, SqlNodeRenderer::inputOrigin, new RenderBudget(checkpoint));
-        Fragment fragment = renderFragment(node, context);
-        return new RenderedSql(fragment.complete ? Optional.of(flatText(fragment.node)) : Optional.empty(),
-                fragment.node, context.values, List.copyOf(context.diagnostics));
+        var diagnostics = new LinkedHashSet<SqlDiagnostic>();
+        execution = Objects.requireNonNull(execution).reportingTo(message -> diagnostics.add(new SqlDiagnostic("RENDER_LIMIT", message, SqlDiagnostic.Effect.LIMIT)));
+        Context context = new Context(parameters, evaluator, false, SqlNodeRenderer::inputOrigin,
+                new RenderBudget(execution));
+        return execution.evaluate(() -> {
+            Fragment fragment = renderFragment(node, context);
+            context.diagnostics.addAll(diagnostics);
+            return new RenderedSql(fragment.complete ? Optional.of(((StaticTextSqlNode) fragment.node).text()) : Optional.empty(),
+                    fragment.node, context.values, List.copyOf(context.diagnostics));
+        });
     }
 
     /**
@@ -46,18 +63,49 @@ public final class SqlNodeRenderer {
     /** 适配后的输入引用由调用方关联到通用来源；局部 bind/foreach 来源由渲染器记录。 */
     public static BoundSql renderBound(SqlNode node, Map<String, ?> parameters, SqlExpressionEvaluator evaluator,
                                       Function<SqlExpressionEvaluator.Reference, SqlValueOrigin> inputs, Runnable checkpoint) {
+        return renderBound(node, parameters, evaluator, inputs, SqlEvaluationContext.defaults(checkpoint, ignored -> {}));
+    }
+
+    public static BoundSql renderBound(SqlNode node, Map<String, ?> parameters, SqlExpressionEvaluator evaluator,
+                                      ReplayBudgets budgets, Runnable checkpoint) {
+        return renderBound(node, parameters, evaluator, SqlNodeRenderer::inputOrigin, new SqlEvaluationContext(budgets, checkpoint));
+    }
+
+    public static BoundSql renderBound(SqlNode node, Map<String, ?> parameters, SqlExpressionEvaluator evaluator,
+                                      Function<SqlExpressionEvaluator.Reference, SqlValueOrigin> inputs,
+                                      ReplayBudgets budgets, Runnable checkpoint) {
+        return renderBound(node, parameters, evaluator, inputs, new SqlEvaluationContext(budgets, checkpoint));
+    }
+
+    public static BoundSql renderBound(SqlNode node, Map<String, ?> parameters, SqlExpressionEvaluator evaluator,
+                                      SqlEvaluationContext execution) {
+        return renderBound(node, parameters, evaluator, SqlNodeRenderer::inputOrigin, execution);
+    }
+
+    public static BoundSql renderBound(SqlNode node, Map<String, ?> parameters, SqlExpressionEvaluator evaluator,
+                                      Function<SqlExpressionEvaluator.Reference, SqlValueOrigin> inputs,
+                                      SqlEvaluationContext execution) {
         Objects.requireNonNull(node);
-        Context context = new Context(parameters, evaluator, true, inputs, new RenderBudget(checkpoint));
-        Fragment fragment = renderFragment(node, context);
-        return new BoundSql(new RenderedSql(fragment.complete ? Optional.of(flatText(fragment.node)) : Optional.empty(),
-                node, new LinkedHashMap<>(context.initial), List.copyOf(context.diagnostics),
-                RenderedSql.RecoveryMode.BOUND_REPLAY), context.bindings);
+        var diagnostics = new LinkedHashSet<SqlDiagnostic>();
+        execution = Objects.requireNonNull(execution).reportingTo(message -> diagnostics.add(new SqlDiagnostic("RENDER_LIMIT", message, SqlDiagnostic.Effect.LIMIT)));
+        Context context = new Context(parameters, evaluator, true, inputs, new RenderBudget(execution));
+        return execution.evaluate(() -> {
+            Fragment fragment = renderFragment(node, context);
+            context.diagnostics.addAll(diagnostics);
+            return new BoundSql(new RenderedSql(fragment.complete ? Optional.of(((StaticTextSqlNode) fragment.node).text()) : Optional.empty(),
+                    node, new LinkedHashMap<>(context.initial), List.copyOf(context.diagnostics),
+                    RenderedSql.RecoveryMode.BOUND_REPLAY), context.bindings);
+        });
     }
 
     private static Fragment renderFragment(SqlNode node, Context context) {
-        try { return visit(node, context); }
+        try {
+            Fragment fragment = visit(node, context);
+            return fragment.complete ? literal(flatText(fragment.node, context)) : fragment;
+        }
         catch (RenderLimit limit) {
-            context.diagnostics.add(new SqlDiagnostic("RENDER_LIMIT", "SQL template rendering budget exceeded"));
+            if (!limit.reported) context.budget.evaluation.limit(limit.getMessage());
+            context.diagnostics.add(new SqlDiagnostic("RENDER_LIMIT", limit.getMessage(), SqlDiagnostic.Effect.LIMIT));
             context.bindings.clear(); context.origins.clear(); context.values.clear(); context.values.putAll(context.initial);
             return new Fragment(node, false);
         }
@@ -98,7 +146,8 @@ public final class SqlNodeRenderer {
     }
 
     private static Fragment visit(SqlNode node, Context context) {
-        context.checkpoint();
+        context.budget.enter();
+        try {
         return switch (node) {
             case StaticTextSqlNode text -> new Fragment(text, true);
             case TextSqlNode text -> text(text, context);
@@ -117,7 +166,7 @@ public final class SqlNodeRenderer {
                 var evaluated = context.evaluated(bind.expression(), false);
                 SqlValue value = evaluated.value();
                 if (value instanceof SqlValue.Known known) {
-                    context.values.put(bind.name(), known.value());
+                    context.values.put(bind.name(), evaluated.activeValue());
                     var inputs = evaluated.origin() instanceof SqlValueOrigin.Expression expression
                             && expression.expression().equals(bind.expression()) ? expression.inputs() : List.of(evaluated.origin());
                     context.origins.put(bind.name(), new SqlValueOrigin.Expression(bind.expression(), inputs));
@@ -131,6 +180,7 @@ public final class SqlNodeRenderer {
             case TrimSqlNode trim -> wrapped(node, trim.contents(), context, trim.prefix(), trim.suffix(),
                     false, false, trim.prefixOverrides(), trim.suffixOverrides());
         };
+        } finally { context.budget.exit(); }
     }
 
     private static Fragment mixed(MixedSqlNode mixed, Context context) {
@@ -145,7 +195,7 @@ public final class SqlNodeRenderer {
                 return new Fragment(new MixedSqlNode(result, mixed.separator()), false);
             }
         }
-        return literal(flatText(new MixedSqlNode(result, mixed.separator())));
+        return literal(flatText(new MixedSqlNode(result, mixed.separator()), context));
     }
 
     private static Fragment selected(SqlNode owner, SqlNode contents, Context parent) {
@@ -157,6 +207,7 @@ public final class SqlNodeRenderer {
 
     private static Fragment choose(ChooseSqlNode choose, Context context) {
         for (IfSqlNode branch : choose.whenContents()) {
+            context.checkpoint();
             SqlValue value = context.evaluate(branch.test());
             if (value.truth() == SqlValue.Truth.UNKNOWN) {
                 return unresolved(choose, context, branch.test(), value);
@@ -178,7 +229,7 @@ public final class SqlNodeRenderer {
         if (!fragment.complete) {
             return new Fragment(owner, false);
         }
-        String body = flatText(fragment.node);
+        String body = flatText(fragment.node, context);
         if (body.isBlank()) {
             return literal("");
         }
@@ -229,7 +280,7 @@ public final class SqlNodeRenderer {
         if (collection instanceof SqlValue.Unknown) {
             return unresolved(foreach, context, foreach.collection(), collection);
         }
-        Object value = ((SqlValue.Known) collection).value();
+        Object value = evaluated.activeValue();
         if (value == null && foreach.nullable()) {
             return literal("");
         }
@@ -255,6 +306,8 @@ public final class SqlNodeRenderer {
                     new SqlValue.Unknown("foreach requires a non-null collection, array or map"));
         }
         List<String> sqls = new ArrayList<>();
+        long outputLength = (long) foreach.open().length() + foreach.close().length();
+        context.budget.length(outputLength);
         Context loop = context.copy();
         for (var item : items) {
             Context child = loop.copy();
@@ -272,8 +325,10 @@ public final class SqlNodeRenderer {
                 context.absorb(loop, false, false);
                 return new Fragment(foreach, false);
             }
-            String sql = flatText(fragment.node);
+            String sql = flatText(fragment.node, context);
             if (!foreach.skipBlank() || !sql.isBlank()) {
+                outputLength += sql.length() + (sqls.isEmpty() ? 0L : foreach.separator().length());
+                context.budget.length(outputLength);
                 sqls.add(sql);
             }
         }
@@ -283,6 +338,7 @@ public final class SqlNodeRenderer {
     }
 
     private static Fragment text(TextSqlNode text, Context context) {
+        context.budget.length(text.text().length());
         SqlNode parsed;
         try {
             parsed = SqlNodeBuilder.templateText(text.text());
@@ -332,21 +388,49 @@ public final class SqlNodeRenderer {
         return new Fragment(new StaticTextSqlNode(sql), true);
     }
 
-    private static String flatText(SqlNode node) {
-        return switch (node) {
-            case StaticTextSqlNode text -> text.text();
-            case MixedSqlNode mixed -> {
-                yield String.join(mixed.separator(), mixed.contents().stream().map(SqlNodeRenderer::flatText)
-                        .filter(text -> mixed.separator().isEmpty() || !text.isEmpty()).toList());
-            }
-            default -> throw new IllegalStateException("A completed result must contain only literal text");
-        };
+    private static String flatText(SqlNode node, Context context) {
+        Deque<TextFrame> pending = new ArrayDeque<>(); pending.addLast(new TextFrame(node));
+        int steps = 0;
+        while (!pending.isEmpty()) {
+            context.budget.evaluation.check();
+            if (++steps > context.budget.evaluation.renderBudgets().steps())
+                throw new RenderLimit("SQL template text expansion work budget exceeded");
+            TextFrame frame = pending.peekLast();
+            String complete;
+            if (frame.node instanceof StaticTextSqlNode text) {
+                complete = text.text(); context.budget.length(complete.length());
+            } else if (frame.node instanceof MixedSqlNode mixed) {
+                if (frame.next < mixed.contents().size()) {
+                    pending.addLast(new TextFrame(mixed.contents().get(frame.next++)));
+                    continue;
+                }
+                complete = frame.text.toString();
+            } else throw new IllegalStateException("A completed result must contain only literal text");
+            pending.removeLast();
+            if (pending.isEmpty()) return complete;
+            TextFrame parent = pending.peekLast();
+            String separator = ((MixedSqlNode) parent.node).separator();
+            if (!separator.isEmpty() && complete.isEmpty()) continue;
+            long length = (long) parent.text.length() + complete.length() + (parent.parts == 0 ? 0L : separator.length());
+            context.budget.length(length);
+            if (parent.parts++ > 0) parent.text.append(separator);
+            parent.text.append(complete);
+        }
+        throw new IllegalStateException("Missing SQL text");
+    }
+
+    private static final class TextFrame {
+        final SqlNode node;
+        final StringBuilder text = new StringBuilder();
+        int next;
+        int parts;
+        TextFrame(SqlNode node) { this.node = node; }
     }
 
     private record Fragment(SqlNode node, boolean complete) {
     }
 
-    private record Evaluated(SqlValue value, SqlValueOrigin origin) {}
+    private record Evaluated(SqlValue value, SqlValueOrigin origin, Object activeValue) {}
 
     private static SqlValueOrigin inputOrigin(SqlExpressionEvaluator.Reference reference) {
         return accessed(new SqlValueOrigin.Input(reference.name()), reference.path());
@@ -394,7 +478,8 @@ public final class SqlNodeRenderer {
         private final LinkedHashMap<String, Object> values = new LinkedHashMap<>();
         private final LinkedHashSet<SqlDiagnostic> diagnostics = new LinkedHashSet<>();
         private final SqlExpressionEvaluator evaluator;
-        private final List<BoundParameter> bindings = new ArrayList<>();
+        private final List<BoundParameter> bindings;
+        private final int bindingStart;
         private final Map<String, SqlValueOrigin> origins = new LinkedHashMap<>();
         private final Function<SqlExpressionEvaluator.Reference, SqlValueOrigin> inputs;
         private final boolean parameterized;
@@ -403,22 +488,31 @@ public final class SqlNodeRenderer {
 
         private Context(Map<String, ?> values, SqlExpressionEvaluator evaluator, boolean parameterized,
                         Function<SqlExpressionEvaluator.Reference, SqlValueOrigin> inputs, RenderBudget budget) {
+            this(values, evaluator, parameterized, inputs, budget, new ArrayList<>());
+        }
+
+        private Context(Map<String, ?> values, SqlExpressionEvaluator evaluator, boolean parameterized,
+                        Function<SqlExpressionEvaluator.Reference, SqlValueOrigin> inputs, RenderBudget budget,
+                        List<BoundParameter> bindings) {
             this.values.putAll(Objects.requireNonNull(values, "parameters"));
             this.evaluator = Objects.requireNonNull(evaluator, "evaluator");
             this.initial = values; this.parameterized = parameterized; this.budget = budget;
             this.inputs = Objects.requireNonNull(inputs);
+            this.bindings = bindings; this.bindingStart = bindings.size();
         }
 
         private Context copy() {
-            var copy = new Context(initial, evaluator, parameterized, inputs, budget);
-            copy.values.clear(); copy.values.putAll(values); copy.bindings.addAll(bindings);
+            var copy = new Context(initial, evaluator, parameterized, inputs, budget, bindings);
+            copy.values.clear(); copy.values.putAll(values);
             copy.origins.putAll(origins);
             return copy;
         }
 
         private void absorb(Context child, boolean commitValues, boolean commitBindings) {
             diagnostics.addAll(child.diagnostics);
-            if (commitBindings) { bindings.clear(); bindings.addAll(child.bindings); }
+            // Child scopes append to one buffer. Failed scopes remove only their additions,
+            // including completed earlier iterations of an unfinished foreach.
+            if (!commitBindings) bindings.subList(child.bindingStart, bindings.size()).clear();
             if (commitValues) {
                 values.clear();
                 values.putAll(child.values);
@@ -440,35 +534,65 @@ public final class SqlNodeRenderer {
                     @Override public Object get(Object key) { return values.containsKey(key) ? values.get(key) : initial.get(key); }
                 };
                 var environment = Collections.unmodifiableMap(overlay);
-                if (!parameterized) {
-                    var value = Objects.requireNonNull(parameter ? evaluator.evaluateParameter(expression, environment)
-                            : evaluator.evaluate(expression, environment), "Evaluator returned null");
-                    return new Evaluated(value, new SqlValueOrigin.Literal(value));
+                var evaluation = evaluator.evaluateWithReferences(expression, environment, parameter, budget.evaluation)
+                        .withActivity(budget.evaluation, environment);
+                if (evaluation.limit().isPresent()) throw new RenderLimit(evaluation.limit().get(), true);
+                var references = new ArrayList<SqlValueOrigin>();
+                int steps = 0;
+                for (var reference : evaluation.references()) {
+                    budget.evaluation.check();
+                    if (reference.path().size() > Math.min(128, budget.evaluation.replayBudgets().depth()))
+                        throw new RenderLimit("Expression origin path depth budget exceeded");
+                    if (++steps > budget.evaluation.replayBudgets().steps())
+                        throw new RenderLimit("Expression origin work budget exceeded");
+                    for (Object ignored : reference.path()) {
+                        budget.evaluation.check();
+                        if (++steps > budget.evaluation.replayBudgets().steps())
+                            throw new RenderLimit("Expression origin work budget exceeded");
+                    }
+                    references.add(origins.containsKey(reference.name())
+                            ? accessed(origins.get(reference.name()), reference.path())
+                            : Objects.requireNonNull(inputs.apply(reference), "Input origin is unavailable"));
                 }
-                var evaluation = evaluator.evaluateWithReferences(expression, environment, parameter);
-                var references = evaluation.references().stream().map(reference -> origins.containsKey(reference.name())
-                        ? accessed(origins.get(reference.name()), reference.path())
-                        : Objects.requireNonNull(inputs.apply(reference), "Input origin is unavailable")).toList();
                 SqlValueOrigin origin = references.isEmpty() ? new SqlValueOrigin.Literal(evaluation.value())
                         : evaluation.directReference() ? references.getFirst() : new SqlValueOrigin.Expression(expression, references);
-                return new Evaluated(evaluation.value(), origin);
+                Object activeValue = evaluation.activity().isPresent() ? evaluation.activity().get().value(budget.evaluation) : null;
+                return new Evaluated(evaluation.value(), origin, activeValue);
             } catch (RuntimeException e) {
+                SqlEvaluationContext.rethrowControl(e);
+                if (e instanceof RenderLimit) throw e;
                 var value = new SqlValue.Unknown("Evaluation failed: " + e.getMessage());
-                return new Evaluated(value, new SqlValueOrigin.Literal(value));
+                return new Evaluated(value, new SqlValueOrigin.Literal(value), null);
             }
         }
         private void checkpoint() { if (budget != null) budget.checkpoint(); }
     }
     private static final class RenderBudget {
-        private final Runnable checkpoint;
+        private final SqlEvaluationContext evaluation;
         private int steps;
-        private RenderBudget(Runnable checkpoint) { this.checkpoint = Objects.requireNonNull(checkpoint); }
+        private int depth;
+        private RenderBudget(SqlEvaluationContext evaluation) { this.evaluation = Objects.requireNonNull(evaluation); }
+        void enter() {
+            checkpoint();
+            if (depth >= Math.min(128, evaluation.renderBudgets().depth()))
+                throw new RenderLimit("SQL template rendering depth budget exceeded");
+            depth++;
+        }
+        void exit() { depth--; }
+        void length(long length) {
+            evaluation.check();
+            if (length > evaluation.renderBudgets().length())
+                throw new RenderLimit("SQL template rendering text length budget exceeded");
+        }
         void checkpoint() {
-            checkpoint.run();
-            if (++steps > 10000) throw new RenderLimit();
+            evaluation.check();
+            if (++steps > evaluation.renderBudgets().steps())
+                throw new RenderLimit("SQL template rendering work budget exceeded");
         }
     }
     private static final class RenderLimit extends RuntimeException {
-        RenderLimit() { super("Rendering limit", null, false, false); }
+        private final boolean reported;
+        RenderLimit(String message) { this(message, false); }
+        RenderLimit(String message, boolean reported) { super(message, null, false, false); this.reported = reported; }
     }
 }

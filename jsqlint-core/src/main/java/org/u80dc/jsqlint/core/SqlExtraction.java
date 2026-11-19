@@ -25,12 +25,7 @@ public record SqlExtraction(String moduleId, SqlCallSite callSite, List<SqlCallS
         return statements.stream().flatMap(statement -> statement.rawSql().variants().stream()).toList();
     }
     public SqlAssessment assessment() {
-        var coverage = statements.stream().map(statement -> statement.assessment().pathCoverageComplete()).toList();
-        return new SqlAssessment(issues.isEmpty() && statements.stream().allMatch(Statement::sourcesComplete),
-                !statements.isEmpty() && statements.stream().allMatch(statement -> statement.assessment().textComplete()),
-                statements.stream().allMatch(Statement::inferenceComplete),
-                coverage.isEmpty() || coverage.stream().anyMatch(Optional::isEmpty) ? Optional.empty()
-                        : Optional.of(coverage.stream().allMatch(value -> value.orElseThrow())));
+        return SqlAssessmentPolicy.extraction(this);
     }
     public record Statement(Optional<ValueTrace> sql, SqlNode template, List<Binding> bindings,
                             Optional<SourceLocation> batchEntry, List<String> issues, List<String> templateIssues, RawSql rawSql,
@@ -46,8 +41,7 @@ public record SqlExtraction(String moduleId, SqlCallSite callSite, List<SqlCallS
                 throw new IllegalArgumentException("The saved template must match its SQL definition");
             if (templateInference.isPresent()) {
                 var models = templateInference.get().models();
-                if (!bindings.equals(models.stream().flatMap(model -> model.bindings().stream()).distinct().toList()))
-                    throw new IllegalArgumentException("Statement bindings must preserve their template models");
+                SqlBindingSnapshots.validateModelBindings(bindings, models);
                 for (var model : models) {
                     if (model.bound().rendered().recoveryMode() == RenderedSql.RecoveryMode.BOUND_REPLAY
                             && !template.equals(model.bound().rendered().residual()))
@@ -55,7 +49,7 @@ public record SqlExtraction(String moduleId, SqlCallSite callSite, List<SqlCallS
                     if (model.rawSql().isPresent() && !rawSql.variants().contains(model.rawSql().get()))
                         throw new IllegalArgumentException("The statement must preserve each associated raw SQL model");
                 }
-            }
+            } else SqlBindingSnapshots.validateStatementBindings(bindings, rawSql);
         }
         public Statement(Optional<ValueTrace> sql, SqlNode template, List<Binding> bindings, Optional<SourceLocation> batchEntry,
                          List<String> issues, List<String> templateIssues, RawSql rawSql) {
@@ -91,17 +85,12 @@ public record SqlExtraction(String moduleId, SqlCallSite callSite, List<SqlCallS
         public boolean templateComplete() { return templateIssues.isEmpty(); }
         /** 参数重演单独判断；没有绑定值或拼接槽位时无需推断。 */
         public boolean inferenceComplete() {
-            if (templateInference.isPresent()) return templateInference.get().valuesComplete();
-            return bindings.stream().allMatch(binding -> binding.inference().complete())
-                    && rawSql.variants().stream().flatMap(variant -> variant.parameters().stream())
-                    .allMatch(ParameterValueInferenceResult::complete);
+            return SqlAssessmentPolicy.statementValues(this);
         }
         /** 主分析完整性由来源和 raw SQL 决定；模板为派生视图，样例重演另见 inferenceComplete。 */
         public boolean complete() { return sourcesComplete() && (definition.isPresent() ? templateComplete() : rawSql.complete()); }
         public SqlAssessment assessment() {
-            if (definition.isPresent()) return new SqlAssessment(sourcesComplete(), templateComplete(), inferenceComplete(),
-                    templateInference.flatMap(TemplateInferenceResult::jointInference).map(org.u80dc.jsqlint.core.parameter.JointSqlInferenceResult::coverageComplete));
-            return new SqlAssessment(sourcesComplete(), rawSql.complete(), inferenceComplete(), SqlAssessment.pathCoverage(rawSql.variants()));
+            return SqlAssessmentPolicy.statement(this);
         }
         public List<JointSqlInferenceResult> jointInferences() {
             if (templateInference.isPresent()) return templateInference.get().jointInference().stream().toList();

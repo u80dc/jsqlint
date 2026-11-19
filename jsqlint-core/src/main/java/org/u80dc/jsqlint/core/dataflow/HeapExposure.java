@@ -3,6 +3,7 @@ package org.u80dc.jsqlint.core.dataflow;
 import sootup.core.jimple.common.expr.AbstractInstanceInvokeExpr;
 import sootup.core.jimple.common.ref.*;
 import sootup.core.jimple.common.stmt.AbstractDefinitionStmt;
+import org.u80dc.jsqlint.core.semantics.JavaMethodEffects;
 import java.util.*;
 
 import static org.u80dc.jsqlint.core.dataflow.DataFlowAnalysis.*;
@@ -20,7 +21,8 @@ record HeapExposure(List<Root> roots, List<Store> stores, boolean externalCall, 
         boolean external = externalCall;
         int at = position + 1;
         var site = point.invocation(analysis.program());
-        if (collectCalls && site.isPresent() && analysis.resolution(site.get(), point.context()).hasExternalTargets()) {
+        if (collectCalls && site.isPresent() && analysis.resolution(site.get(), point.context()).hasExternalTargets()
+                && JavaMethodEffects.references(site.get().invocation()) != JavaMethodEffects.ReferenceEffect.READ_ONLY) {
             external = true;
             var arguments = new ArrayList<>(site.get().invocation().getArgs());
             if (site.get().invocation() instanceof AbstractInstanceInvokeExpr instance) arguments.add(instance.getBase());

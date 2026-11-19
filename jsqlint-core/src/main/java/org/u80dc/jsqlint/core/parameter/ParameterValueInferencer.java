@@ -4,6 +4,7 @@ import org.u80dc.jsqlint.core.dataflow.ValueTrace;
 import org.u80dc.jsqlint.core.ReplayBudgets;
 import org.u80dc.jsqlint.core.node.SqlValue;
 import org.u80dc.jsqlint.core.semantics.JavaValueOperations;
+import org.u80dc.jsqlint.core.semantics.JavaValueFacts;
 import org.u80dc.jsqlint.core.semantics.ValueEvaluationLimitException;
 import java.util.*;
 
@@ -117,6 +118,8 @@ public final class ParameterValueInferencer {
                 case LITERAL, NULL -> List.of(literal(node));
                 case ALTERNATIVES -> alternatives(node, depth);
                 case ARRAY_READ -> array(node, depth);
+                // 本地数组元素值还必须通过已分配长度和读取下标的正常路径检查。
+                case ARRAY_ACCESS_CHECK -> operations(node, depth);
                 case OPAQUE -> List.of(unknown(node, "Unmodeled parameter value: " + node.detail()));
                 default -> operations(node, depth);
             };
@@ -137,9 +140,18 @@ public final class ParameterValueInferencer {
             var key = new SampleKey(source, type, element);
             SqlValue value = samples.computeIfAbsent(key, ignored -> inputs.containsKey(source) ? inputs.get(source)
                     : Objects.requireNonNull(generator.generate(type, variableName(node))));
-            if (value instanceof SqlValue.Known known && known.value() instanceof String text && text.length() > budgets.length()) {
-                truncated = true;
-                return unknown(node, "Inferred value length limit exceeded");
+            if (value instanceof SqlValue.Known known) {
+                Object sample = known.value();
+                // 入口模型必须是合法的声明类型事实，不能由后续 CAST/coerce 掩盖错误模型。
+                Object assigned;
+                try { assigned = JavaValueFacts.assignment(sample, type); }
+                catch (IllegalArgumentException error) { return unknown(node, error.getMessage()); }
+                if (assigned != sample) value = new SqlValue.Known(assigned);
+                sample = assigned;
+                if (sample instanceof String text && text.length() > budgets.length()) {
+                    truncated = true;
+                    return unknown(node, "Inferred value length limit exceeded");
+                }
             }
             if (value instanceof SqlValue.Unknown unknown) issues.add(unknown.reason());
             return new Evaluation(value, node, List.of(new InitialValue(node.variable(), value, value instanceof SqlValue.Known)),
@@ -240,6 +252,11 @@ public final class ParameterValueInferencer {
                 SqlValue model = inputs.get(base.variable());
                 if (model instanceof SqlValue.Known array) {
                     Object arrayData = array.value();
+                    try { JavaValueFacts.assignment(arrayData, base.variable().type()); }
+                    catch (IllegalArgumentException error) {
+                        var invalid = unknown(input, error.getMessage());
+                        return new Evaluation(invalid.value(), invalid.node(), index.initials(), invalid.issues(), index.choices());
+                    }
                     if (arrayData == null) value = unknown(input, "Cannot read external array element from null array model");
                     else if (!arrayData.getClass().isArray()) value = unknown(input, "External array model is not an array");
                     else if (offset >= java.lang.reflect.Array.getLength(arrayData)) value = unknown(input, "External array index exceeds model length");

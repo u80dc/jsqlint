@@ -56,7 +56,11 @@ final class AnalysisSession {
     }
 
     private void diagnostic(String code, String message, boolean incomplete) {
-        var diagnostic = new AnalysisDiagnostic(code, stage, diagnosticLocation, incomplete, message);
+        diagnostic(code, message, incomplete, incomplete ? Set.of(SqlAssessment.Dimension.SOURCES, SqlAssessment.Dimension.TEXT) : Set.of());
+    }
+
+    private void diagnostic(String code, String message, boolean incomplete, Set<SqlAssessment.Dimension> dimensions) {
+        var diagnostic = new AnalysisDiagnostic(code, stage, diagnosticLocation, incomplete, message, dimensions);
         diagnostics.add(diagnostic);
         partial |= incomplete;
         notifyListener(listener -> listener.onDiagnostic(diagnostic));
@@ -65,6 +69,10 @@ final class AnalysisSession {
     /** 已跳过或截断的工作会影响终态；普通未知参数只保留符号值，不走此分支。 */
     void incomplete(String code, String message) {
         diagnostic(code, message, true);
+    }
+
+    private void incomplete(String code, String message, Set<SqlAssessment.Dimension> dimensions) {
+        diagnostic(code, message, true, dimensions);
     }
 
     private void notifyListener(Consumer<AnalysisListener> action) {
@@ -106,7 +114,7 @@ final class AnalysisSession {
                     diagnosticLocation = Optional.empty();
                     continue;
                 }
-                if (input instanceof SqlInput.Definition source) definition = Optional.of(source.definition());
+                if (input instanceof SqlInput.Definition source) definition = Optional.of(source.definition().withReplayBudgets(config.replayBudgets()));
                 template = switch (input) {
                     case SqlInput.Template source -> source.node();
                     case SqlInput.Definition source -> source.definition().template();
@@ -134,7 +142,16 @@ final class AnalysisSession {
             checkpoint();
             Pending item = legacy.item();
             diagnosticLocation = Optional.of(item.seed().location());
-            if (legacy.template().isEmpty()) {
+            Optional<SqlNode> projected;
+            try { projected = legacy.template(config.sqlRecoveryBudgets(), this::checkpoint); }
+            catch (Exception e) {
+                recover("SQL_COMPATIBILITY_PROJECTION", item.seed().location().toString(), e, true, Set.of(SqlAssessment.Dimension.TEXT));
+                notifySql(item, ValueSqlNode.raw("unresolvedSql"), render(item, ValueSqlNode.raw("unresolvedSql")));
+                diagnosticLocation = Optional.empty();
+                progress(stage);
+                return;
+            }
+            if (projected.isEmpty()) {
                 // 相同调用位置的其他 SQL 输入没有被完整提取规则覆盖，仍按原始 seed 恢复。
                 int diagnosticStart = diagnostics.size();
                 SqlNode template;
@@ -145,7 +162,7 @@ final class AnalysisSession {
                 }
                 publishTemplate(item, template, diagnosticStart);
             } else {
-                var template = legacy.template().orElseThrow();
+                var template = projected.orElseThrow();
                 notifySql(item, template, render(item, template));
             }
             progress(stage);
@@ -162,22 +179,22 @@ final class AnalysisSession {
         definition.ifPresent(source -> source.issues().forEach(issue -> incomplete("SQL_DEFINITION", issue)));
         var parameters = item.seed().parameters();
         SqlNodeRenderer.BoundSql bound = null;
-        if (definition.isPresent()) try { bound = definition.get().render(parameters, this::checkpoint); }
-        catch (Exception e) { recover("SQL_RENDERING", item.seed().location().toString(), e, false); }
+        if (definition.isPresent()) try { bound = definition.get().render(parameters, renderingContext()); }
+        catch (Exception e) { recover("SQL_RENDERING", item.seed().location().toString(), e, true, Set.of(SqlAssessment.Dimension.VALUES)); }
         SqlNodeRenderer.RenderedSql rendered;
         try {
             // 已截断的参数化渲染不再启动第二次预览遍历；旧事件仍收到未完成的结果。
             rendered = bound != null && hasRenderLimit(bound.rendered()) ? bound.rendered()
                     : SqlNodeRenderer.render(template, parameters,
-                        definition.map(SqlDefinition::evaluator).orElseGet(SqlExpressionEvaluator::simple), this::checkpoint);
+                        definition.map(SqlDefinition::evaluator).orElseGet(SqlExpressionEvaluator::simple), renderingContext());
         }
-        catch (Exception e) { recover("SQL_RENDERING", item.seed().location().toString(), e, false); rendered = null; }
+        catch (Exception e) { recover("SQL_RENDERING", item.seed().location().toString(), e, false, Set.of(SqlAssessment.Dimension.VALUES)); rendered = null; }
         var limits = new LinkedHashSet<String>();
-        if (bound != null) bound.rendered().diagnostics().stream().filter(diagnostic -> diagnostic.code().equals("RENDER_LIMIT"))
+        if (bound != null) bound.rendered().diagnostics().stream().filter(SqlDiagnostic::limited)
                 .forEach(diagnostic -> limits.add(diagnostic.message()));
-        if (rendered != null) rendered.diagnostics().stream().filter(diagnostic -> diagnostic.code().equals("RENDER_LIMIT"))
+        if (rendered != null) rendered.diagnostics().stream().filter(SqlDiagnostic::limited)
                 .forEach(diagnostic -> limits.add(diagnostic.message()));
-        limits.forEach(message -> incomplete("SQL_RENDER_LIMIT", message));
+        limits.forEach(message -> incomplete("SQL_RENDER_LIMIT", message, Set.of(SqlAssessment.Dimension.VALUES)));
         var result = new SqlTemplateResult(item.moduleId(), item.seed().location(), template,
                 Optional.ofNullable(rendered), diagnostics.subList(diagnosticStart, diagnostics.size()), definition, Optional.ofNullable(bound));
         sqlResults.add(result);
@@ -188,15 +205,19 @@ final class AnalysisSession {
 
     private SqlNodeRenderer.RenderedSql render(Pending item, SqlNode template) {
         try {
-            var rendered = SqlNodeRenderer.render(template, item.seed().parameters(), SqlExpressionEvaluator.simple(), this::checkpoint);
-            if (hasRenderLimit(rendered)) incomplete("SQL_RENDER_LIMIT", "SQL template rendering budget exceeded");
+            var rendered = SqlNodeRenderer.render(template, item.seed().parameters(), SqlExpressionEvaluator.simple(), renderingContext());
+            if (hasRenderLimit(rendered)) incomplete("SQL_RENDER_LIMIT", "SQL template rendering budget exceeded", Set.of(SqlAssessment.Dimension.VALUES));
             return rendered;
         }
-        catch (Exception e) { recover("SQL_RENDERING", item.seed().location().toString(), e, false); return null; }
+        catch (Exception e) { recover("SQL_RENDERING", item.seed().location().toString(), e, false, Set.of(SqlAssessment.Dimension.VALUES)); return null; }
     }
 
     private static boolean hasRenderLimit(SqlNodeRenderer.RenderedSql rendered) {
-        return rendered.diagnostics().stream().anyMatch(diagnostic -> diagnostic.code().equals("RENDER_LIMIT"));
+        return rendered.diagnostics().stream().anyMatch(SqlDiagnostic::limited);
+    }
+
+    private SqlEvaluationContext renderingContext() {
+        return new SqlEvaluationContext(config.replayBudgets(), config.sqlRenderBudgets(), this::checkpoint);
     }
 
     private void notifySql(Pending item, SqlNode template, SqlNodeRenderer.RenderedSql rendered) {
@@ -213,7 +234,7 @@ final class AnalysisSession {
         if (!uncovered.isEmpty()) {
             var reasons = uncovered.stream().flatMap(joint -> java.util.stream.Stream.concat(joint.issues().stream(),
                     joint.combinations().stream().flatMap(combination -> combination.issues().stream()))).distinct().toList();
-            incomplete("JOINT_ANALYSIS_INCOMPLETE", reasons.isEmpty() ? "Joint analysis did not cover all paths" : String.join("; ", reasons));
+            incomplete("JOINT_ANALYSIS_INCOMPLETE", reasons.isEmpty() ? "Joint analysis did not cover all paths" : String.join("; ", reasons), Set.of(SqlAssessment.Dimension.PATH_COVERAGE));
         }
         sqlLogger.extraction(extraction);
         notifyListener(listener -> listener.onSqlResult(extraction));
@@ -232,6 +253,10 @@ final class AnalysisSession {
     }
 
     private void recover(String code, String message, Exception error, boolean incomplete) {
+        recover(code, message, error, incomplete, Set.of(SqlAssessment.Dimension.SOURCES, SqlAssessment.Dimension.TEXT));
+    }
+
+    private void recover(String code, String message, Exception error, boolean incomplete, Set<SqlAssessment.Dimension> dimensions) {
         // 取消和监听器异常不是可恢复的局部错误，必须传播到统一入口处理终态。
         if (error instanceof Stop stop) throw stop;
         if (error instanceof ListenerFailure failure) throw failure;
@@ -240,7 +265,7 @@ final class AnalysisSession {
             throw new Stop(Status.CANCELLED);
         }
         LOG.warn("{}: {}", code, message, error);
-        diagnostic(code, message + ": " + error.getMessage(), incomplete);
+        diagnostic(code, message + ": " + error.getMessage(), incomplete, dimensions);
     }
 
     Status failure(Exception error) {

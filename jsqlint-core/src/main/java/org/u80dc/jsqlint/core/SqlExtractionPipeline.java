@@ -8,7 +8,6 @@ import org.u80dc.jsqlint.core.spi.*;
 import org.u80dc.jsqlint.core.template.SqlTemplateProjection;
 import org.u80dc.jsqlint.core.template.RawSqlBuilder;
 import java.util.*;
-import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
 /** 会话内的 SQL 提取与推断管线；结果、监听器和执行终态由会话管理。 @author u80dc */
@@ -16,11 +15,11 @@ final class SqlExtractionPipeline {
     private final DataFlowAnalysis flow;
     private final AnalyzerConfig config;
     private final Runnable checkpoint;
-    private final BiConsumer<String, String> incomplete;
+    private final AnalysisIssueReporter incomplete;
     private final AnalysisErrorHandler errors;
 
     SqlExtractionPipeline(DataFlowAnalysis flow, AnalyzerConfig config, Runnable checkpoint,
-                          BiConsumer<String, String> incomplete, AnalysisErrorHandler errors) {
+                          AnalysisIssueReporter incomplete, AnalysisErrorHandler errors) {
         this.flow = flow; this.config = config; this.checkpoint = checkpoint;
         this.incomplete = incomplete; this.errors = errors;
     }
@@ -30,9 +29,9 @@ final class SqlExtractionPipeline {
         for (var context : flow.contexts(input.method())) {
             checkpoint.run();
             var trace = flow.trace(new FlowPoint(input.method(), input.statement(), context.context()).value(input.value()));
-            templates.add(SqlTemplateProjection.template(rawSql(Optional.of(trace), input.toString()), config.replayBudgets(), checkpoint));
+            templates.add(SqlTemplateProjection.template(rawSql(Optional.of(trace), input.toString()), config.replayBudgets(), config.sqlRecoveryBudgets(), checkpoint));
         }
-        return SqlTemplateProjection.alternatives(templates);
+        return SqlTemplateProjection.alternatives(templates, config.sqlRecoveryBudgets(), checkpoint);
     }
 
     List<SqlExtraction> extract(String moduleId, InvocationSite site, SqlExtractionHandler handler,
@@ -40,7 +39,8 @@ final class SqlExtractionPipeline {
         List<SqlExtraction> extracted = new ArrayList<>();
         var mode = config.inferenceOptions().mode();
         var joint = mode.jointEnabled() ? new JointSqlValueInferencer(flow, config.jointBudgets(), this::externalGenerator, config.replayBudgets()) : null;
-        var templates = new TemplateExtractionPipeline(flow, checkpoint, this::reportTraceLimits, errors, this::inferParameter, incomplete);
+        var templates = new TemplateExtractionPipeline(flow, checkpoint, this::reportTraceLimits, errors, this::inferParameter, incomplete,
+                config.replayBudgets(), config.sqlRenderBudgets());
         for (var context : flow.contexts(site.method())) {
             checkpoint.run();
             List<SqlExtraction.Statement> statements = new ArrayList<>();
@@ -69,15 +69,15 @@ final class SqlExtractionPipeline {
                     RawSql raw = rawSql(sql, site.location().toString());
                     SqlNode template = ValueSqlNode.raw("unresolvedSql");
                     var templateIssues = new ArrayList<>(raw.issues());
-                    try { template = SqlTemplateProjection.template(raw, config.replayBudgets(), checkpoint); }
+                    try { template = SqlTemplateProjection.template(raw, config.replayBudgets(), config.sqlRecoveryBudgets(), checkpoint); }
                     catch (Exception e) {
-                        errors.recover("SQL_TEMPLATE", site.location().toString(), e, false);
+                        errors.recover("SQL_TEMPLATE", site.location().toString(), e, false, Set.of(SqlAssessment.Dimension.TEXT));
                         templateIssues.add("SQL template projection failed: " + e.getMessage());
                     }
                     raw = inferPlaceholders(raw, inference);
                     if (joint != null) try { raw = joint.infer(raw, bindings, point, source.controlFlowPaths(), sourceIssues); }
                     catch (Exception e) {
-                        errors.recover("JOINT_PATH_INFERENCE", site.location().toString(), e, true);
+                        errors.recover("JOINT_PATH_INFERENCE", site.location().toString(), e, true, Set.of(SqlAssessment.Dimension.PATH_COVERAGE));
                         var failed = new JointSqlInferenceResult(JointSqlInferenceResult.Status.UNKNOWN,
                                 List.of(), List.of("Joint path inference failed: " + e.getMessage()));
                         raw = new RawSql(raw.variants().stream().map(variant -> new RawSql.Variant(
@@ -102,10 +102,10 @@ final class SqlExtractionPipeline {
             var raw = sql.map(trace -> RawSqlBuilder.build(trace, config.sqlRecoveryBudgets(), checkpoint))
                     .orElseGet(() -> new RawSql(List.of(), List.of("SQL source is unavailable")));
             // 框架没有找到 SQL 来源时由提取结果报告，不将缺失来源误当作未知表达式。
-            if (sql.isPresent() && !raw.issues().isEmpty()) incomplete.accept("UNSUPPORTED_VALUE", String.join("; ", raw.issues()));
+            if (sql.isPresent() && !raw.issues().isEmpty()) incomplete.incomplete("UNSUPPORTED_VALUE", String.join("; ", raw.issues()), Set.of(SqlAssessment.Dimension.TEXT));
             return raw;
         } catch (Exception e) {
-            errors.recover("RAW_SQL", location, e, true);
+            errors.recover("RAW_SQL", location, e, true, Set.of(SqlAssessment.Dimension.TEXT));
             return new RawSql(List.of(), List.of("Raw SQL reconstruction failed: " + e.getMessage()));
         }
     }
@@ -117,7 +117,7 @@ final class SqlExtractionPipeline {
             checkpoint.run();
             var node = pending.removeFirst();
             if (!seen.add(node)) continue;
-            if (node.kind() == ValueTrace.Kind.LIMIT) incomplete.accept("TRACE_LIMIT", node.detail() + ": " + node.variable());
+            if (node.kind() == ValueTrace.Kind.LIMIT) incomplete.incomplete("TRACE_LIMIT", node.detail() + ": " + node.variable());
             pending.addAll(node.inputs());
         }
     }
@@ -142,12 +142,12 @@ final class SqlExtractionPipeline {
         if (inference == null) return new ParameterValueInferenceResult(name, type, List.of(), List.of("Parameter inference was not requested"));
         try {
             var inferred = inference.infer(trace, type);
-            if (inferred.truncated()) incomplete.accept("PARAMETER_INFERENCE_LIMIT",
+            if (inferred.truncated()) incomplete.incomplete("PARAMETER_INFERENCE_LIMIT",
                     "Parameter inference was truncated: " + name + (inferred.issues().isEmpty()
-                            ? "" : "; " + String.join("; ", inferred.issues())));
+                            ? "" : "; " + String.join("; ", inferred.issues())), Set.of(SqlAssessment.Dimension.VALUES));
             return new ParameterValueInferenceResult(name, inferred.type(), inferred.possibleValues(), inferred.issues(), inferred.truncated());
         } catch (Exception e) {
-            errors.recover("PARAMETER_INFERENCE", trace.variable().toString(), e, true);
+            errors.recover("PARAMETER_INFERENCE", trace.variable().toString(), e, true, Set.of(SqlAssessment.Dimension.VALUES));
             String issue = "Parameter inference failed: " + e.getMessage();
             return new ParameterValueInferenceResult(name, type, List.of(new InferredParameterValue(
                     new SqlValue.Unknown(issue), trace, List.of(), List.of(issue))), List.of(issue));
@@ -157,7 +157,7 @@ final class SqlExtractionPipeline {
     private ExternalValueGenerator externalGenerator() {
         try { return config.inferenceOptions().createGenerator(); }
         catch (Exception e) {
-            errors.recover("EXTERNAL_VALUE_GENERATOR", "Cannot create external value generator", e, true);
+            errors.recover("EXTERNAL_VALUE_GENERATOR", "Cannot create external value generator", e, true, Set.of(SqlAssessment.Dimension.VALUES));
             return (type, name) -> new SqlValue.Unknown("External value generator is unavailable: " + e.getMessage());
         }
     }

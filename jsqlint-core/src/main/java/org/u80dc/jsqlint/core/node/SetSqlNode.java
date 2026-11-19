@@ -15,7 +15,7 @@ public record SetSqlNode(SqlNode contents) implements SqlNode {
 
     @Override
     public boolean isDynamic() {
-        return contents.isDynamic();
+        return SqlNodeGraphs.isDynamic(this);
     }
 
     @Override

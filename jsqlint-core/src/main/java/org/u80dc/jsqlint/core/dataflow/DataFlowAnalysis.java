@@ -26,6 +26,7 @@ public final class DataFlowAnalysis {
     public static final int MAX_STEPS = 10000;
     private final ProgramIndex program;
     private final LocalDefinitions definitions;
+    private final NormalCompletion completion;
     private final int maxCallDepth, maxTraceDepth, maxTraceNodes;
     private final Runnable checkpoint;
     private final BiConsumer<String, String> incomplete;
@@ -34,6 +35,7 @@ public final class DataFlowAnalysis {
     private record ModeledCall(InvocationSite invocation, CallContext parent) {}
     private final Map<ModeledCall, ValueFlowModel> models = new HashMap<>();
     private final Map<ModeledCall, JavaSootMethod> implicitTargets = new HashMap<>();
+    private final Set<ModeledCall> resolvingReceivers = new HashSet<>();
     private ValueFlowModel localModel;
 
     public DataFlowAnalysis(ProgramIndex program, int maxDepth, int cacheSize, Runnable checkpoint,
@@ -47,14 +49,25 @@ public final class DataFlowAnalysis {
         this.program = program; this.maxCallDepth = maxCallDepth; this.maxTraceDepth = maxTraceDepth;
         this.maxTraceNodes = maxTraceNodes; this.checkpoint = checkpoint; this.incomplete = incomplete;
         definitions = new LocalDefinitions(cacheSize, checkpoint);
+        completion = new NormalCompletion(this, maxCallDepth);
     }
     private DataFlowAnalysis(DataFlowAnalysis source) {
         program = source.program; definitions = source.definitions; maxCallDepth = source.maxCallDepth;
         maxTraceDepth = source.maxTraceDepth; maxTraceNodes = source.maxTraceNodes; checkpoint = source.checkpoint;
         incomplete = source.incomplete; models.putAll(source.models); implicitTargets.putAll(source.implicitTargets);
+        completion = new NormalCompletion(this, maxCallDepth);
     }
     public ProgramIndex program() { return program; }
     public void checkpoint() { checkpoint.run(); }
+    /** 仅在已有证据证明语句不能正常完成时返回 true；未知目标和递归保留可能性。 */
+    public boolean cannotCompleteNormally(FlowPoint point) { return completion.statement(point) == NormalCompletion.Status.IMPOSSIBLE; }
+    /** 已知目标均无法返回，但未穷尽的运行时分派仍可能正常返回；联合可行性必须保留未知。 */
+    public boolean requiresUnresolvedDispatch(FlowPoint point) { return completion.statement(point) == NormalCompletion.Status.OPEN_TARGETS; }
+    /** 可重演的数组分配、读取和写入正常完成条件。 */
+    public List<ValueTrace> normalCompletionConditions(FlowPoint point) { return completion.conditions(point); }
+    /** 联合路径已证明调用进入或正常返回时，保留调用语句自身的局部安全前提。 */
+    public List<ValueTrace> statementSafetyConditions(FlowPoint point) { return completion.statementSafetyConditions(point); }
+    boolean arrayAccessFails(ValuePoint input, JArrayRef array) { return completion.arrayFails(input, array); }
     public void incomplete(String message) {
         if (reported.add(message)) incomplete.accept("DATA_FLOW_INCOMPLETE", message);
     }
@@ -119,7 +132,23 @@ public final class DataFlowAnalysis {
         }
         if (selected != null) return selected.hasBody() ? new ProgramIndex.CallResolution(List.of(selected), false)
                 : new ProgramIndex.CallResolution(List.of(), true);
-        return program.resolution(site);
+        var indexed = program.resolution(site);
+        if (indexed.targetsComplete() || !(site.invocation() instanceof AbstractInstanceInvokeExpr instance)) return indexed;
+        var key = new ModeledCall(site, context);
+        if (!resolvingReceivers.add(key)) return indexed;
+        try {
+            var receiver = origins(new FlowPoint(site.method(), site.statement(), context).value(instance.getBase()), ignored -> false);
+            if (!receiver.complete() || receiver.values().isEmpty()
+                    || receiver.values().stream().anyMatch(value -> !(value.value() instanceof JNewExpr))) return indexed;
+            var targets = new LinkedHashSet<JavaSootMethod>();
+            boolean external = false, complete = true;
+            for (var value : receiver.values()) {
+                var resolved = program.resolution(site, ((JNewExpr) value.value()).getType());
+                targets.addAll(resolved.applicationTargets());
+                external |= resolved.hasExternalTargets(); complete &= resolved.targetsComplete();
+            }
+            return new ProgramIndex.CallResolution(new ArrayList<>(targets), external, complete);
+        } finally { resolvingReceivers.remove(key); }
     }
 
     /** 将框架隐式调用登记为逻辑调用；形参由 model 映射，目标方法无需实际执行。 */
@@ -214,7 +243,18 @@ public final class DataFlowAnalysis {
                 var read = new ArrayElements(this).reaching(input, array);
                 var children = new ArrayList<ValueTrace.Node>();
                 children.add(trace(point.value(array.getIndex()), active, depth + 1, steps));
-                for (ValuePoint source : read.values()) children.add(trace(source, active, depth + 1, steps));
+                for (ValuePoint source : read.values()) {
+                    ValueTrace.Node element = trace(source, active, depth + 1, steps);
+                    if (source.point().statement() instanceof AbstractDefinitionStmt definition && definition.getLeftOp() instanceof JArrayRef written) {
+                        Optional<ValuePoint> length = completion.arrayLength(source.point(), written);
+                        if (length.isPresent()) element = computed(source, Kind.ARRAY_ELEMENT, Operation.ARRAY_ACCESS_CHECK,
+                                "local array write", List.of(element, trace(source.point().value(written.getIndex()), active, depth + 1, steps),
+                                        trace(length.get(), active, depth + 1, steps)));
+                    }
+                    if (read.length().isPresent()) element = computed(source, Kind.ARRAY_ELEMENT, Operation.ARRAY_ACCESS_CHECK,
+                            "local array access", List.of(element, children.getFirst(), trace(read.length().get(), active, depth + 1, steps)));
+                    children.add(element);
+                }
                 for (String issue : read.issues()) children.add(leaf(input, Kind.UNRESOLVED, issue));
                 return computed(input, Kind.ARRAY_ELEMENT, Operation.ARRAY_READ, "reaching array element writes", children);
             }
@@ -232,39 +272,19 @@ public final class DataFlowAnalysis {
                 return computed(input, Kind.EXPRESSION, Operation.NEGATE, "negate",
                         List.of(trace(point.value(negation.getOp()), active, depth + 1, steps)));
             if (value instanceof AbstractInvokeExpr invoke) {
-                String owner = invoke.getMethodSignature().getDeclClassType().toString();
-                String name = invoke.getMethodSignature().getName();
-                if (owner.equals("java.util.Objects") && name.equals("requireNonNull") && invoke.getArgCount() >= 1)
-                    return computed(input, Kind.EXPRESSION, Operation.REQUIRE_NON_NULL, "Objects.requireNonNull",
-                            List.of(trace(point.value(invoke.getArg(0)), active, depth + 1, steps)));
-                if (owner.equals("java.lang.String") && name.equals("valueOf") && invoke.getArgCount() == 1
-                        && !invoke.getMethodSignature().getParameterTypes().getFirst().toString().equals("char[]"))
-                    return computed(input, Kind.EXPRESSION, Operation.STRINGIFY,
-                            invoke.getMethodSignature().getParameterTypes().getFirst().toString(),
-                            List.of(trace(point.value(invoke.getArg(0)), active, depth + 1, steps)));
-                if (owner.equals("java.lang.String") && name.equals("replace") && invoke instanceof AbstractInstanceInvokeExpr instance
-                        && invoke.getArgCount() == 2 && invoke.getArg(0) instanceof StringConstant && invoke.getArg(1) instanceof StringConstant)
-                    return computed(input, Kind.EXPRESSION, Operation.REPLACE, "String.replace", List.of(
-                            trace(point.value(instance.getBase()), active, depth + 1, steps),
-                            trace(point.value(invoke.getArg(0)), active, depth + 1, steps),
-                            trace(point.value(invoke.getArg(1)), active, depth + 1, steps)));
+                if (cannotCompleteNormally(point)) return leaf(input, Kind.UNRESOLVED, "Invocation cannot return normally");
                 if (invoke instanceof JDynamicInvokeExpr dynamic && dynamic.getBootstrapMethodSignature()
                         .getDeclClassType().toString().equals("java.lang.invoke.StringConcatFactory"))
                     return concat(input, dynamic, active, depth, steps);
-                if (invoke instanceof AbstractInstanceInvokeExpr instance && invoke.getMethodSignature().getDeclClassType()
-                        .toString().equals("java.lang.String") && invoke.getMethodSignature().getName().equals("concat") && invoke.getArgCount() == 1) {
-                    return computed(input, Kind.EXPRESSION, Operation.STRING_CONCAT, "String.concat", List.of(
-                            trace(point.value(instance.getBase()), active, depth + 1, steps),
-                            trace(point.value(invoke.getArg(0)), active, depth + 1, steps)));
-                }
-                if (JavaValueOperations.supports(invoke.getMethodSignature())) {
-                    // 仅记录显式建模的纯 Java 值操作，按接收者、实参顺序保存，重复操作数不得去重。
-                    List<ValueTrace.Node> inputs = new ArrayList<>();
-                    if (invoke instanceof AbstractInstanceInvokeExpr instance)
-                        inputs.add(trace(point.value(instance.getBase()), active, depth + 1, steps));
-                    for (Value argument : invoke.getArgs()) inputs.add(trace(point.value(argument), active, depth + 1, steps));
-                    return new ValueTrace.Node(input.snapshot(program), Kind.EXPRESSION, invoke.getMethodSignature().toString(), inputs,
-                            new ValueTrace.Computation(Operation.CALL, name, Optional.of(invoke.getMethodSignature())));
+                var modeledInvocation = JavaValueOperations.invocation(invoke);
+                if (modeledInvocation.isPresent()) {
+                    var semantic = modeledInvocation.get();
+                    var inputs = semantic.operands().stream().map(operand -> trace(point.value(operand), active, depth + 1, steps)).toList();
+                    var variable = input.snapshot(program);
+                    if (semantic.computation().operation() == Operation.STRINGIFY) variable = variable.withType("java.lang.String");
+                    String detail = semantic.computation().operation() == Operation.CALL
+                            ? invoke.getMethodSignature().toString() : semantic.computation().text();
+                    return new ValueTrace.Node(variable, Kind.EXPRESSION, detail, inputs, semantic.computation());
                 }
                 InvocationSite site = invocation(input, invoke);
                 var resolution = resolution(site, point.context());
@@ -486,6 +506,7 @@ public final class DataFlowAnalysis {
             if (item.visited().contains(item.point())) {
                 sink.accept(new FlowEnd<>(item.state(), End.CYCLE, item.issues(), item.path())); continue;
             }
+            if (!item.exceptional() && cannotCompleteNormally(item.point())) continue;
             Set<FlowPoint> visited = new HashSet<>(item.visited()); visited.add(item.point());
             Decision<S> decision = item.exceptional() ? Decision.skipCall(item.state()) : transfer.visit(item.point(), item.state());
             if (decision.stop()) { sink.accept(new FlowEnd<>(decision.state(), End.FOUND, item.issues(), item.path())); continue; }
@@ -503,9 +524,16 @@ public final class DataFlowAnalysis {
                                 decision.state(), visited, item.issues(), false, item.path()));
                     }
                 }
-                // 虚调用可能同时落到项目和依赖库。外部分支继续回溯调用前的候选状态，
-                // 由框架 transfer 对相关对象的未知副作用作标记，不能被项目分支覆盖。
-                if (returned && !resolution(call.orElseThrow(), item.point().context()).hasExternalTargets()) continue;
+                // 外部目标或尚未穷尽的分派仍可能正常返回，必须保留调用前的候选来源；
+                // 联合路径检查会将依赖未知分派的返回标为 UNKNOWN。
+                if (!resolution(call.orElseThrow(), item.point().context()).hasExternalTargets()
+                        && !requiresUnresolvedDispatch(item.point())) {
+                    if (!returned) {
+                        var issues = new ArrayList<>(item.issues()); issues.add("Application normal return is unresolved");
+                        sink.accept(new FlowEnd<>(decision.state(), End.LIMIT, issues, item.path()));
+                    }
+                    continue;
+                }
             }
             previous.accept(new Work<>(item.point(), decision.state(), visited, item.issues(), false, item.path()));
         }

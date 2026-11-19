@@ -12,7 +12,7 @@ import java.util.Objects;
  * inputOptions 由输入扩展定义，仅在 Path 入口传递给选中的解析器；null 表示使用解析器自身配置。
  * maxCallDepth 限制调用栈，maxTraceDepth 限制数据依赖展开深度，maxTraceNodes 限制单次溯源访问节点数。
  * jointBudgets 集中联合路径求解的搜索预算。各项预算相互独立，增加表达式容量不会放宽递归调用限制。
- * replayBudgets 和 sqlRecoveryBudgets 分别控制参数重演和 SQL 恢复，不随来源追踪深度隐式变化。
+ * replayBudgets、sqlRecoveryBudgets 和 sqlRenderBudgets 分别控制参数重演、SQL 恢复/投影和节点渲染。
  * inferenceOptions 设置推断阶段、随机种子及外部值工厂；每次调用仍创建独立的推断状态。
  *
  * @author u80dc
@@ -20,7 +20,7 @@ import java.util.Objects;
 public record AnalyzerConfig(Duration timeout, int maxTraceDepth, int methodCacheSize,
                              boolean cleanupClassOutput, @Nullable AnalysisInputOptions inputOptions,
                              int maxCallDepth, int maxTraceNodes, JointBudgets jointBudgets, InferenceOptions inferenceOptions,
-                             ReplayBudgets replayBudgets, SqlRecoveryBudgets sqlRecoveryBudgets) {
+                             ReplayBudgets replayBudgets, SqlRecoveryBudgets sqlRecoveryBudgets, SqlRenderBudgets sqlRenderBudgets) {
     public AnalyzerConfig {
         validateTimeout(timeout);
         if (maxTraceDepth < 1 || methodCacheSize < 1 || maxCallDepth < 1 || maxTraceNodes < 1) {
@@ -30,6 +30,16 @@ public record AnalyzerConfig(Duration timeout, int maxTraceDepth, int methodCach
         Objects.requireNonNull(inferenceOptions, "inferenceOptions");
         Objects.requireNonNull(replayBudgets, "replayBudgets");
         Objects.requireNonNull(sqlRecoveryBudgets, "sqlRecoveryBudgets");
+        Objects.requireNonNull(sqlRenderBudgets, "sqlRenderBudgets");
+    }
+
+    /** 原配置构造器保持默认节点渲染容量，重演容量仍仅约束表达式和 Java 来源。 */
+    public AnalyzerConfig(Duration timeout, int maxTraceDepth, int methodCacheSize,
+                          boolean cleanupClassOutput, @Nullable AnalysisInputOptions inputOptions,
+                          int maxCallDepth, int maxTraceNodes, JointBudgets jointBudgets, InferenceOptions inferenceOptions,
+                          ReplayBudgets replayBudgets, SqlRecoveryBudgets sqlRecoveryBudgets) {
+        this(timeout, maxTraceDepth, methodCacheSize, cleanupClassOutput, inputOptions, maxCallDepth, maxTraceNodes,
+                jointBudgets, inferenceOptions, replayBudgets, sqlRecoveryBudgets, SqlRenderBudgets.defaults());
     }
 
     /** 兼容原配置构造器，新增阶段预算沿用原来的容量。 */
@@ -77,56 +87,61 @@ public record AnalyzerConfig(Duration timeout, int maxTraceDepth, int methodCach
     }
 
     public AnalyzerConfig withTimeout(Duration timeout) {
-        return new AnalyzerConfig(timeout, maxTraceDepth, methodCacheSize, cleanupClassOutput, inputOptions, maxCallDepth, maxTraceNodes, jointBudgets, inferenceOptions, replayBudgets, sqlRecoveryBudgets);
+        return new AnalyzerConfig(timeout, maxTraceDepth, methodCacheSize, cleanupClassOutput, inputOptions, maxCallDepth, maxTraceNodes, jointBudgets, inferenceOptions, replayBudgets, sqlRecoveryBudgets, sqlRenderBudgets);
     }
 
     /** 仅调整数据依赖深度；跨方法调用栈上限通过 withMaxCallDepth 单独设置。 */
     public AnalyzerConfig withMaxTraceDepth(int depth) {
-        return new AnalyzerConfig(timeout, depth, methodCacheSize, cleanupClassOutput, inputOptions, maxCallDepth, maxTraceNodes, jointBudgets, inferenceOptions, replayBudgets, sqlRecoveryBudgets);
+        return new AnalyzerConfig(timeout, depth, methodCacheSize, cleanupClassOutput, inputOptions, maxCallDepth, maxTraceNodes, jointBudgets, inferenceOptions, replayBudgets, sqlRecoveryBudgets, sqlRenderBudgets);
     }
 
     public AnalyzerConfig withMaxCallDepth(int depth) {
-        return new AnalyzerConfig(timeout, maxTraceDepth, methodCacheSize, cleanupClassOutput, inputOptions, depth, maxTraceNodes, jointBudgets, inferenceOptions, replayBudgets, sqlRecoveryBudgets);
+        return new AnalyzerConfig(timeout, maxTraceDepth, methodCacheSize, cleanupClassOutput, inputOptions, depth, maxTraceNodes, jointBudgets, inferenceOptions, replayBudgets, sqlRecoveryBudgets, sqlRenderBudgets);
     }
 
     public AnalyzerConfig withMaxTraceNodes(int nodes) {
-        return new AnalyzerConfig(timeout, maxTraceDepth, methodCacheSize, cleanupClassOutput, inputOptions, maxCallDepth, nodes, jointBudgets, inferenceOptions, replayBudgets, sqlRecoveryBudgets);
+        return new AnalyzerConfig(timeout, maxTraceDepth, methodCacheSize, cleanupClassOutput, inputOptions, maxCallDepth, nodes, jointBudgets, inferenceOptions, replayBudgets, sqlRecoveryBudgets, sqlRenderBudgets);
     }
 
     public AnalyzerConfig withMethodCacheSize(int size) {
-        return new AnalyzerConfig(timeout, maxTraceDepth, size, cleanupClassOutput, inputOptions, maxCallDepth, maxTraceNodes, jointBudgets, inferenceOptions, replayBudgets, sqlRecoveryBudgets);
+        return new AnalyzerConfig(timeout, maxTraceDepth, size, cleanupClassOutput, inputOptions, maxCallDepth, maxTraceNodes, jointBudgets, inferenceOptions, replayBudgets, sqlRecoveryBudgets, sqlRenderBudgets);
     }
 
     /** 设置联合路径求解预算；null 恢复默认值，单项调整可通过 JointBudgets 的 with 方法完成。 */
     public AnalyzerConfig withJointBudgets(@Nullable JointBudgets budgets) {
         return new AnalyzerConfig(timeout, maxTraceDepth, methodCacheSize, cleanupClassOutput, inputOptions, maxCallDepth, maxTraceNodes,
-                budgets == null ? JointBudgets.defaults() : budgets, inferenceOptions, replayBudgets, sqlRecoveryBudgets);
+                budgets == null ? JointBudgets.defaults() : budgets, inferenceOptions, replayBudgets, sqlRecoveryBudgets, sqlRenderBudgets);
     }
 
     /** 设置推断阶段和外部样例策略；null 恢复默认联合推断。 */
     public AnalyzerConfig withInferenceOptions(@Nullable InferenceOptions options) {
         return new AnalyzerConfig(timeout, maxTraceDepth, methodCacheSize, cleanupClassOutput, inputOptions, maxCallDepth, maxTraceNodes,
-                jointBudgets, options == null ? InferenceOptions.defaults() : options, replayBudgets, sqlRecoveryBudgets);
+                jointBudgets, options == null ? InferenceOptions.defaults() : options, replayBudgets, sqlRecoveryBudgets, sqlRenderBudgets);
     }
 
     /** 设置参数重演预算；null 恢复默认容量。 */
     public AnalyzerConfig withReplayBudgets(@Nullable ReplayBudgets budgets) {
         return new AnalyzerConfig(timeout, maxTraceDepth, methodCacheSize, cleanupClassOutput, inputOptions, maxCallDepth, maxTraceNodes,
-                jointBudgets, inferenceOptions, budgets == null ? ReplayBudgets.defaults() : budgets, sqlRecoveryBudgets);
+                jointBudgets, inferenceOptions, budgets == null ? ReplayBudgets.defaults() : budgets, sqlRecoveryBudgets, sqlRenderBudgets);
     }
 
     /** 设置 SQL 恢复预算；null 恢复默认容量。 */
     public AnalyzerConfig withSqlRecoveryBudgets(@Nullable SqlRecoveryBudgets budgets) {
         return new AnalyzerConfig(timeout, maxTraceDepth, methodCacheSize, cleanupClassOutput, inputOptions, maxCallDepth, maxTraceNodes,
-                jointBudgets, inferenceOptions, replayBudgets, budgets == null ? SqlRecoveryBudgets.defaults() : budgets);
+                jointBudgets, inferenceOptions, replayBudgets, budgets == null ? SqlRecoveryBudgets.defaults() : budgets, sqlRenderBudgets);
+    }
+
+    public AnalyzerConfig withSqlRenderBudgets(@Nullable SqlRenderBudgets budgets) {
+        return new AnalyzerConfig(timeout, maxTraceDepth, methodCacheSize, cleanupClassOutput, inputOptions, maxCallDepth, maxTraceNodes,
+                jointBudgets, inferenceOptions, replayBudgets, sqlRecoveryBudgets, budgets == null ? SqlRenderBudgets.defaults() : budgets);
     }
 
     public AnalyzerConfig withCleanupClassOutput(boolean cleanup) {
-        return new AnalyzerConfig(timeout, maxTraceDepth, methodCacheSize, cleanup, inputOptions, maxCallDepth, maxTraceNodes, jointBudgets, inferenceOptions, replayBudgets, sqlRecoveryBudgets);
+        return new AnalyzerConfig(timeout, maxTraceDepth, methodCacheSize, cleanup, inputOptions, maxCallDepth, maxTraceNodes, jointBudgets, inferenceOptions, replayBudgets, sqlRecoveryBudgets, sqlRenderBudgets);
     }
 
     /** 为本实例设置输入配置；null 恢复使用解析器自身配置，不改变单次输出路径的管理规则。 */
     public AnalyzerConfig withInputOptions(@Nullable AnalysisInputOptions options) {
-        return new AnalyzerConfig(timeout, maxTraceDepth, methodCacheSize, cleanupClassOutput, options, maxCallDepth, maxTraceNodes, jointBudgets, inferenceOptions, replayBudgets, sqlRecoveryBudgets);
+        return new AnalyzerConfig(timeout, maxTraceDepth, methodCacheSize, cleanupClassOutput, options, maxCallDepth, maxTraceNodes, jointBudgets, inferenceOptions, replayBudgets, sqlRecoveryBudgets, sqlRenderBudgets);
     }
 }

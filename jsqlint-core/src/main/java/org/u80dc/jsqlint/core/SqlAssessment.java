@@ -12,6 +12,9 @@ public record SqlAssessment(boolean sourcesComplete, boolean textComplete, boole
                             Optional<Boolean> pathCoverageComplete) {
     public SqlAssessment { Objects.requireNonNull(pathCoverageComplete); }
 
+    /** 诊断生产端声明影响的事实维度，消费端无需从诊断文案推测。 */
+    public enum Dimension { SOURCES, TEXT, VALUES, PATH_COVERAGE }
+
     static Optional<Boolean> pathCoverage(List<RawSql.Variant> variants) {
         if (variants.isEmpty() || variants.stream().anyMatch(variant -> variant.jointInference().isEmpty())) return Optional.empty();
         return Optional.of(variants.stream().allMatch(variant -> variant.jointInference().orElseThrow().coverageComplete()));

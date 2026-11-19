@@ -19,10 +19,16 @@ final class ArrayElements {
     Read reaching(ValuePoint input, JArrayRef array) {
         Origins bases = origins(input.point().value(array.getBase()));
         Optional<IntConstant> index = index(input.point().value(array.getIndex()));
+        Optional<ValuePoint> length = bases.complete() && bases.values().size() == 1
+                && bases.values().getFirst().value() instanceof JNewArrayExpr allocation
+                ? Optional.of(bases.values().getFirst().point().value(allocation.getSize())) : Optional.empty();
+        if (analysis.arrayAccessFails(input, array))
+            return new Read(List.of(), List.of("Array access cannot complete normally: null, negative length or index outside allocation bounds"), length);
         Set<ValuePoint> values = new LinkedHashSet<>();
         Set<String> issues = new LinkedHashSet<>();
         if (!bases.complete()) issues.add("Array identity is unresolved");
-        analysis.backward(input.point(), new State(false, HeapExposure.EMPTY), (point, state) -> {
+        analysis.backward(input.point(), new State(false, HeapExposure.EMPTY, List.of()), (point, state) -> {
+            List<ValuePoint> candidates = new ArrayList<>(state.values());
             HeapExposure exposure = state.exposure().before(analysis, point, bases, !state.found());
             if (point.statement() instanceof AbstractDefinitionStmt definition) {
                 if (!state.found() && definition.getLeftOp() instanceof JArrayRef written) {
@@ -30,11 +36,11 @@ final class ArrayElements {
                     Optional<IntConstant> writtenIndex = index(point.value(written.getIndex()));
                     boolean knownIndexes = index.isPresent() && writtenIndex.isPresent();
                     if (alias != Alias.NONE && (!knownIndexes || index.equals(writtenIndex))) {
-                        values.add(point.value(definition.getRightOp()));
+                        candidates.add(point.value(definition.getRightOp()));
                         // 找到值以后还需查询更早的容器存储：容器可能在本次写入前就持有数组，
                         // 后续外部调用仍能修改它。此后只追踪逃逸，不再收集已覆盖的旧值或旧调用。
-                        if (alias == Alias.MUST && knownIndexes) return exposure.externalCall()
-                                ? Decision.next(new State(true, exposure)) : Decision.stop(new State(true, exposure));
+                        if (alias == Alias.MUST && knownIndexes)
+                            return Decision.next(new State(true, exposure, List.copyOf(candidates)));
                         issues.add("Array write may target another array or element");
                     }
                 }
@@ -42,24 +48,25 @@ final class ArrayElements {
                 if (bases.complete() && bases.values().size() == 1 && bases.values().contains(right)) {
                     if (right.value() instanceof JParameterRef || right.value() instanceof JThisRef) {
                         // 到达入口数组时，元素内容属于外部输入；保留参数入口而不是数组长度。
-                        if (!state.found()) values.add(right);
-                        return Decision.stop(new State(true, exposure));
+                        if (!state.found()) candidates.add(right);
+                        return Decision.stop(new State(true, exposure, List.copyOf(candidates)));
                     }
                     if (right.value() instanceof JNewArrayExpr) {
-                        if (!state.found()) values.add(point.value(defaultValue(array)));
-                        return Decision.stop(new State(true, exposure));
+                        if (!state.found()) candidates.add(point.value(defaultValue(array)));
+                        return Decision.stop(new State(true, exposure, List.copyOf(candidates)));
                     }
                 }
             }
-            return Decision.next(new State(state.found(), exposure));
+            return Decision.next(new State(state.found(), exposure, List.copyOf(candidates)));
         }, end -> {
+            values.addAll(end.state().values());
             issues.addAll(end.issues());
             issues.addAll(end.state().exposure().issues());
             if (!end.state().found() || end.end() == End.CYCLE || end.end() == End.LIMIT)
                 issues.add("Array history ended at " + end.end());
         });
         if (values.isEmpty()) issues.add("No array element source is available");
-        return new Read(List.copyOf(values), List.copyOf(issues));
+        return new Read(List.copyOf(values), List.copyOf(issues), length);
     }
 
     private Origins origins(ValuePoint point) {
@@ -83,6 +90,6 @@ final class ArrayElements {
         };
     }
 
-    record Read(List<ValuePoint> values, List<String> issues) {}
-    private record State(boolean found, HeapExposure exposure) {}
+    record Read(List<ValuePoint> values, List<String> issues, Optional<ValuePoint> length) {}
+    private record State(boolean found, HeapExposure exposure, List<ValuePoint> values) {}
 }

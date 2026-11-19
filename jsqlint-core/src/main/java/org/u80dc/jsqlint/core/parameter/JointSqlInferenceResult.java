@@ -25,6 +25,9 @@ public record JointSqlInferenceResult(Status status, List<Combination> combinati
     }
     /** 渲染等后处理改变组合后，按最终组合重新汇总；覆盖情况独立于普通未知值。 */
     public JointSqlInferenceResult withCombinations(List<Combination> completed) {
+        // 完整路径求解已证明无解时，没有可供渲染的模型是正常结果；解释诊断不撤销证明。
+        if (coverageComplete && status == Status.UNSATISFIABLE && completed.isEmpty())
+            return new JointSqlInferenceResult(status, completed, issues, true);
         Status summary = !coverageComplete || !issues.isEmpty() || completed.stream().anyMatch(value -> value.status() == Status.UNKNOWN)
                 ? Status.UNKNOWN : completed.isEmpty() ? status
                 : completed.stream().anyMatch(value -> value.status() == Status.SATISFIABLE) ? Status.SATISFIABLE : Status.UNSATISFIABLE;

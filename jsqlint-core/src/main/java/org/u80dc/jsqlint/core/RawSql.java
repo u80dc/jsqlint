@@ -18,7 +18,7 @@ public record RawSql(List<Variant> variants, List<String> issues) {
     /** 在语句结果组装时关联同一调用上下文/批次的绑定快照，不按 SQL 文本查找或合并参数。 */
     RawSql withBindings(List<SqlExtraction.Binding> bindings) {
         var snapshot = List.copyOf(bindings);
-        return new RawSql(variants.stream().map(variant -> new Variant(
+        return new RawSql(variants.stream().map(variant -> variant.bindings().equals(snapshot) ? variant : new Variant(
                 variant.text(), variant.placeholders(), variant.trace(), snapshot, variant.jointInference())).toList(), issues);
     }
 
@@ -41,6 +41,7 @@ public record RawSql(List<Variant> variants, List<String> issues) {
                     throw new IllegalArgumentException("Placeholder positions must match ordered, non-overlapping text slots");
                 end = slot.end();
             }
+            SqlBindingSnapshots.validateVariant(bindings, jointInference, bindingSnapshots);
         }
 
         /** bindings 保留 Java 来源与独立推断；bindingSnapshots 保存各联合模型或定义的最终绑定。 */
@@ -70,10 +71,7 @@ public record RawSql(List<Variant> variants, List<String> issues) {
 
         /** 当前候选的拼接参数和绑定参数是否均已完成推断，不表示路径在实际运行中可行。 */
         public boolean inferenceComplete() {
-            return parameters().stream().allMatch(ParameterValueInferenceResult::complete)
-                    && bindings.stream().allMatch(binding -> binding.inference().complete())
-                    && (!bindings.isEmpty() || bindingSnapshots.stream().flatMap(snapshot -> snapshot.bindings().stream())
-                        .allMatch(binding -> binding.value() instanceof SqlValue.Known && binding.keyValue() instanceof SqlValue.Known));
+            return SqlAssessmentPolicy.rawValues(this);
         }
 
         /**

@@ -85,9 +85,9 @@ class SqlResultModelContractTest {
         var slot = SqlBindingSnapshots.bound(fixture.bound(), LOCATION, fixture.bindings()).getFirst();
         var changed = new SqlSample.Binding(slot.key(), slot.type(), slot.keyValue(), new SqlValue.Known(22),
                 slot.location(), slot.options(), slot.trace());
-        var variant = new RawSql.Variant("SELECT ?", List.of(), Optional.empty(), fixture.bindings(), Optional.empty(),
-                List.of(new RawSql.BindingSnapshot(List.of(changed), Optional.of(fixture.combination()))));
-        assertThrows(IllegalArgumentException.class, () -> model.withRawSql(variant));
+        assertThrows(IllegalArgumentException.class, () -> model.withRawSql(new RawSql.Variant("SELECT ?", List.of(),
+                Optional.empty(), fixture.bindings(), Optional.empty(),
+                List.of(new RawSql.BindingSnapshot(List.of(changed), Optional.of(fixture.combination()))))));
     }
 
     @Test void identicalSqlModelsShareTheirOwnAuthoritativeSnapshotsWithSamples() {
