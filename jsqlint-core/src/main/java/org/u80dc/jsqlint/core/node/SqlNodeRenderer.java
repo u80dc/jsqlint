@@ -123,6 +123,7 @@ public final class SqlNodeRenderer {
             for (int i = 0; i < bindings.size(); i++)
                 if (bindings.get(i).position() != i + 1)
                     throw new IllegalArgumentException("Bindings must follow consecutive rendering positions");
+            SqlBoundTransformResults.validateJournal(rendered,bindings,rewrites);
         }
         public boolean valuesComplete() {
             return rendered.complete() && bindings.stream().allMatch(binding -> binding.value() instanceof SqlValue.Known);

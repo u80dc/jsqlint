@@ -9,5 +9,12 @@ public record SqlRewriteStep(String id, Optional<String> beforeSql, Optional<Str
     public SqlRewriteStep {
         Objects.requireNonNull(id);Objects.requireNonNull(beforeSql);Objects.requireNonNull(afterSql);
         beforeBindings=List.copyOf(beforeBindings);afterBindings=List.copyOf(afterBindings);diagnostics=List.copyOf(diagnostics);
+        if(beforeSql.isEmpty())throw new IllegalArgumentException("A rewrite requires known input SQL");
+        if(afterSql.isEmpty()&&diagnostics.isEmpty())throw new IllegalArgumentException("Unknown rewrite output requires a diagnostic");
+        positions(beforeBindings);positions(afterBindings);
+    }
+    private static void positions(List<SqlNodeRenderer.BoundParameter> bindings) {
+        for(int index=0;index<bindings.size();index++)if(bindings.get(index).position()!=index+1)
+            throw new IllegalArgumentException("Rewrite bindings must have consecutive positions");
     }
 }

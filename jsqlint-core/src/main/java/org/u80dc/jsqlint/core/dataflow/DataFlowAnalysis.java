@@ -131,14 +131,18 @@ public final class DataFlowAnalysis {
 
     /** 按 JavaBean getter 或最近的实例字段读取属性，不执行目标对象；来源与调用上下文随结果保存。 */
     public ValueTrace traceProperty(ValuePoint receiver, String property, String propertyType) {
+        return traceProperty(receiver,property,propertyType,PropertyAccess.JAVA_BEAN);
+    }
+    public ValueTrace traceProperty(ValuePoint receiver,String property,String propertyType,PropertyAccess access) {
         Objects.requireNonNull(receiver); Objects.requireNonNull(property); Objects.requireNonNull(propertyType);
+        Objects.requireNonNull(access);
         int[] steps = {0};
         var active = new HashSet<ValuePoint>();
-        var root = property(receiver, property, propertyType, active, 0, steps);
+        var root = property(receiver, property, propertyType,access, active, 0, steps);
         return new ValueTrace(root.variable(), receiver.point().context().snapshot(), root);
     }
 
-    private ValueTrace.Node property(ValuePoint receiver, String property, String propertyType,
+    private ValueTrace.Node property(ValuePoint receiver, String property, String propertyType,PropertyAccess access,
                                      Set<ValuePoint> active, int depth, int[] steps) {
         checkpoint.run();
         if (property.isBlank()) return leaf(receiver, Kind.UNRESOLVED, "Empty object property");
@@ -148,7 +152,7 @@ public final class DataFlowAnalysis {
         if (receiverOrigins.complete() && receiverOrigins.values().size() == 1
                 && receiverOrigins.values().getFirst().value() instanceof JNewExpr allocation)
             type = allocation.getType();
-        var member = ObjectProperties.member(program, type, property);
+        var member = ObjectProperties.member(program, type, property,access);
         if (member.issue().isPresent()) return new ValueTrace.Node(receiver.snapshot(program).withType(propertyType), Kind.UNRESOLVED,
                 member.issue().get(), List.of());
         if (member.getter().isPresent()) {

@@ -214,6 +214,16 @@ size/length/isEmpty。数值零为 false、非零为 true；BigDecimal 与 BigIn
 改写保留原模板、输入快照和恢复模式；框架模块通过 `SqlRewriteStep` 保存每一步前后的 SQL、绑定及诊断，
 结果统一由 `SqlSample.rewrites()` 暴露。`withMetadata` 和 `withReplayBudgets` 保留已配置的改写器。
 core 的改写协议仅依赖通用节点类型，具体插件语义由框架模块实现。
+改写结果必须保留输入快照、原诊断顺序和既有改写记录；SQL 或绑定发生变化时必须提供连续证据，
+第一步从实际输入开始，最后一步与最终 SQL/绑定一致。非法契约抛出 IllegalArgumentException。
+SqlRenderBudgets 的 steps/length/depth 同时限制改写绑定、证据条目、说明文字和来源表达式；
+超限返回 TRANSFORM_LIMIT（Effect.LIMIT）及未知 SQL，保留原模板、输入、绑定和超限记录。
+这限制结果发布规模，不能阻止扩展在返回前自行分配内存；取消信号继续向调用方传播。
+
+`DataFlowAnalysis.traceProperty(..., PropertyAccess)` 允许适配层选择 JAVA_BEAN、FIELD 或 ACCESSOR。
+默认入口保留 getter 优先、字段回退；FIELD 只读取字段，ACCESSOR 只读取同名公开无参方法，
+适用于 record accessor 等访问方式。上述读取均通过字节码追踪，不执行目标对象。
+SqlNodeBuilder 的占位符/XML 是明确的内置模板 DSL；使用其他模板语法的模块应转换为通用 SqlNode。
 
 ```java
 var context = new SqlEvaluationContext(ReplayBudgets.defaults().withSteps(2000),

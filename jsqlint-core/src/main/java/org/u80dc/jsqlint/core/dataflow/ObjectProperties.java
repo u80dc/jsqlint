@@ -20,6 +20,9 @@ final class ObjectProperties {
     ObjectProperties(DataFlowAnalysis analysis) { this.analysis = analysis; }
 
     static Member member(ProgramIndex program, ClassType owner, String property) {
+        return member(program,owner,property,PropertyAccess.JAVA_BEAN);
+    }
+    static Member member(ProgramIndex program, ClassType owner, String property,PropertyAccess access) {
         String suffix = Character.toUpperCase(property.charAt(0)) + property.substring(1);
         Optional<FieldSignature> field = Optional.empty();
         var getters = new ArrayList<JavaSootMethod>();
@@ -29,7 +32,7 @@ final class ObjectProperties {
         while (current != null && visited.add(current)) {
             var clazz = program.view().getClass(current);
             if (clazz.isEmpty()) break;
-            for (String name : List.of("get" + suffix, "is" + suffix)) {
+            for (String name : access==PropertyAccess.FIELD?List.<String>of():access==PropertyAccess.ACCESSOR?List.of(property):List.of("get" + suffix, "is" + suffix)) {
                 var methods = clazz.get().getMethods().stream().filter(method -> method.getName().equals(name)
                         && method.getParameterCount() == 0 && !method.getReturnType().toString().equals("void")).toList();
                 for (var method : methods) if (signatures.add(method.getSubSignature())) getters.add(method);
@@ -37,8 +40,8 @@ final class ObjectProperties {
             if (field.isEmpty()) field = clazz.get().getField(property).filter(value -> !value.isStatic()).map(value -> value.getSignature());
             current = clazz.get().getSuperclass().orElse(null);
         }
-        if (getters.isEmpty()) return new Member(Optional.empty(), field, Optional.empty());
-        // 与 JavaBean/MyBatis 一致：boolean isX 优先，协变桥优先实际返回类型。
+        if (getters.isEmpty()) return new Member(Optional.empty(), access==PropertyAccess.ACCESSOR?Optional.empty():field, Optional.empty());
+        // JavaBean boolean isX 优先，协变桥优先实际返回类型。
         var booleanGetter = getters.stream().filter(method -> method.getName().equals("is" + suffix)
                 && method.getReturnType().toString().equals("boolean")).findFirst();
         if (booleanGetter.isPresent() && getters.stream().allMatch(method -> method.getReturnType().toString().equals("boolean")))

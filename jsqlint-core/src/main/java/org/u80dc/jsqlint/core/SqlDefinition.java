@@ -50,9 +50,7 @@ public record SqlDefinition(String id, SourceLocation location, SqlNode template
         var normalized=new SqlNodeRenderer.BoundSql(new SqlNodeRenderer.RenderedSql(rendered.sql().map(String::strip),
                 rendered.residual(), rendered.parameters(), rendered.diagnostics(), rendered.recoveryMode()), bound.bindings(),bound.rewrites());
         if(transform.isEmpty()||!normalized.rendered().complete())return normalized;
-        var result=context.evaluate(()->Objects.requireNonNull(transform.get().apply(normalized,metadata,context,inputs)));
-        if(!result.rendered().residual().equals(template)||result.rendered().recoveryMode()!=normalized.rendered().recoveryMode())
-            throw new IllegalArgumentException("SQL transformation must preserve the replay template/mode");
-        return result;
+        return context.evaluate(()->SqlBoundTransformResults.validate(normalized,
+                Objects.requireNonNull(transform.get().apply(normalized,metadata,context,inputs)),context));
     }
 }
