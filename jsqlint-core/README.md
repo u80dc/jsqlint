@@ -23,6 +23,9 @@ Provider 的隐式方法调用和 Java 返回值通过 `ValueFlowModel` 接入�
 `ComputedDefinition` 在共享程序索引就绪后计算未调用定义；冻结的来源可由 `TraceSqlExpressionEvaluator` 重演。
 `TemplateSqlInput` 可同时保存真实 Java SQL 来源和命名参数来源，渲染仍使用统一参数化节点。
 Map 快照、对象逃逸历史和控制流选择均使用通用模型；core 不解释 Provider 注解或 MyBatis SQL 子句。
+`DataFlowAnalysis.traceProperty(receiver, property, type)` 按需恢复公开 getter 或实例字段，
+构造器、setter 和辅助方法继续分析真实方法体。实例字段来源按对象身份及调用发生前的写入顺序选择，
+继承字段按实际声明归一化；路径历史与逃逸问题随来源冻结，未知属性不借用其他对象的字段值。
 节点采用密封接口、不可变列表及构造校验，不需要为不同来源建立平行的节点继承体系。
 
 ## 节点数据模型
@@ -206,6 +209,11 @@ size/length/isEmpty。数值零为 false、非零为 true；BigDecimal 与 BigIn
 冻结的 Java 模板表达式保存 `AnalyzerConfig.replayBudgets()`，后续定义重演沿用该策略。
 单次执行可以通过 `SqlEvaluationContext` 提供预算、取消检查和容量回调；旧渲染入口仍可使用。
 `SqlDefinition.withReplayBudgets` 配置来源重演；整次 SQL 节点遍历的限制通过显式执行上下文传入。
+
+`SqlDefinition.withTransform(SqlBoundTransform)` 可在完整模板渲染后改写 SQL 与绑定。
+改写保留原模板、输入快照和恢复模式；框架模块通过 `SqlRewriteStep` 保存每一步前后的 SQL、绑定及诊断，
+结果统一由 `SqlSample.rewrites()` 暴露。`withMetadata` 和 `withReplayBudgets` 保留已配置的改写器。
+core 的改写协议仅依赖通用节点类型，具体插件语义由框架模块实现。
 
 ```java
 var context = new SqlEvaluationContext(ReplayBudgets.defaults().withSteps(2000),

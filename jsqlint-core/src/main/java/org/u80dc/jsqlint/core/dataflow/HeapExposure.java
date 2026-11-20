@@ -31,7 +31,7 @@ record HeapExposure(List<Root> roots, List<Store> stores, boolean externalCall, 
                 Origins origin = analysis.origins(point.value(argument), ignored -> false);
                 accessible.add(new Root(origin, at));
                 if (tracked.values().isEmpty() || tracked.values().stream()
-                        .anyMatch(value -> compatible(argument.getType(), value.value().getType())) && mayAlias(origin, tracked))
+                        .anyMatch(value -> compatible(argument.getType(), value.value().getType(), analysis)) && mayAlias(origin, tracked, analysis))
                     warnings.add("Unmodeled external object consumer: " + site.get().invocation().getMethodSignature());
             }
         }
@@ -55,29 +55,51 @@ record HeapExposure(List<Root> roots, List<Store> stores, boolean externalCall, 
                 Store store = iterator.next();
                 // 逆序位置较小的外部调用才发生在存储之后，不能让更早的调用读取未来的存储。
                 int callAt = store.container().isEmpty() ? 0 : accessible.stream()
-                        .filter(root -> root.at() <= store.at() && mayAlias(root.value(), store.container().get()))
+                        .filter(root -> root.at() <= store.at() && mayAlias(root.value(), store.container().get(), analysis))
                         .mapToInt(Root::at).min().orElse(-1);
                 if (callAt < 0) continue;
                 Root root = new Root(store.value(), callAt);
                 if (!accessible.contains(root)) accessible.add(root);
-                if (mayAlias(store.value(), tracked)) warnings.add("Object escaped through heap storage before external call: " + store.location());
+                if (mayAlias(store.value(), tracked, analysis)) warnings.add("Object escaped through heap storage before external call: " + store.location());
                 iterator.remove(); changed = true;
             }
         } while (changed);
         return new HeapExposure(accessible, pending, external, at, warnings.stream().distinct().toList());
     }
 
-    private static boolean mayAlias(Origins left, Origins right) {
+    private static boolean mayAlias(Origins left, Origins right, DataFlowAnalysis analysis) {
         // 不同入口引用通常可能别名，但 String 等普通对象不可能就是被追踪的数组。
         // Object/Cloneable/Serializable 则可能以宽类型持有数组，必须保留。
         if (left.complete() && right.complete() && left.values().stream().noneMatch(a -> right.values().stream()
-                .anyMatch(b -> compatible(a.value().getType(), b.value().getType())))) return false;
+                .anyMatch(b -> compatible(a.value().getType(), b.value().getType(), analysis)))) return false;
         return left.aliasTo(right) != Alias.NONE;
     }
 
-    private static boolean compatible(sootup.core.types.Type left, sootup.core.types.Type right) {
+    private static boolean compatible(sootup.core.types.Type left, sootup.core.types.Type right, DataFlowAnalysis analysis) {
         if (left instanceof sootup.core.types.ArrayType && !(right instanceof sootup.core.types.ArrayType)) return arraySupertype(right);
         if (right instanceof sootup.core.types.ArrayType && !(left instanceof sootup.core.types.ArrayType)) return arraySupertype(left);
+        if (left.equals(right)) return true;
+        if (left instanceof sootup.core.types.ClassType a && right instanceof sootup.core.types.ClassType b) {
+            var first = analysis.program().view().getClass(a);
+            var second = analysis.program().view().getClass(b);
+            // 两个已知的无继承关系的具体类不能指向同一对象；接口和缺失类型继续保守处理。
+            if (first.isPresent() && second.isPresent() && !first.get().isInterface() && !second.get().isInterface())
+                return superclass(a, b, analysis) || superclass(b, a, analysis);
+        }
+        return true;
+    }
+    private static boolean superclass(sootup.core.types.ClassType child, sootup.core.types.ClassType parent, DataFlowAnalysis analysis) {
+        var visited = new HashSet<sootup.core.types.ClassType>();
+        var current = child;
+        while (visited.add(current)) {
+            analysis.checkpoint();
+            if (current.equals(parent)) return true;
+            var type = analysis.program().view().getClass(current);
+            if (type.isEmpty()) return true;
+            var next = type.get().getSuperclass();
+            if (next.isEmpty()) return false;
+            current = next.get();
+        }
         return true;
     }
 

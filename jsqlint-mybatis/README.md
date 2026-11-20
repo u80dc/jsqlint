@@ -7,6 +7,9 @@ SQL 中的 `#{...}` 输出为 `?`，绑定位置、Java 类型、取值、绑定
 
 引入 `jsqlint-core` 和 `jsqlint-mybatis` 后，默认 Analyzer 自动发现本模块。
 分析源码或 Maven/Gradle 项目时另引入 `jsqlint-commons`。
+引入 `jsqlint-mybatis-plus` 后，本模块通过独立 `MybatisExtension` SPI 自动接入 Plus 能力，
+仍共享同一条 Mapper 提取链路。显式扩展列表使用 `MybatisAnalysisModule(options, extensions)`；
+传入空列表只启用标准 MyBatis。扩展在每次分析中建立独立会话，显式定义优先于生成定义。
 
 ```java
 var result = new Analyzer().analyze(Path.of("mybatis-project"));

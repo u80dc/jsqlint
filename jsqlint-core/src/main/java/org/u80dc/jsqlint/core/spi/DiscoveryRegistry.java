@@ -99,9 +99,10 @@ public final class DiscoveryRegistry {
     public interface DefinitionHandler { void discover(Consumer<AnalysisSeed> seeds) throws Exception; }
 
     /**
-     * 索引就绪后为直接指定的无方法体入口发出定义，不要求存在真实调用语句。
+     * 索引就绪后为直接指定的无方法体或依赖库入口发出定义，不要求存在真实调用语句。
      * signature 保留请求中的接口类型，method 是解析后的实际声明；两者在继承场景下可能不同。
      * 仅方法范围入口调用此规则；全程序入口继续使用 afterDiscovery。
+     * 依赖库入口命中定义后不再分析其方法体；普通应用方法体继续按调用图处理。
      * 未关联此方法时不发出起点，让其他模块继续处理；已识别定义的解析失败使用现有诊断机制。
      */
     public void methodDefinition(MethodDefinitionHandler handler) {

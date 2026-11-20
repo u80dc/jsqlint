@@ -66,6 +66,10 @@ final class MapperMethodMatcher {
         return method != null && method.isAbstract() ? Optional.of(method) : Optional.empty();
     }
 
+    Optional<JavaSootMethod> resolveMethod(MethodSignature signature, JavaView view) {
+        return Optional.ofNullable(interfaceMethods(signature.getDeclClassType(), view).get(signature.getSubSignature()));
+    }
+
     /** 依次尝试调用接口与真实声明所在的继承链，保持 MyBatis 的映射查找边界。 */
     List<String> definitionIds(InvocationSite site, JavaSootMethod method) {
         return definitionIds(site.invocation().getMethodSignature(), method, site.view());

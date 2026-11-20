@@ -1,0 +1,4 @@
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "https://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="example.UserMapper">
+  <select id="customUsers">SELECT #{marker} AS marker,id,name FROM users ${ew.customSqlSegment}</select>
+</mapper>

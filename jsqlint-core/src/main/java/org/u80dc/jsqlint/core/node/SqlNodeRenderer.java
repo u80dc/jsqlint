@@ -115,9 +115,11 @@ public final class SqlNodeRenderer {
      * 绑定列表是本次渲染的快照。补充 rendered.parameters 后用 rendered.residual 再次 renderBound，
      * 从原始模板重建全部绑定及其来源，避免把前缀占位符当作无绑定的静态文本。
      */
-    public record BoundSql(RenderedSql rendered, List<BoundParameter> bindings) {
+    public record BoundSql(RenderedSql rendered, List<BoundParameter> bindings, List<SqlRewriteStep> rewrites) {
+        public BoundSql(RenderedSql rendered,List<BoundParameter> bindings) {this(rendered,bindings,List.of());}
         public BoundSql {
             Objects.requireNonNull(rendered); bindings = List.copyOf(bindings);
+            rewrites=List.copyOf(rewrites);
             for (int i = 0; i < bindings.size(); i++)
                 if (bindings.get(i).position() != i + 1)
                     throw new IllegalArgumentException("Bindings must follow consecutive rendering positions");

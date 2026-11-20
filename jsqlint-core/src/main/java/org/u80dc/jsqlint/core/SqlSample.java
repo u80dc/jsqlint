@@ -16,12 +16,18 @@ import java.util.*;
 public record SqlSample(SqlResult source, Optional<SourceLocation> batchEntry, RenderedSql rendered,
                         List<Binding> bindings, Feasibility feasibility, SqlAssessment assessment,
                         List<String> issues, Optional<RawSql.Variant> rawSql, Optional<Combination> combination,
-                        Optional<SqlDefinition> definition) {
+                        Optional<SqlDefinition> definition, List<org.u80dc.jsqlint.core.node.SqlRewriteStep> rewrites) {
+    public SqlSample(SqlResult source,Optional<SourceLocation> batchEntry,RenderedSql rendered,List<Binding> bindings,
+                     Feasibility feasibility,SqlAssessment assessment,List<String> issues,Optional<RawSql.Variant> rawSql,
+                     Optional<Combination> combination,Optional<SqlDefinition> definition) {
+        this(source,batchEntry,rendered,bindings,feasibility,assessment,issues,rawSql,combination,definition,List.of());
+    }
     public SqlSample {
         Objects.requireNonNull(source); Objects.requireNonNull(batchEntry); Objects.requireNonNull(rendered);
         bindings = List.copyOf(bindings); Objects.requireNonNull(feasibility); Objects.requireNonNull(assessment);
         issues = List.copyOf(issues); Objects.requireNonNull(rawSql); Objects.requireNonNull(combination);
         Objects.requireNonNull(definition);
+        rewrites=List.copyOf(rewrites);
     }
     public SqlSample(SqlResult source, Optional<SourceLocation> batchEntry, RenderedSql rendered,
                      List<Binding> bindings, Feasibility feasibility, SqlAssessment assessment,

@@ -28,6 +28,10 @@ final class MapperParameterResolver {
     }
     SqlTraceSource resolve(SqlDefinition definition, JavaSootMethod method, JavaView view,
                            IntFunction<TemplateSqlInput.Parameter> values) {
+        return resolve(definition, method, view, values, Set.of());
+    }
+    SqlTraceSource resolve(SqlDefinition definition, JavaSootMethod method, JavaView view,
+                           IntFunction<TemplateSqlInput.Parameter> values, Set<Integer> modeled) {
         List<String> issues = new ArrayList<>();
         var info = parameters(method, view, issues);
         List<Argument> arguments = new ArrayList<>();
@@ -45,7 +49,7 @@ final class MapperParameterResolver {
             }
             if (name == null) name = options.useActualParamName() ? info.parameters().get(i).name().orElse("arg" + i)
                     : Integer.toString(arguments.size());
-            arguments.add(new Argument(name, values.apply(i)));
+            arguments.add(new Argument(name, values.apply(i), modeled.contains(i)));
         }
         Map<String, TemplateSqlInput.Parameter> aliases = new LinkedHashMap<>();
         Optional<TemplateSqlInput.Parameter> fallback = Optional.empty(); Optional<String> parameterMapName = Optional.empty();
@@ -56,7 +60,7 @@ final class MapperParameterResolver {
             aliases.put("_parameter", argument.parameter());
             if (SCALARS.contains(argument.parameter().type())) {
                 aliases.put("value", argument.parameter()); fallback = Optional.of(argument.parameter());
-            } else issues.add("MyBatis object and collection parameter tracking is not supported: " + argument.parameter().type());
+            } else if (!argument.modeled()) issues.add("MyBatis object and collection parameter tracking is not supported: " + argument.parameter().type());
         } else {
             parameterMapName = Optional.of("_parameter");
             Set<String> named = new HashSet<>(); arguments.forEach(argument -> named.add(argument.name()));
@@ -64,7 +68,7 @@ final class MapperParameterResolver {
                 var argument = arguments.get(i); aliases.put(argument.name(), argument.parameter());
                 String generic = "param" + (i + 1);
                 if (!named.contains(generic)) aliases.put(generic, argument.parameter());
-                if (!SCALARS.contains(argument.parameter().type())) issues.add("MyBatis object and collection parameter tracking is not supported: " + argument.parameter().type());
+                if (!argument.modeled() && !SCALARS.contains(argument.parameter().type())) issues.add("MyBatis object and collection parameter tracking is not supported: " + argument.parameter().type());
             }
         }
         return SqlTraceSource.template(new TemplateSqlInput(definition, aliases, fallback, parameterMapName, constants), issues);
@@ -98,5 +102,5 @@ final class MapperParameterResolver {
         }
         return false;
     }
-    private record Argument(String name, TemplateSqlInput.Parameter parameter) {}
+    private record Argument(String name, TemplateSqlInput.Parameter parameter, boolean modeled) {}
 }

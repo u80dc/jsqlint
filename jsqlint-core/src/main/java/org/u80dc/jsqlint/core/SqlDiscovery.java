@@ -134,6 +134,19 @@ final class SqlDiscovery {
                                 || method.getDeclClassType().getPackageName().equals(signature.getDeclClassType().getPackageName())))
                 .orElseThrow(() -> new IllegalArgumentException("Analysis entry method does not exist: " + signature)));
         root.ifPresent(method -> { if (!declarations.contains(method)) declarations.add(method); });
+        // 框架也可直接建模依赖库中的 default 入口；命中后无需遍历其实现体。
+        if (root.filter(JavaSootMethod::hasBody).filter(method -> classes.stream()
+                .noneMatch(clazz -> clazz.getType().equals(method.getDeclClassType()))).isPresent()) {
+            for (Registered module : modules) for (var handler : module.methodDefinitions()) {
+                checkpoint.run();
+                try { handler.discover(entry.orElseThrow(), root.get(), view, seed -> accept(module.id(), seed)); }
+                catch (Exception e) { errors.recover("METHOD_SQL_DEFINITION", entry.get().toString(), e); }
+            }
+        }
+        if (root.isPresent() && !seeds.isEmpty()) {
+            progress(Stage.CODE);
+            return new Plan(program, root.map(JavaSootMethod::getSignature), Set.of(root.orElseThrow().getSignature()), seeds, extractions);
+        }
         root.filter(JavaSootMethod::hasBody).filter(method -> classes.stream()
                 .noneMatch(clazz -> clazz.getType().equals(method.getDeclClassType()))).ifPresent(method ->
                 incomplete.accept("METHOD_SCOPE_EXTERNAL_ENTRY", "Entry body is outside the application code index: " + entry.orElseThrow()));

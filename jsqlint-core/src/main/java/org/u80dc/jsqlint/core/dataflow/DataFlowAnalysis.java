@@ -128,6 +128,39 @@ public final class DataFlowAnalysis {
         int[] steps = {0};
         return new ValueTrace(input.snapshot(program), input.point().context().snapshot(), trace(input, new HashSet<>(), 0, steps));
     }
+
+    /** 按 JavaBean getter 或最近的实例字段读取属性，不执行目标对象；来源与调用上下文随结果保存。 */
+    public ValueTrace traceProperty(ValuePoint receiver, String property, String propertyType) {
+        Objects.requireNonNull(receiver); Objects.requireNonNull(property); Objects.requireNonNull(propertyType);
+        int[] steps = {0};
+        var active = new HashSet<ValuePoint>();
+        var root = property(receiver, property, propertyType, active, 0, steps);
+        return new ValueTrace(root.variable(), receiver.point().context().snapshot(), root);
+    }
+
+    private ValueTrace.Node property(ValuePoint receiver, String property, String propertyType,
+                                     Set<ValuePoint> active, int depth, int[] steps) {
+        checkpoint.run();
+        if (property.isBlank()) return leaf(receiver, Kind.UNRESOLVED, "Empty object property");
+        if (!(receiver.value() instanceof Local local)) return leaf(receiver, Kind.UNRESOLVED, "Object property receiver is not a local reference");
+        if (!(local.getType() instanceof sootup.core.types.ClassType type)) return leaf(receiver, Kind.UNRESOLVED, "Object property receiver type is unavailable");
+        var receiverOrigins = origins(receiver, ignored -> false);
+        if (receiverOrigins.complete() && receiverOrigins.values().size() == 1
+                && receiverOrigins.values().getFirst().value() instanceof JNewExpr allocation)
+            type = allocation.getType();
+        var member = ObjectProperties.member(program, type, property);
+        if (member.issue().isPresent()) return new ValueTrace.Node(receiver.snapshot(program).withType(propertyType), Kind.UNRESOLVED,
+                member.issue().get(), List.of());
+        if (member.getter().isPresent()) {
+            var getter = member.getter().get();
+            var invoke = new JVirtualInvokeExpr(local, getter.getSignature(), List.of());
+            program.registerImplicitInvocation(invocation(receiver, invoke));
+            return trace(receiver.point().value(invoke), active, depth, steps);
+        }
+        if (member.field().isPresent()) return trace(receiver.point().value(new JInstanceFieldRef(local, member.field().get())), active, depth, steps);
+        return new ValueTrace.Node(receiver.snapshot(program).withType(propertyType), Kind.UNRESOLVED,
+                "Object property is unavailable: " + property, List.of());
+    }
     /** 对独立定义应用只读模型，不改变其他调用上下文。 */
     public ValueTrace trace(ValuePoint input, ValueFlowModel model) { return withModel(ignored -> model).trace(input); }
     /** 独立定义的模型与其全部辅助查询共用同一个隔离上下文。 */
@@ -246,6 +279,28 @@ public final class DataFlowAnalysis {
                         Operation.IDENTITY, "actual argument at caller", List.of(trace(argument.get(), active, depth + 1, steps)));
                 return leaf(input, point.method().isMain(program.view().getIdentifierFactory()) ? Kind.ENTRY : Kind.NO_CALLER,
                         "project input: " + value);
+            }
+            if (value instanceof JInstanceFieldRef field) {
+                var read = new ObjectProperties(this).reaching(input, field);
+                var alternatives = new ArrayList<ValueTrace.Node>();
+                for (var source : read.sources()) {
+                    checkpoint.run();
+                    if (++steps[0] > maxTraceNodes) {
+                        alternatives.add(leaf(input, Kind.LIMIT, "instance field dependency node budget exceeded"));
+                        break;
+                    }
+                    var children = new ArrayList<ValueTrace.Node>();
+                    if (source.value().isPresent()) children.add(trace(source.value().get(), active, depth + 1, steps));
+                    for (String issue : source.issues()) children.add(leaf(input, Kind.UNRESOLVED, issue));
+                    var history = source.path().stream().map(edge -> new ValueTrace.ControlEdge(
+                            edge.from().value(value).snapshot(program), edge.to().value(value).snapshot(program), edge.exceptional())).toList();
+                    alternatives.add(new ValueTrace.Node(input.snapshot(program), Kind.EXPRESSION,
+                            "Instance field snapshot: " + field.getFieldSignature(), children,
+                            new ValueTrace.Computation(source.issues().isEmpty() ? Operation.IDENTITY : Operation.OPAQUE,
+                                    "Instance field snapshot", Optional.empty(), history)));
+                }
+                if (alternatives.isEmpty()) alternatives.add(leaf(input, Kind.UNRESOLVED, "No instance field source is available"));
+                return computed(input, Kind.EXPRESSION, Operation.ALTERNATIVES, "Object field path alternatives", alternatives);
             }
             if (value instanceof JFieldRef field) {
                 List<ValueTrace.Node> children = new ArrayList<>();

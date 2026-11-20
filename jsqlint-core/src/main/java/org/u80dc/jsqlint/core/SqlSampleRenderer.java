@@ -67,7 +67,7 @@ public final class SqlSampleRenderer {
                 assessment);
         return new SqlSample(source, Optional.empty(), bound.rendered(), bindings,
                 feasibility, assessment,
-                new ArrayList<>(issues), Optional.empty(), Optional.empty(), source.definition());
+                new ArrayList<>(issues), Optional.empty(), Optional.empty(), source.definition(),bound.rewrites());
     }
 
     private static SqlSample template(SqlTemplateResult source, SqlNodeRenderer.RenderedSql rendered) {
@@ -141,7 +141,7 @@ public final class SqlSampleRenderer {
                 .orElse(saved.jointInference().isPresent() ? SqlSample.Feasibility.UNKNOWN : SqlSample.Feasibility.UNVERIFIED);
         feasibility = SqlAssessmentPolicy.feasibility(feasibility, assessment);
         return new SqlSample(source, statement.batchEntry(), rendered, bindings, feasibility, assessment,
-                new ArrayList<>(issues), model.rawSql(), model.combination(), statement.definition());
+                new ArrayList<>(issues), model.rawSql(), model.combination(), statement.definition(),model.bound().rewrites());
     }
 
     private static SqlSample sample(SqlExtraction source, SqlExtraction.Statement statement,
