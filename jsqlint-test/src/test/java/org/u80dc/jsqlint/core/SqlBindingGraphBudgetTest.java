@@ -58,26 +58,23 @@ class SqlBindingGraphBudgetTest {
         assertTrue(limits.isEmpty());
     }
 
-    @Test void statementAcceptsCompleteFallbackOrDistinctModelsAndRejectsOmissionOrReordering() {
+    @Test void modeledStatementKeepsEveryModelWithoutDeepEvidenceComparisonOnRead() {
         var first = model(shared(6000, 7), 7);
         var equivalent = model(shared(6000, 7), 7);
         var different = model(shared(0, 8), 8);
         var models = List.of(first, equivalent, different);
-        var fallback = SqlBindingSnapshots.modelBindings(models, ReplayBudgets.defaults().withSteps(1), () -> {}, issue -> {});
         assertTimeoutPreemptively(Duration.ofSeconds(5), () -> {
-            assertEquals(3, statement(models, fallback).bindings().size());
-            assertEquals(2, statement(models, List.of(first.bindings().getFirst(), different.bindings().getFirst())).bindings().size());
-            assertThrows(IllegalArgumentException.class, () -> statement(models, List.of(first.bindings().getFirst())));
-            assertThrows(IllegalArgumentException.class, () -> statement(models,
-                    List.of(different.bindings().getFirst(), first.bindings().getFirst())));
+            var inference = new TemplateInferenceResult(Map.of(), Map.of(), TemplateInputLayout.empty(), Optional.empty(), models, List.of());
+            var statement = new SqlExtraction.Statement(Optional.empty(), Optional.empty(), List.of(),
+                    new SqlExtraction.Statement.Content.Modeled(definition, inference));
+            assertEquals(3, statement.bindings().size());
+            assertSame(first.bindings().getFirst(), statement.bindings().getFirst());
+            assertSame(equivalent.bindings().getFirst(), statement.bindings().get(1));
+            assertSame(different.bindings().getFirst(), statement.bindings().getLast());
+            assertSame(statement.bindings(), statement.bindings());
+            assertSame(statement.rawSql(), statement.rawSql());
+            assertEquals(3, statement.rawSql().variants().size());
         });
-    }
-
-    private SqlExtraction.Statement statement(List<TemplateInferenceResult.BoundModel> models, List<SqlExtraction.Binding> bindings) {
-        var inference = new TemplateInferenceResult(Map.of(), Map.of(), Map.of(), Optional.empty(), Optional.empty(),
-                Map.of(), Optional.empty(), models, List.of());
-        return new SqlExtraction.Statement(Optional.empty(), template, bindings, Optional.empty(), List.of(), List.of(),
-                new RawSql(List.of(), List.of()), Optional.of(definition), Optional.of(inference));
     }
 
     private TemplateInferenceResult.BoundModel model(Node root, int value) {

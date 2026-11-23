@@ -116,6 +116,24 @@ MySQL 回归覆盖 CASE/END、LIMIT/OFFSET、VALUE、锁定子句、窗口边界
   '-Dmaven.test.skip=false' '-DskipTests=false' test
 ```
 
+`SysParamServiceProjectAnalysisTest` 使用同一项目和私服配置，分析
+`SysParamServiceImpl#getCurrentVersion(Long)` 到 `SysParamMapper#getCurrentVersion(Map)` 的调用，
+校验 `SysParamsMapper.xml` 来源、`snc_node_attr` 查询和单个 `nodeid` 绑定。
+报告写入 `target/sys-param-service-get-current-version-sql.txt`；EXTRACT 模式保留未知入口参数，
+另外用手工 `nodeid=42L` 验证 XML 渲染，不将该样例视为 Service 参数追踪结果。
+本次真实项目运行通过，分析状态为 PARTIAL：SQL 文本和 XML 来源正确，
+`HashMap.put("nodeid", nodeid)` 的键值尚未恢复，绑定诊断为 Missing MyBatis parameter: nodeid；
+另保留下游 `StringUtils.isNotBlank` 未解析的诊断。
+该用例默认禁用，显式运行：
+
+```powershell
+.\mvnw.cmd -T 1 -pl jsqlint-test -am `
+  '-Dtest=SysParamServiceProjectAnalysisTest' `
+  '-Dsurefire.failIfNoSpecifiedTests=false' `
+  '-Djsqlint.dpm.test=true' `
+  '-Dmaven.test.skip=false' '-DskipTests=false' test
+```
+
 MyBatis-Plus 第一阶段测试 `MybatisPlusAnalysisTest` 使用真实 3.5.16 框架生成的 BoundSql，
 对照静态定义、继承 CRUD 调用、泛型实体、字段映射、逻辑删除、显式覆盖及会话隔离。
 第二阶段 `MybatisPlusEntityParameterTest` 验证实体构造/赋值/别名/getter、跨方法调用、分支绑定关联、

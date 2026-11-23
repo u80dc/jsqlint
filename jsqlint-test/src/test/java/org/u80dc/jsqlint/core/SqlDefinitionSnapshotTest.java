@@ -13,7 +13,7 @@ import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-/** 定义的预览、参数化快照与执行诊断均在分析阶段保存，结果读取不重新求值。 @author u80dc */
+/** 定义的参数化快照与执行诊断在分析阶段保存，预览只交付监听器，结果读取不重新求值。 @author u80dc */
 class SqlDefinitionSnapshotTest {
     private static final SourceLocation LOCATION = new SourceLocation(URI.create("memory:/definition.sql"), "query");
 
@@ -24,10 +24,17 @@ class SqlDefinitionSnapshotTest {
             return SqlExpressionEvaluator.simple().evaluate(expression, parameters);
         };
         var definition = new SqlDefinition("query", LOCATION, SqlNodeBuilder.templateText("SELECT #{id}"), evaluator, Map.of(), List.of());
-        var result = analyze(definition, Map.of("id", 7), AnalysisOptions.defaults());
+        var previews = new ArrayList<SqlNodeRenderer.RenderedSql>();
+        var options = AnalysisOptions.defaults().withListener(new AnalysisListener() {
+            @Override public void onSql(String moduleId, AnalysisSeed seed, SqlNode template, SqlNodeRenderer.RenderedSql sql) {
+                previews.add(sql);
+            }
+        });
+        var result = analyze(definition, Map.of("id", 7), options);
         assertEquals(AnalysisResult.Status.SUCCESS, result.status());
         var source = (SqlTemplateResult) result.sqlResults().getFirst();
-        assertEquals("SELECT 7", source.rendered().orElseThrow().sql().orElseThrow());
+        assertEquals("SELECT 7", previews.getFirst().sql().orElseThrow());
+        assertEquals("SELECT ?", source.rendered().orElseThrow().sql().orElseThrow());
         assertEquals("SELECT ?", source.bound().orElseThrow().rendered().sql().orElseThrow());
         int savedEvaluations = evaluations.get();
         assertTrue(savedEvaluations > 0);

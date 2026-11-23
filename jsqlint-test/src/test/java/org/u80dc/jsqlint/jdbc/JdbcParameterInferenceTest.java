@@ -385,7 +385,7 @@ class JdbcParameterInferenceTest {
         assertEquals(1.75f, known(only(bindings.get("3").inference().possibleValues())));
         assertEquals(10L << 33, known(only(bindings.get("4").inference().possibleValues())));
         assertEquals("trueZ", known(only(bindings.get("5").inference().possibleValues())));
-        assertTrue(result.extractions().stream().flatMap(e -> e.statements().stream()).allMatch(SqlExtraction.Statement::inferenceComplete));
+        assertTrue(result.calls().stream().flatMap(e -> e.statements().stream()).allMatch(SqlExtraction.Statement::inferenceComplete));
     }
 
     @Test
@@ -492,7 +492,7 @@ class JdbcParameterInferenceTest {
                 .flatMap(binding -> binding.inference().possibleValues().stream()).map(JdbcParameterInferenceTest::known)
                 .collect(Collectors.groupingBy(value -> value, Collectors.counting()));
         assertEquals(Map.of(11, 2L, 22, 2L), parameters, "addBatch 和 executeBatch 均携带加入批次时的值，不使用 99");
-        var batchSqls = result.extractions().stream().filter(e -> e.callSite().target().getName().equals("executeBatch"))
+        var batchSqls = result.calls().stream().filter(e -> e.callSite().target().getName().equals("executeBatch"))
                 .flatMap(e -> e.statements().stream()).flatMap(s -> s.rawSql().variants().stream()).toList();
         assertEquals(2, batchSqls.size());
         assertEquals(Set.of(11, 22), batchSqls.stream().map(sql -> known(only(only(sql.bindings()).inference().possibleValues())))
@@ -641,7 +641,7 @@ class JdbcParameterInferenceTest {
         return result;
     }
     private static Map<String, SqlExtraction.Binding> bindings(AnalysisResult result) {
-        var statements = result.extractions().stream().filter(e -> e.callSite().target().getName().equals("executeQuery"))
+        var statements = result.calls().stream().filter(e -> e.callSite().target().getName().equals("executeQuery"))
                 .flatMap(e -> e.statements().stream()).toList();
         return only(statements).bindings().stream().collect(Collectors.toMap(SqlExtraction.Binding::key, b -> b));
     }

@@ -118,7 +118,7 @@ class AnalyzerTest {
         assertEquals(List.of("SELECT * FROM ${table}", "SELECT 2"), result.rawSqls().stream().map(RawSql.Variant::text).toList(),
                 "原始候选继续保留拼接槽位，已知值只在派生模板中折叠");
         assertEquals(2, result.sqlResults().size(), "兼容回调不重复保存分析结果");
-        assertTrue(result.extractions().stream().allMatch(SqlExtraction::complete));
+        assertTrue(result.calls().stream().allMatch(SqlExtraction::complete));
         assertTrue(capture.diagnostics.isEmpty());
     }
 
@@ -151,10 +151,10 @@ class AnalyzerTest {
         Capture capture = new Capture();
         var result = new Analyzer(List.of(module), List.of()).analyze(classes, options(capture));
         assertEquals(SUCCESS, result.status());
-        assertEquals(2, result.extractions().size(), "提取规则分别保留自己的结果");
+        assertEquals(2, result.calls().size(), "提取规则分别保留自己的结果");
         assertEquals(List.of("SELECT 1", "SELECT 2"), capture.completeSql(), "旧事件只按原始 seed 报告一次，不混入另一个 SQL 输入");
         assertEquals(3, capture.results.size(), "未被完整提取规则覆盖的第二个输入仍保留自己的模板结果");
-        assertEquals(result.extractions(), result.calls());
+        assertEquals(result.sqlResults().stream().filter(SqlExtraction.class::isInstance).toList(), result.calls());
         assertTrue(result.definitions().isEmpty(), "旧裸模板起点不伪装成 SQL 定义");
     }
 
@@ -254,7 +254,7 @@ class AnalyzerTest {
         assertEquals(1, result.sqlResults().size());
         assertSame(saved, capture.results.getFirst());
         assertTrue(result.rawSqls().isEmpty());
-        assertTrue(result.extractions().isEmpty());
+        assertTrue(result.calls().isEmpty());
         assertEquals(URI.create("memory:/mapper.xml"), saved.location().resource());
         assertEquals("app.Mapper.all", saved.location().element());
         var sample = SqlNodeRenderer.render(saved.template(), Map.of("id", 7));
@@ -348,8 +348,8 @@ class AnalyzerTest {
                 .analyze(classes, options(listener));
         assertEquals(SUCCESS, result.status());
         assertEquals(2, result.sqlResults().size());
-        assertEquals(1, result.extractions().size());
-        assertSame(result.extractions().getFirst(), legacy.getFirst());
+        assertEquals(1, result.calls().size());
+        assertSame(result.calls().getFirst(), legacy.getFirst());
         assertEquals(Set.of("SELECT 1", "SELECT 2"), new HashSet<>(result.rawSqls().stream().map(RawSql.Variant::text).toList()));
         assertEquals(2, result.rawSqls().size());
     }
@@ -368,7 +368,7 @@ class AnalyzerTest {
                 """);
         var result = jdbc().analyze(classes);
         assertEquals(SUCCESS, result.status(), result.diagnostics().toString());
-        var sql = result.extractions().stream().filter(e -> e.callSite().target().getName().equals("executeQuery"))
+        var sql = result.calls().stream().filter(e -> e.callSite().target().getName().equals("executeQuery"))
                 .flatMap(e -> e.rawSqls().stream()).findFirst().orElseThrow();
         var joint = sql.jointInference().orElseThrow();
         assertEquals(org.u80dc.jsqlint.core.parameter.JointSqlInferenceResult.Status.UNKNOWN, joint.status());

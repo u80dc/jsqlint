@@ -196,8 +196,11 @@ final class AnalysisSession {
         if (rendered != null) rendered.diagnostics().stream().filter(SqlDiagnostic::limited)
                 .forEach(diagnostic -> limits.add(diagnostic.message()));
         limits.forEach(message -> incomplete("SQL_RENDER_LIMIT", message, Set.of(SqlAssessment.Dimension.VALUES)));
-        var result = new SqlTemplateResult(item.moduleId(), item.seed().location(), template,
-                Optional.ofNullable(rendered), diagnostics.subList(diagnosticStart, diagnostics.size()), definition, Optional.ofNullable(bound));
+        SqlTemplateResult.Content content = definition.isPresent()
+                ? new SqlTemplateResult.Content.Definition(definition.get(), Optional.ofNullable(bound))
+                : new SqlTemplateResult.Content.Template(template, Optional.ofNullable(rendered));
+        var result = new SqlTemplateResult(item.moduleId(), item.seed().location(), content,
+                diagnostics.subList(diagnosticStart, diagnostics.size()));
         sqlResults.add(result);
         notifyListener(listener -> listener.onSqlResult(result));
         analyzed++;

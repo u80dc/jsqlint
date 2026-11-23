@@ -246,7 +246,7 @@ class JdbcJointConsistencyTest {
         assertEquals(0,ToolProvider.getSystemJavaCompiler().run(null,null,null,"-proc:none","-g","-d",classes.toString(),source.toString()));
         var result=new Analyzer(AnalyzerConfig.defaults(),List.of(new JdbcAnalysisModule()),List.of()).analyze(classes);
         assertNotEquals(AnalysisResult.Status.FAILED,result.status());
-        return result.extractions().stream().filter(e -> e.callSite().target().getName().equals("executeQuery"))
+        return result.calls().stream().filter(e -> e.callSite().target().getName().equals("executeQuery"))
                 .flatMap(e -> e.statements().stream()).flatMap(s -> s.rawSql().variants().stream()).toList();
     }
     private static Set<List<Object>> pairs(JointSqlInferenceResult joint){return joint.combinations().stream().map(c -> c.bindings().stream()

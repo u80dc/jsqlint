@@ -937,12 +937,12 @@ class JdbcDataFlowTest {
         var result = new Analyzer(AnalyzerConfig.defaults().withMaxTraceDepth(64), List.of(new JdbcAnalysisModule()), List.of())
                 .analyze(classes, dependency, AnalysisOptions.defaults().withListener(listener));
         assertNotEquals(FAILED, result.status(), diagnostics.toString());
-        assertEquals(events, result.extractions());
-        assertThrows(UnsupportedOperationException.class, () -> result.extractions().clear());
+        assertEquals(events, result.calls());
+        assertThrows(UnsupportedOperationException.class, () -> result.calls().clear());
         return result;
     }
     private static List<SqlExtraction> calls(AnalysisResult result, String name) {
-        return result.extractions().stream().filter(value -> value.callSite().target().getName().equals(name)).toList();
+        return result.calls().stream().filter(value -> value.callSite().target().getName().equals(name)).toList();
     }
     private static <T> T only(List<T> values) { assertEquals(1, values.size(), values.toString()); return values.getFirst(); }
     private static Stream<ValueTrace.Node> nodes(ValueTrace.Node node) {

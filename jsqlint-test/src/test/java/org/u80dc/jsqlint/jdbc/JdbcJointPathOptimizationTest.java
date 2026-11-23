@@ -271,7 +271,7 @@ class JdbcJointPathOptimizationTest {
         assertEquals(0,ToolProvider.getSystemJavaCompiler().run(null,null,null,"-proc:none","-g","-d",classes.toString(),source.toString()));
         var result=new Analyzer(config,List.of(new JdbcAnalysisModule()),List.of()).analyze(classes);
         assertNotEquals(AnalysisResult.Status.FAILED,result.status());
-        return result.extractions().stream().filter(e -> Set.of("execute","executeQuery").contains(e.callSite().target().getName()))
+        return result.calls().stream().filter(e -> Set.of("execute","executeQuery").contains(e.callSite().target().getName()))
                 .flatMap(e -> e.statements().stream()).flatMap(s -> s.rawSql().variants().stream()).toList();
     }
     private static Set<Object> values(JointSqlInferenceResult joint){return joint.combinations().stream()

@@ -41,7 +41,7 @@ class JdbcMethodEffectsTest {
     }
 
     private static List<SqlExtraction> executions(AnalysisResult result) {
-        return result.extractions().stream().filter(value -> value.callSite().target().getName().equals("executeQuery")).toList();
+        return result.calls().stream().filter(value -> value.callSite().target().getName().equals("executeQuery")).toList();
     }
     private AnalysisResult analyze(String call) throws Exception {
         Path root = Files.createTempDirectory(temporary, "method-effects-");

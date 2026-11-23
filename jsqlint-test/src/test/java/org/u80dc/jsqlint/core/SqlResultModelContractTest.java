@@ -78,16 +78,18 @@ class SqlResultModelContractTest {
                 List.of(first), Optional.empty(), List.of()));
     }
 
-    @Test void modelAssociationRejectsDifferentFinalBindingSnapshots() {
+    @Test void migrationConstructorRejectsCandidateValuesThatDifferFromTheModel() {
         var node = SqlNodeBuilder.templateText("SELECT #{id}");
         var fixture = fixture(node, Map.of("id", 11));
-        var model = fixture.model();
         var slot = SqlBindingSnapshots.bound(fixture.bound(), LOCATION, fixture.bindings()).getFirst();
         var changed = new SqlSample.Binding(slot.key(), slot.type(), slot.keyValue(), new SqlValue.Known(22),
                 slot.location(), slot.options(), slot.trace());
-        assertThrows(IllegalArgumentException.class, () -> model.withRawSql(new RawSql.Variant("SELECT ?", List.of(),
-                Optional.empty(), fixture.bindings(), Optional.empty(),
-                List.of(new RawSql.BindingSnapshot(List.of(changed), Optional.of(fixture.combination()))))));
+        var definition = new SqlDefinition("query", LOCATION, node);
+        var changedCandidate = new RawSql.Variant("SELECT ?", List.of(), Optional.empty(), List.of(), Optional.empty(),
+                List.of(new RawSql.BindingSnapshot(List.of(changed), Optional.empty())));
+        assertThrows(IllegalArgumentException.class, () -> new SqlExtraction.Statement(Optional.empty(), node, fixture.bindings(),
+                Optional.empty(), List.of(), List.of(), new RawSql(List.of(changedCandidate), List.of()), Optional.of(definition),
+                Optional.of(state(List.of(fixture.model()), Optional.empty()))));
     }
 
     @Test void identicalSqlModelsShareTheirOwnAuthoritativeSnapshotsWithSamples() {
@@ -97,15 +99,11 @@ class SqlResultModelContractTest {
         var second = fixture(node, Map.of("id", 22));
         var joint = new JointSqlInferenceResult(JointSqlInferenceResult.Status.SATISFIABLE,
                 List.of(first.combination(), second.combination()), List.of());
-        var firstVariant = variant(first, Optional.of(joint));
-        var secondVariant = variant(second, Optional.of(joint));
-        var firstModel = first.model().withRawSql(firstVariant);
-        var secondModel = second.model().withRawSql(secondVariant);
-        var state = state(List.of(firstModel, secondModel), Optional.of(joint));
-        var bindings = List.of(first.bindings().getFirst(), second.bindings().getFirst());
-        var raw = new RawSql(List.of(secondVariant, firstVariant), List.of());
-        var statement = new SqlExtraction.Statement(Optional.empty(), node, bindings, Optional.empty(), List.of(), List.of(),
-                raw, Optional.of(definition), Optional.of(state));
+        var state = state(List.of(first.model(), second.model()), Optional.of(joint));
+        var statement = new SqlExtraction.Statement(Optional.empty(), Optional.empty(), List.of(),
+                new SqlExtraction.Statement.Content.Modeled(definition, state));
+        var firstVariant = statement.rawSql().variants().getFirst();
+        var secondVariant = statement.rawSql().variants().getLast();
         var source = extraction(statement);
         var samples = source.samples();
         assertEquals(List.of(new SqlValue.Known(11), new SqlValue.Known(22)), samples.stream()
@@ -116,20 +114,18 @@ class SqlResultModelContractTest {
         assertSame(secondVariant.bindingSnapshots().getFirst().bindings(), samples.getLast().bindings());
         assertEquals(samples, source.samples());
 
-        assertThrows(IllegalArgumentException.class, () -> new SqlExtraction.Statement(Optional.empty(), node, bindings,
+        assertThrows(IllegalArgumentException.class, () -> new SqlExtraction.Statement(Optional.empty(), node, statement.bindings(),
                 Optional.empty(), List.of(), List.of(), new RawSql(List.of(firstVariant), List.of()), Optional.of(definition), Optional.of(state)));
     }
 
-    @Test void legacyBoundModelConstructorExplicitlyLeavesRawSqlUnassociated() {
+    @Test void modelWithoutPreassociatedCandidateStillExportsFrozenSqlAndBindings() {
         var node = SqlNodeBuilder.templateText("SELECT #{id}");
         var fixture = fixture(node, Map.of("id", 11));
         var model = fixture.model();
-        assertTrue(model.rawSql().isEmpty());
-        var statement = new SqlExtraction.Statement(Optional.empty(), node, fixture.bindings(), Optional.empty(), List.of(), List.of(),
-                new RawSql(List.of(variant(fixture, Optional.empty())), List.of()),
-                Optional.of(new SqlDefinition("query", LOCATION, node)), Optional.of(state(List.of(model), Optional.empty())));
+        var statement = new SqlExtraction.Statement(Optional.empty(), Optional.empty(), List.of(),
+                new SqlExtraction.Statement.Content.Modeled(new SqlDefinition("query", LOCATION, node), state(List.of(model), Optional.empty())));
         var sample = extraction(statement).samples().getFirst();
-        assertTrue(sample.rawSql().isEmpty());
+        assertSame(statement.rawSql().variants().getFirst(), sample.rawSql().orElseThrow());
         assertEquals(new SqlValue.Known(11), sample.bindings().getFirst().value());
     }
 

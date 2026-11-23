@@ -30,7 +30,7 @@ class MybatisUserQueryAnalysisTest {
         assertEquals(Set.of("createTable", "insert", "find", "rename", "search", "optional", "delete", "unusedCount",
                 "providerFind", "providerInsert", "providerRename", "providerDelete", "unusedProviderCount"), definitions.stream()
                 .map(definition -> definition.definition().orElseThrow().id().substring(MAPPER.length() + 1)).collect(java.util.stream.Collectors.toSet()));
-        var calls = result.extractions().stream().filter(value -> value.moduleId().equals("mybatis")).toList();
+        var calls = result.calls().stream().filter(value -> value.moduleId().equals("mybatis")).toList();
         assertEquals(11, calls.size());
         assertTrue(calls.stream().allMatch(value -> value.callSite().target().getDeclClassType().toString().equals(MAPPER)));
         var samples = calls.stream().flatMap(value -> value.samples().stream()).toList();

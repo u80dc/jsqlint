@@ -399,7 +399,7 @@ class JdbcRawSqlTest {
     }
 
     private static List<SqlExtraction.Statement> statements(AnalysisResult result, String target) {
-        return result.extractions().stream().filter(e -> e.callSite().target().getName().equals(target))
+        return result.calls().stream().filter(e -> e.callSite().target().getName().equals(target))
                 .flatMap(e -> e.statements().stream()).toList();
     }
     private static RawSql raw(AnalysisResult result, String target) { return only(statements(result, target)).rawSql(); }

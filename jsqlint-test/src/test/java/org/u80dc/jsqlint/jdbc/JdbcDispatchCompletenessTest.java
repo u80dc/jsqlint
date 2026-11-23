@@ -83,7 +83,7 @@ class JdbcDispatchCompletenessTest {
         assertTrue(executionSamples(result).isEmpty());
     }
     private static List<RawSql.Variant> executions(AnalysisResult result) {
-        return result.extractions().stream().filter(value -> value.callSite().target().getName().equals("executeQuery"))
+        return result.calls().stream().filter(value -> value.callSite().target().getName().equals("executeQuery"))
                 .flatMap(value -> value.rawSqls().stream()).toList();
     }
     private static List<SqlSample> executionSamples(AnalysisResult result) {

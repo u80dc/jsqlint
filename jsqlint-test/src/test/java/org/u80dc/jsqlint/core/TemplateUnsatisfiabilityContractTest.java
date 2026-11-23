@@ -87,8 +87,8 @@ class TemplateUnsatisfiabilityContractTest {
         };
         var result = new Analyzer(List.of(module), List.of()).analyze(classes);
         assertNotEquals(AnalysisResult.Status.FAILED, result.status(), result.diagnostics().toString());
-        assertEquals(1, result.extractions().size(), result.diagnostics().toString());
-        return result.extractions().getFirst();
+        assertEquals(1, result.calls().size(), result.diagnostics().toString());
+        return result.calls().getFirst();
     }
 
     private static JointSqlInferenceResult joint(SqlExtraction extraction) {

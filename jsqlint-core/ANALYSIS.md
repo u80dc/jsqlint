@@ -333,7 +333,7 @@ analyzer.analyze(project, options); // 仅本次提取来源与结构。
 
 `AnalysisResult` 包含内部枚举 `Status`、不可变的统一结果 `sqlResults()` 和结构化诊断 `diagnostics()`。
 `SqlResult` 的两个实现分别保留字节码传播结果 `SqlExtraction` 和资源/注解模板 `SqlTemplateResult`。
-原有 `extractions()` 继续提供字节码结果视图；`rawSqls()` 汇总已恢复的字节码 SQL 和静态模板 SQL。
+`calls()` 提供实际调用结果视图；`rawSqls()` 汇总已恢复的字节码 SQL 和静态模板 SQL。
 动态模板通过 `templates()` 保存完整节点，尚未展开时不伪造 raw SQL；可使用
 `SqlNodeRenderer.render(template, parameters)` 在分析结束后提供参数渲染样例。
 所有结果均保留模块和来源位置，在输入关闭后仍可读取，不持有 JavaView、方法体或编译目录资源。
@@ -363,14 +363,17 @@ var sample = template.sample(Map.of("id", 7));
 不重新解释表达式、不重新访问代码，也不在读取时施加另一套默认渲染预算。
 未知槽位仍保留保存值中的原因；这些样例诊断不修改分析结果。
 `rawSqls()` 和 `assessment()` 继续从保存的事实派生。
-`samples(SqlEvaluationContext)` 可显式限制样例投影工作和文本长度并检查取消；
+`SqlResult.samples(SqlEvaluationContext)` 可显式限制样例投影工作和文本长度并检查取消；
+聚合结果使用 `SqlSampleRenderer.render(result, context)`，这些执行选项不再放到 AnalysisResult 上；
 `sample(Map, SqlEvaluationContext)` 用指定上下文独立渲染显式模板参数。
-定义的 `SqlTemplateResult.rendered()` 保留字面量预览，`bound()` 保存以 `AnalysisSeed.parameters()`
-为原始输入的参数化 SQL 和绑定值；两种渲染分别使用原始参数，避免重复应用 bind。
+`SqlTemplateResult.content()` 明确区分 Definition 与 Template。定义只保存以 `AnalysisSeed.parameters()`
+为原始输入的参数化 SQL 和绑定快照；`rendered()` 从 `bound()` 派生。字面量预览只在分析期间
+交付旧 `onSql` 回调，不再持久保存到定义结果。裸模板仍保存自己的部分渲染快照。
 `sample(Map)` 使用显式参数独立渲染，不修改原始结果。旧五/六参数构造器继续可用；
 手工构造定义结果时需提供 `bound` 快照才能读取默认样例，缺失时保留残余模板并报告
 `RENDER_UNAVAILABLE`，也可通过 `sample(Map)` 显式渲染。
-每个样例保留原始 `source()`、`rawSql()`、`combination()`、可选 `batchEntry()` 和 `definition()`。
+每个样例保留原始 `source()`、可选 `batchEntry()`；候选、路径组合、定义和改写记录集中在
+`evidence()` 中。`rawSql()`、`combination()`、`definition()`、`rewrites()` 是该证据的派生访问器。
 绑定值另保留适配层 `options()` 和可选传播证据 `trace()`。
 样例覆盖准备点、执行点和批次加入点；可通过 `sample.source()` 中的调用点选择所需结果。
 相同文本的不同来源或批次分别保留。
@@ -381,9 +384,12 @@ var sample = template.sample(Map.of("id", 7));
 不再按组合反向搜索另一份绑定表示。
 模板推断模型同样必须属于保存的联合组合；整体无解结果不允许附带可输出模型。
 `inferParameters` 拒绝重复名称，防止联合维度被静默覆盖；整体无解不能同时包含可满足或未知组合。
-模板模型通过 `BoundModel.rawSql()` 关联自己的候选，该候选中的唯一最终绑定快照同时供样例读取，
-不按 SQL 文本和绑定列表反向匹配。旧四参数 BoundModel 构造器保留无关联状态，可派生绑定，
-但不会猜测对应的 raw SQL 候选。恢复模式与持久数据容器的保护范围见 core README。
+模板语句的 `Content.Modeled` 只接收定义与冻结 `TemplateInferenceResult`，原模板和模板诊断由定义派生。
+各模型不再保存另一份 rawSql 关联；语句组装时按模型顺序导出候选与最终绑定快照，未知 SQL 模型
+保留空候选位置。样例直接使用同一索引下的快照，不按 SQL 文本和绑定列表反向匹配。
+`statement.bindings()` 是各模型 Java 证据的有序汇总，保留重复项，不在默认读取时进行深图去重。
+输入名称布局集中在 `TemplateInputLayout`，来源、独立候选和最终模型分别保存。
+恢复模式与持久数据容器的保护范围见 core README。
 
 代码样例只从单个联合 `Combination` 取出槽位和绑定值，不将独立候选列表再次组合。
 `UNSATISFIABLE` 候选继续保存在 `rawSqls()` 中供核查，不生成样例；
@@ -476,7 +482,7 @@ JDBC 模块在共享代码扫描完成后定位 SQL 和绑定值，core 负责�
 
 ```java
 var result = new Analyzer().analyze(project);
-for (var extraction : result.extractions()) {
+for (var extraction : result.calls()) {
     System.out.println(extraction.callSite()); // 执行/准备/批次加入调用点
     System.out.println(extraction.callChain()); // 从项目入口到该调用点所在方法
     for (var statement : extraction.statements()) {
@@ -527,16 +533,17 @@ for (var sql : result.rawSqls()) {
 因此 `rawSqls().size()` 是候选记录数，包含已识别的准备点/执行点和不同调用上下文，不能作为实际执行次数。
 只需要不同文本时可使用 `result.rawSqls().stream().map(RawSql.Variant::text).distinct().toList()`。
 每个候选直接保存拼接参数和对应的绑定参数，调用方无需按 SQL 文本重新匹配。
-绑定快照在 `SqlExtraction.Statement` 组装时关联，`statement.bindings()` 与候选的 `bindings()` 内容一致；
+绑定快照在 `SqlExtraction.Statement` 组装时关联；代码 SQL 的 `statement.bindings()` 与候选的
+`bindings()` 内容一致，模板 SQL 的每个候选只保留对应模型的绑定，外层按模型顺序汇总全部证据。
 不同调用上下文、不同批次中的相同 SQL 文本分别保留各自的参数，准备点不会混入后续 setter 的值。
 拼接参数与预编译绑定参数分别访问，不按名称混合去重；绑定值的 Unknown、初始值和传播链均保留。
 `bindingSnapshots()` 按最终联合组合分别保存绑定值，与样例使用相同快照；定义候选也保存绑定，
 其传播证据和路径组合可以为空。相同 SQL 文本的不同绑定分支不合并，不跨组合混用参数。
 `sql.inferenceComplete()` 只检查当前候选已关联参数的推断，不保证 JDBC 的所有 `?` 都已经被设置。
-调用点、批次位置和各层诊断继续通过 `result.extractions()` 获取；未能生成任何候选的失败来源及其绑定参数也保存在其中。
+调用点、批次位置和各层诊断继续通过 `result.calls()` 获取；未能生成任何候选的失败来源及其绑定参数也保存在其中。
 
 `result.definitions()` 返回资源、注解与计算定义的 `SqlTemplateResult`；`result.calls()` 返回
-完整调用提取的 `SqlExtraction`，包含 JDBC 和 Mapper 调用。`extractions()` 保留为同一调用视图的兼容入口。
+完整调用提取的 `SqlExtraction`，包含 JDBC 和 Mapper 调用。
 两者保留结果顺序并返回不可变列表；调用关联的定义不会重复加入定义视图，旧裸模板仍通过 `sqlResults()` 读取。
 
 `statement.rawSql()` 保存可直接查看的 SQL 文本候选，core 同时以 `Raw SQL` 日志输出。
@@ -545,7 +552,7 @@ for (var sql : result.rawSqls()) {
 框架模块只负责定位 SQL 与绑定参数。
 
 ```java
-for (var extraction : result.extractions()) {
+for (var extraction : result.calls()) {
     for (var statement : extraction.statements()) {
         var raw = statement.rawSql();
         for (var variant : raw.variants()) {
@@ -609,7 +616,7 @@ MyBatis 定义来源通过同一套推断器追踪实参；其他框架也可使
 `Analyzer` 在启用 `PARAMETERS` 或 `JOINT` 时自动推断，关闭输入或清理编译输出后，推断对象仍然可读。
 
 ```java
-for (var extraction : result.extractions()) {
+for (var extraction : result.calls()) {
     for (var statement : extraction.statements()) {
         System.out.println(statement.inferenceComplete());
         for (var binding : statement.bindings()) {

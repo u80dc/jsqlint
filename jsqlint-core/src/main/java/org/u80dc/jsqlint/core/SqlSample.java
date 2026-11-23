@@ -1,6 +1,7 @@
 package org.u80dc.jsqlint.core;
 
 import org.u80dc.jsqlint.core.node.SqlNodeRenderer.RenderedSql;
+import org.u80dc.jsqlint.core.node.SqlRewriteStep;
 import org.u80dc.jsqlint.core.node.SqlValue;
 import org.u80dc.jsqlint.core.parameter.JointSqlInferenceResult.Combination;
 import org.u80dc.jsqlint.core.spi.SourceLocation;
@@ -15,8 +16,15 @@ import java.util.*;
  */
 public record SqlSample(SqlResult source, Optional<SourceLocation> batchEntry, RenderedSql rendered,
                         List<Binding> bindings, Feasibility feasibility, SqlAssessment assessment,
-                        List<String> issues, Optional<RawSql.Variant> rawSql, Optional<Combination> combination,
-                        Optional<SqlDefinition> definition, List<org.u80dc.jsqlint.core.node.SqlRewriteStep> rewrites) {
+                        List<String> issues, SqlSampleEvidence evidence) {
+    /** 将原有分散的证据参数聚合到同一不可变对象。 */
+    public SqlSample(SqlResult source, Optional<SourceLocation> batchEntry, RenderedSql rendered,
+                     List<Binding> bindings, Feasibility feasibility, SqlAssessment assessment,
+                     List<String> issues, Optional<RawSql.Variant> rawSql, Optional<Combination> combination,
+                     Optional<SqlDefinition> definition, List<SqlRewriteStep> rewrites) {
+        this(source, batchEntry, rendered, bindings, feasibility, assessment, issues,
+                new SqlSampleEvidence(rawSql, combination, definition, rewrites));
+    }
     public SqlSample(SqlResult source,Optional<SourceLocation> batchEntry,RenderedSql rendered,List<Binding> bindings,
                      Feasibility feasibility,SqlAssessment assessment,List<String> issues,Optional<RawSql.Variant> rawSql,
                      Optional<Combination> combination,Optional<SqlDefinition> definition) {
@@ -25,9 +33,7 @@ public record SqlSample(SqlResult source, Optional<SourceLocation> batchEntry, R
     public SqlSample {
         Objects.requireNonNull(source); Objects.requireNonNull(batchEntry); Objects.requireNonNull(rendered);
         bindings = List.copyOf(bindings); Objects.requireNonNull(feasibility); Objects.requireNonNull(assessment);
-        issues = List.copyOf(issues); Objects.requireNonNull(rawSql); Objects.requireNonNull(combination);
-        Objects.requireNonNull(definition);
-        rewrites=List.copyOf(rewrites);
+        issues = List.copyOf(issues); Objects.requireNonNull(evidence);
     }
     public SqlSample(SqlResult source, Optional<SourceLocation> batchEntry, RenderedSql rendered,
                      List<Binding> bindings, Feasibility feasibility, SqlAssessment assessment,
@@ -37,6 +43,10 @@ public record SqlSample(SqlResult source, Optional<SourceLocation> batchEntry, R
     public String moduleId() { return source.moduleId(); }
     public SourceLocation location() { return source.location(); }
     public Optional<String> sql() { return rendered.sql(); }
+    public Optional<RawSql.Variant> rawSql() { return evidence.rawSql(); }
+    public Optional<Combination> combination() { return evidence.combination(); }
+    public Optional<SqlDefinition> definition() { return evidence.definition(); }
+    public List<SqlRewriteStep> rewrites() { return evidence.rewrites(); }
 
     /** SATISFIABLE 只表示该组合在支持的路径模型内可行；UNVERIFIED 表示没有求解路径。 */
     public enum Feasibility { SATISFIABLE, UNVERIFIED, UNKNOWN }

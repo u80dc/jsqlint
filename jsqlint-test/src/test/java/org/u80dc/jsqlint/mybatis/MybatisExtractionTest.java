@@ -39,7 +39,7 @@ class MybatisExtractionTest {
         assertEquals(AnalysisResult.Status.SUCCESS, result.status(), result.diagnostics().toString());
         assertEquals(1, result.definitions().size());
         assertEquals("sample.Mapper.query", result.definitions().getFirst().definition().orElseThrow().id());
-        assertEquals(result.extractions(), result.calls());
+        assertEquals(result.sqlResults().stream().filter(SqlExtraction.class::isInstance).toList(), result.calls());
         assertEquals(1, result.calls().size());
         assertEquals(2, result.sqlResults().size());
         assertThrows(UnsupportedOperationException.class, () -> result.definitions().clear());
@@ -54,7 +54,7 @@ class MybatisExtractionTest {
         assertEquals("jdbcType=INTEGER", sample.bindings().getFirst().options());
         assertTrue(sample.bindings().stream().allMatch(binding -> binding.trace().isPresent()));
         assertEquals(sample.bindings().getFirst().trace(), sample.bindings().getLast().trace());
-        var statement = result.extractions().getFirst().statements().getFirst();
+        var statement = result.calls().getFirst().statements().getFirst();
         assertTrue(statement.sql().isEmpty(), "定义来源不伪造 Java SQL 字符串传播树");
         assertEquals(3, statement.templateInference().orElseThrow().sources().size());
         assertSame(sample.rawSql().orElseThrow(), statement.rawSql().variants().getFirst());
@@ -79,7 +79,7 @@ class MybatisExtractionTest {
             var sample = onlyCalls(result);
             assertEquals(AnalysisResult.Status.SUCCESS, result.status(), result.diagnostics().toString());
             assertEquals(List.of(new SqlValue.Known(7), new SqlValue.Known("ok"), new SqlValue.Known(7), new SqlValue.Known("ok")), values(sample));
-            var inferred = result.extractions().getFirst().statements().getFirst().templateInference().orElseThrow();
+            var inferred = result.calls().getFirst().statements().getFirst().templateInference().orElseThrow();
             assertEquals(2, inferred.sources().size(), "RowBounds/ResultHandler 不能成为普通 SQL 参数");
             var configuration = new Configuration(); configuration.setUseActualParamName(useActual);
             try (var loader = new URLClassLoader(new java.net.URL[]{classes.toUri().toURL()}, getClass().getClassLoader())) {
@@ -102,7 +102,7 @@ class MybatisExtractionTest {
         assertEquals("SELECT ?,?,?", sample.sql().orElseThrow());
         assertEquals(Collections.nCopies(3, new SqlValue.Known(null)), values(sample));
         assertTrue(sample.assessment().valuesComplete());
-        assertEquals(1, result.extractions().getFirst().statements().getFirst().templateInference().orElseThrow().sources().size());
+        assertEquals(1, result.calls().getFirst().statements().getFirst().templateInference().orElseThrow().sources().size());
     }
 
     @Test void explicitParamNamesAreNotOverwrittenByGenericAliases() throws Exception {
@@ -166,7 +166,7 @@ class MybatisExtractionTest {
             assertEquals(SqlSample.Feasibility.UNVERIFIED, sample.feasibility());
             assertTrue(values(sample).stream().allMatch(SqlValue.Unknown.class::isInstance));
             assertTrue(sample.combination().isEmpty()); assertTrue(sample.assessment().pathCoverageComplete().isEmpty());
-            var parameters = result.extractions().getFirst().statements().getFirst().templateInference().orElseThrow().parameters();
+            var parameters = result.calls().getFirst().statements().getFirst().templateInference().orElseThrow().parameters();
             assertEquals(mode == InferenceOptions.Mode.PARAMETERS, parameters.values().stream().allMatch(value -> !value.possibleValues().isEmpty()));
         }
     }
@@ -249,7 +249,7 @@ class MybatisExtractionTest {
         var options = AnalysisOptions.defaults().withListener(listener).withCancelled(cancelled::get);
         var result = new Analyzer(AnalyzerConfig.defaults(), List.of(new MybatisAnalysisModule()), List.of()).analyze(classes, options);
         assertEquals(AnalysisResult.Status.CANCELLED, result.status());
-        assertEquals(1, result.sqlResults().size()); assertTrue(result.extractions().isEmpty());
+        assertEquals(1, result.sqlResults().size()); assertTrue(result.calls().isEmpty());
     }
 
     private Path compile(String source, boolean names) throws Exception {

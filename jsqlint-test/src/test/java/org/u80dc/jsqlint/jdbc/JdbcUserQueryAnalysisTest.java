@@ -53,13 +53,13 @@ class JdbcUserQueryAnalysisTest {
         assertTrue(result.diagnostics().stream().allMatch(diagnostic -> Set.of("UNSUPPORTED_VALUE",
                 "SQL_DATA_FLOW_INCOMPLETE", "JOINT_ANALYSIS_INCOMPLETE").contains(diagnostic.code())), diagnostics);
         var jointDiagnostics = result.diagnostics().stream().filter(d -> d.code().equals("JOINT_ANALYSIS_INCOMPLETE")).toList();
-        long uncoveredExtractions = result.extractions().stream().filter(extraction -> extraction.rawSqls().stream()
+        long uncoveredExtractions = result.calls().stream().filter(extraction -> extraction.rawSqls().stream()
                 .anyMatch(sql -> !sql.jointInference().orElseThrow().coverageComplete())).count();
         assertEquals(uncoveredExtractions, jointDiagnostics.size(), "每个未完整覆盖的调用上下文都应保留诊断");
         for (var diagnostic : jointDiagnostics) {
             assertTrue(diagnostic.incomplete());
             assertTrue(diagnostic.location().isPresent());
-            assertTrue(result.extractions().stream().filter(e -> e.location().equals(diagnostic.location().get()))
+            assertTrue(result.calls().stream().filter(e -> e.location().equals(diagnostic.location().get()))
                     .flatMap(e -> e.rawSqls().stream()).flatMap(sql -> sql.jointInference().stream())
                     .anyMatch(joint -> !joint.coverageComplete() && joint.status() == JointSqlInferenceResult.Status.UNKNOWN),
                     diagnostic.toString());
@@ -82,10 +82,10 @@ class JdbcUserQueryAnalysisTest {
         assertTrue(capture.callSites.stream().allMatch(site -> site.kind() == SqlCallSite.Kind.INVOCATION
                 && site.caller().orElseThrow().getDeclClassType().toString().equals(USER_REPOSITORY)));
         assertEquals(2, capture.callSites.stream().filter(site -> site.target().getParameterTypes().isEmpty()).count());
-        assertEquals(8, result.extractions().stream().map(SqlExtraction::callSite).distinct().count());
-        assertTrue(result.extractions().stream().allMatch(extraction -> !extraction.statements().isEmpty()
+        assertEquals(8, result.calls().stream().map(SqlExtraction::callSite).distinct().count());
+        assertTrue(result.calls().stream().allMatch(extraction -> !extraction.statements().isEmpty()
                 && extraction.statements().stream().allMatch(statement -> statement.sql().isPresent())));
-        assertTrue(result.extractions().stream().allMatch(extraction -> !extraction.callChain().isEmpty()
+        assertTrue(result.calls().stream().allMatch(extraction -> !extraction.callChain().isEmpty()
                 && extraction.callChain().getFirst().caller().orElseThrow().getName().equals("main")));
         assertTrue(capture.sql.stream().allMatch(sql -> sql.module().equals("jdbc") && sql.owner().equals(USER_REPOSITORY)));
         Map<String, ExtractedSql> byMethod = capture.sql.stream()
@@ -103,10 +103,10 @@ class JdbcUserQueryAnalysisTest {
         assertTextContains(byMethod.get("deleteById"), "DELETE FROM app_users", " WHERE id = ");
 
         // raw SQL 来自过程间传播链，保留业务参数名；不受旧模板求值器的支持范围影响。
-        assertTrue(result.extractions().stream().flatMap(e -> e.statements().stream()).allMatch(s -> s.rawSql().complete()),
-                () -> result.extractions().stream().flatMap(e -> e.statements().stream())
+        assertTrue(result.calls().stream().flatMap(e -> e.statements().stream()).allMatch(s -> s.rawSql().complete()),
+                () -> result.calls().stream().flatMap(e -> e.statements().stream())
                         .flatMap(s -> s.rawSql().issues().stream()).toList().toString());
-        Map<String, Set<String>> rawByMethod = result.extractions().stream().collect(Collectors.groupingBy(
+        Map<String, Set<String>> rawByMethod = result.calls().stream().collect(Collectors.groupingBy(
                 e -> e.callSite().caller().orElseThrow().getName(), Collectors.flatMapping(
                         e -> e.statements().stream().flatMap(s -> s.rawSql().variants().stream()).map(RawSql.Variant::text),
                         Collectors.toSet())));
@@ -176,7 +176,7 @@ class JdbcUserQueryAnalysisTest {
                 .append("拼接参数属于 ${name} 槽位；JDBC 绑定参数属于 setXxx 设置的 ? 或命名参数。\n")
                 .append("模拟 SQL 按同一联合组合生成；UNKNOWN 仅供核查，尚未证明路径可行；UNSATISFIABLE 不生成样例。\n");
         int number = 0;
-        for (var extraction : result.extractions()) {
+        for (var extraction : result.calls()) {
             for (var statement : extraction.statements()) {
                 for (var sql : statement.rawSql().variants()) {
                     report.append("\n[SQL ").append(++number).append("]\n")

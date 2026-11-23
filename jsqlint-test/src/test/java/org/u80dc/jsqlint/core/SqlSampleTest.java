@@ -50,7 +50,7 @@ class SqlSampleTest {
                     p.executeQuery();
                 }
                 """, AnalyzerConfig.defaults());
-        var variants = result.extractions().stream().filter(value -> value.callSite().target().getName().equals("executeQuery"))
+        var variants = result.calls().stream().filter(value -> value.callSite().target().getName().equals("executeQuery"))
                 .flatMap(value -> value.rawSqls().stream()).toList();
         var snapshots = variants.stream().flatMap(raw -> raw.bindingSnapshots().stream()).toList();
         assertEquals(Set.of("SELECT ?"), variants.stream().map(RawSql.Variant::text).collect(java.util.stream.Collectors.toSet()));

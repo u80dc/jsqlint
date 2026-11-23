@@ -28,7 +28,7 @@ class MybatisDefinitionTest {
                 """);
         var result = resources(resources, MybatisOptions.defaults());
         assertEquals(AnalysisResult.Status.SUCCESS, result.status());
-        assertTrue(result.extractions().isEmpty()); assertEquals(2, result.sqlResults().size());
+        assertTrue(result.calls().isEmpty()); assertEquals(2, result.sqlResults().size());
         var definition = definition(result, "sample.Mapper.query");
         var unknown = definition.samples().getFirst();
         assertEquals("SELECT * FROM users WHERE id=? OR parent=?", unknown.sql().orElseThrow());
@@ -104,7 +104,7 @@ class MybatisDefinitionTest {
         var provider = new Analyzer(List.of(new MybatisAnalysisModule()), List.of()).analyze(classes);
         assertEquals(AnalysisResult.Status.PARTIAL, provider.status());
         assertTrue(provider.diagnostics().stream().anyMatch(diagnostic -> diagnostic.message().contains("getProperty")));
-        assertEquals(1, provider.extractions().size()); assertTrue(provider.extractions().getFirst().samples().getFirst().sql().isEmpty());
+        assertEquals(1, provider.calls().size()); assertTrue(provider.calls().getFirst().samples().getFirst().sql().isEmpty());
     }
 
     @Test void repeatableAnnotationsSelectDatabaseVariantAndConflictingXmlDoesNotWinSilently() throws Exception {
@@ -118,12 +118,12 @@ class MybatisDefinitionTest {
         var options = MybatisOptions.defaults().withDatabaseId("postgresql");
         var result = new Analyzer(List.of(new MybatisAnalysisModule(options)), List.of()).analyze(classes);
         assertEquals(AnalysisResult.Status.SUCCESS, result.status(), result.diagnostics().toString());
-        assertEquals("SELECT ? FROM postgres", result.extractions().getFirst().samples().getFirst().sql().orElseThrow());
+        assertEquals("SELECT ? FROM postgres", result.calls().getFirst().samples().getFirst().sql().orElseThrow());
         assertEquals(1, result.sqlResults().stream().filter(SqlTemplateResult.class::isInstance).count());
         Files.writeString(classes.resolve("mapper.xml"), "<mapper namespace='sample.Mapper'><select id='query' databaseId='postgresql'>SELECT 8</select></mapper>");
         var conflict = new Analyzer(List.of(new MybatisAnalysisModule(options)), List.of()).analyze(classes);
         assertEquals(AnalysisResult.Status.PARTIAL, conflict.status());
-        var sample = conflict.extractions().getFirst().samples().getFirst();
+        var sample = conflict.calls().getFirst().samples().getFirst();
         assertTrue(sample.sql().isEmpty()); assertEquals(SqlSample.Feasibility.UNKNOWN, sample.feasibility());
         assertTrue(sample.issues().stream().anyMatch(issue -> issue.contains("Ambiguous")));
     }
@@ -141,10 +141,10 @@ class MybatisDefinitionTest {
         Files.writeString(classes.resolve("mapper.xml"), "<mapper namespace='sample.Child'><select id='query'>SELECT #{id} FROM child</select></mapper>");
         var result = new Analyzer(List.of(new MybatisAnalysisModule()), List.of()).analyze(classes);
         assertEquals(AnalysisResult.Status.SUCCESS, result.status(), result.diagnostics().toString());
-        assertEquals(2, result.extractions().size());
-        assertEquals(Set.of("sample.Child.query", "sample.Parent.query"), result.extractions().stream()
+        assertEquals(2, result.calls().size());
+        assertEquals(Set.of("sample.Child.query", "sample.Parent.query"), result.calls().stream()
                 .map(value -> value.statements().getFirst().definition().orElseThrow().id()).collect(java.util.stream.Collectors.toSet()));
-        assertEquals(Set.of("SELECT ? FROM child", "SELECT ? FROM parent"), result.extractions().stream()
+        assertEquals(Set.of("SELECT ? FROM child", "SELECT ? FROM parent"), result.calls().stream()
                 .flatMap(value -> value.samples().stream()).map(value -> value.sql().orElseThrow()).collect(java.util.stream.Collectors.toSet()));
     }
 
@@ -156,7 +156,7 @@ class MybatisDefinitionTest {
         Files.writeString(classes.resolve("mapper.xml"), "<mapper namespace='sample.Mapper'><select id='query' databaseId='postgresql'>SELECT 8</select></mapper>");
         var result = new Analyzer(List.of(new MybatisAnalysisModule(MybatisOptions.defaults().withDatabaseId("postgresql"))), List.of()).analyze(classes);
         assertEquals(AnalysisResult.Status.PARTIAL, result.status());
-        assertTrue(result.extractions().getFirst().samples().getFirst().sql().isEmpty(), "数据库专属 XML 不能掩盖默认注解的重复注册");
+        assertTrue(result.calls().getFirst().samples().getFirst().sql().isEmpty(), "数据库专属 XML 不能掩盖默认注解的重复注册");
         assertEquals(2, result.sqlResults().stream().filter(SqlTemplateResult.class::isInstance).count());
     }
 
@@ -171,7 +171,7 @@ class MybatisDefinitionTest {
         var result = new Analyzer(List.of(new MybatisAnalysisModule()), List.of()).analyze(classes);
         assertEquals(AnalysisResult.Status.PARTIAL, result.status());
         assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.message().contains("Conflicting")));
-        assertEquals(SqlSample.Feasibility.UNKNOWN, result.extractions().getFirst().samples().getFirst().feasibility());
+        assertEquals(SqlSample.Feasibility.UNKNOWN, result.calls().getFirst().samples().getFirst().feasibility());
     }
 
     @Test void inheritedAnnotationsFromDependencyInterfacesAreIndexedOnDemand() throws Exception {
@@ -185,7 +185,7 @@ class MybatisDefinitionTest {
                 """, library);
         var result = new Analyzer(List.of(new MybatisAnalysisModule()), List.of()).analyze(application, library, AnalysisOptions.defaults());
         assertEquals(AnalysisResult.Status.SUCCESS, result.status(), result.diagnostics().toString());
-        var sample = result.extractions().getFirst().samples().getFirst();
+        var sample = result.calls().getFirst().samples().getFirst();
         assertEquals("sample.Parent.query", sample.definition().orElseThrow().id());
         assertEquals("SELECT ? FROM library", sample.sql().orElseThrow());
         assertEquals(new SqlValue.Known(7), sample.bindings().getFirst().value());

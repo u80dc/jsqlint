@@ -16,13 +16,6 @@ public record AnalysisResult(Status status, List<SqlResult> sqlResults, List<Ana
     }
 
     public AnalysisResult(Status status) { this(status, List.of(), List.of()); }
-    /** 兼容已有的字节码分析结果构造方式。 */
-    public AnalysisResult(Status status, List<SqlExtraction> extractions) { this(status, List.copyOf(extractions), List.of()); }
-
-    /** 字节码传播分析结果的兼容视图；所有模块结果通过 sqlResults() 读取。 */
-    public List<SqlExtraction> extractions() {
-        return calls();
-    }
 
     /** 完整调用提取视图，包含 JDBC 与关联定义的 Mapper 调用，保留发现顺序和不同调用上下文。 */
     public List<SqlExtraction> calls() {
@@ -50,11 +43,6 @@ public record AnalysisResult(Status status, List<SqlResult> sqlResults, List<Ana
 
     /** 统一获取代码和资源的样例；已证明无解的 raw 候选保留在 rawSqls() 中供审计。 */
     public List<SqlSample> samples() { return sqlResults.stream().flatMap(result -> result.samples().stream()).toList(); }
-
-    public List<SqlSample> samples(org.u80dc.jsqlint.core.node.SqlEvaluationContext context) {
-        Objects.requireNonNull(context);
-        return context.evaluate(() -> sqlResults.stream().flatMap(result -> result.samples(context).stream()).toList());
-    }
 
     public enum Status {
         /** 已完成约定范围的分析；没有发现 SQL 也属于成功。 */

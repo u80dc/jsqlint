@@ -222,7 +222,7 @@ class JdbcJointPathInferenceTest {
         assertTrue(joint.issues().stream().anyMatch(issue -> issue.contains("loop")));
         assertTrue(result.diagnostics().stream().anyMatch(d -> d.code().equals("JOINT_ANALYSIS_INCOMPLETE")
                 && d.incomplete() && d.stage() == AnalysisListener.Stage.ANALYZING && d.location().isPresent()
-                && d.location().get().equals(result.extractions().stream()
+                && d.location().get().equals(result.calls().stream()
                 .filter(e -> e.callSite().target().getName().equals("executeQuery")).findFirst().orElseThrow().location())));
     }
 
@@ -342,7 +342,7 @@ class JdbcJointPathInferenceTest {
         return result;
     }
     private List<RawSql.Variant> executedSqls(AnalysisResult result) {
-        return result.extractions().stream().filter(e -> Set.of("executeQuery","executeBatch").contains(e.callSite().target().getName()))
+        return result.calls().stream().filter(e -> Set.of("executeQuery","executeBatch").contains(e.callSite().target().getName()))
                 .flatMap(e -> e.statements().stream()).flatMap(s -> s.rawSql().variants().stream()).toList();
     }
     private static Set<List<Object>> pairs(JointSqlInferenceResult joint) {

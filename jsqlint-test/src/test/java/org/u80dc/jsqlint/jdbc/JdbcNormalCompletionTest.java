@@ -119,7 +119,7 @@ class JdbcNormalCompletionTest {
         assertEquals(0, ToolProvider.getSystemJavaCompiler().run(null, null, null, "-proc:none", "-g", "-d", classes.toString(), source.toString()));
         var result = new Analyzer(AnalyzerConfig.defaults().withMaxTraceDepth(64), List.of(new JdbcAnalysisModule()), List.of()).analyze(classes);
         assertNotEquals(AnalysisResult.Status.FAILED, result.status(), result.diagnostics().toString());
-        return result.extractions().stream().filter(extraction -> extraction.callSite().target().getName().equals("executeQuery"))
+        return result.calls().stream().filter(extraction -> extraction.callSite().target().getName().equals("executeQuery"))
                 .flatMap(extraction -> extraction.statements().stream()).flatMap(statement -> statement.rawSql().variants().stream()).toList();
     }
 }

@@ -1,29 +1,26 @@
 package org.u80dc.jsqlint.core;
 
 import org.u80dc.jsqlint.core.dataflow.ValueTrace;
-import org.u80dc.jsqlint.core.node.SqlValue;
 import org.u80dc.jsqlint.core.node.SqlNodeRenderer.BoundSql;
 import org.u80dc.jsqlint.core.parameter.*;
-import org.u80dc.jsqlint.core.spi.SourceLocation;
-import org.u80dc.jsqlint.core.node.SqlValueSnapshots;
+
 import java.util.*;
 
-/** 保存模板输入、别名和联合模型；渲染阶段无需重新访问代码或组合独立候选。 @author u80dc */
+/** 输入来源、独立候选与冻结模型；名称布局集中在 layout，默认结果读取不重演。 */
 public record TemplateInferenceResult(Map<String, ValueTrace> sources,
                                       Map<String, ParameterValueInferenceResult> parameters,
-                                      Map<String, String> aliases, Optional<String> fallback,
-                                      Optional<String> parameterMapName, Map<String, Object> constants,
-                                      Optional<JointSqlInferenceResult> jointInference, List<BoundModel> models, List<String> issues,
-                                      Map<String, String> renderAliases) {
+                                      TemplateInputLayout layout,
+                                      Optional<JointSqlInferenceResult> jointInference,
+                                      List<BoundModel> models, List<String> issues) {
     public TemplateInferenceResult {
-        sources = immutable(sources); parameters = immutable(parameters); aliases = immutable(aliases);
-        Objects.requireNonNull(fallback); Objects.requireNonNull(parameterMapName); constants = SqlValueSnapshots.parameters(constants);
+        sources = immutable(sources); parameters = immutable(parameters); Objects.requireNonNull(layout);
         Objects.requireNonNull(jointInference); models = List.copyOf(models); issues = List.copyOf(issues);
-        renderAliases = immutable(renderAliases);
         if (jointInference.isPresent()) {
             var joint = jointInference.get();
             if (joint.status() == JointSqlInferenceResult.Status.UNSATISFIABLE && !models.isEmpty())
                 throw new IllegalArgumentException("An unsatisfiable template result cannot have rendering models");
+            if (joint.status() != JointSqlInferenceResult.Status.UNSATISFIABLE && models.isEmpty())
+                throw new IllegalArgumentException("A joint template result requires a rendering model unless proven unsatisfiable");
             for (var model : models) {
                 if (model.combination().isPresent()) {
                     if (!joint.combinations().contains(model.combination().get()))
@@ -32,12 +29,20 @@ public record TemplateInferenceResult(Map<String, ValueTrace> sources,
                     throw new IllegalArgumentException("An unassociated template model requires an unknown joint result without combinations");
                 }
             }
+            for (var combination : joint.combinations())
+                if (combination.status() != JointSqlInferenceResult.Status.UNSATISFIABLE
+                        && models.stream().noneMatch(model -> model.combination().filter(combination::equals).isPresent()))
+                    throw new IllegalArgumentException("A template result must preserve every available joint combination");
         }
-        for (String name : renderAliases.keySet())
-            if (aliases.containsKey(name) || constants.containsKey(name) || parameterMapName.filter(name::equals).isPresent())
-                throw new IllegalArgumentException("Template render alias conflicts with a business or reserved name: " + name);
     }
-    @Override public Map<String, Object> constants() { return SqlValueSnapshots.parameters(constants); }
+    /** 迁移构造器仅组装名称布局，不再分别保存五组布局字段。 */
+    public TemplateInferenceResult(Map<String, ValueTrace> sources, Map<String, ParameterValueInferenceResult> parameters,
+                                   Map<String, String> aliases, Optional<String> fallback, Optional<String> parameterMapName,
+                                   Map<String, Object> constants, Optional<JointSqlInferenceResult> jointInference,
+                                   List<BoundModel> models, List<String> issues, Map<String, String> renderAliases) {
+        this(sources, parameters, new TemplateInputLayout(aliases, fallback, parameterMapName, constants, renderAliases),
+                jointInference, models, issues);
+    }
     public TemplateInferenceResult(Map<String, ValueTrace> sources, Map<String, ParameterValueInferenceResult> parameters,
                                    Map<String, String> aliases, Optional<String> fallback, Optional<String> parameterMapName,
                                    Map<String, Object> constants, Optional<JointSqlInferenceResult> jointInference,
@@ -47,81 +52,26 @@ public record TemplateInferenceResult(Map<String, ValueTrace> sources,
     private static <T> Map<String, T> immutable(Map<String, T> source) {
         return Collections.unmodifiableMap(new LinkedHashMap<>(source));
     }
+    public Map<String, String> aliases() { return layout.aliases(); }
+    public Optional<String> fallback() { return layout.fallback(); }
+    public Optional<String> parameterMapName() { return layout.parameterMapName(); }
+    public Map<String, Object> constants() { return layout.constants(); }
+    public Map<String, String> renderAliases() { return layout.renderAliases(); }
+    public Map<String, Object> environment(Map<String, InferredParameterValue> model) { return layout.environment(model); }
     public boolean sourcesComplete() {
         return sources.values().stream().allMatch(ValueTrace::complete)
                 && models.stream().flatMap(model -> model.bindings().stream()).allMatch(SqlExtraction.Binding::complete);
     }
-    public boolean valuesComplete() {
-        return SqlAssessmentPolicy.templateValues(this);
-    }
+    public boolean valuesComplete() { return SqlAssessmentPolicy.templateValues(this); }
 
+    /** 一份权威的参数化渲染与 Java 绑定证据；文本候选在所属语句中由此模型导出。 */
     public record BoundModel(BoundSql bound, List<SqlExtraction.Binding> bindings,
-                             Optional<JointSqlInferenceResult.Combination> combination, List<String> issues,
-                             Optional<RawSql.Variant> rawSql) {
+                             Optional<JointSqlInferenceResult.Combination> combination, List<String> issues) {
         public BoundModel {
             Objects.requireNonNull(bound); bindings = List.copyOf(bindings);
             Objects.requireNonNull(combination); issues = List.copyOf(issues);
-            Objects.requireNonNull(rawSql);
             SqlBindingSnapshots.validateBoundEvidence(bound, bindings);
             SqlBindingSnapshots.validateBoundCombination(bound, bindings, combination);
-            if (rawSql.isPresent()) {
-                var variant = rawSql.get();
-                if (bound.rendered().sql().filter(variant.text()::equals).isEmpty()
-                        || !variant.placeholders().isEmpty() || !variant.bindings().equals(bindings)
-                        || variant.bindingSnapshots().size() != 1)
-                    throw new IllegalArgumentException("The raw SQL candidate must preserve its bound model");
-                var snapshot = variant.bindingSnapshots().getFirst();
-                if (!snapshot.combination().equals(combination))
-                    throw new IllegalArgumentException("The raw SQL binding snapshot must preserve its joint combination");
-                SqlBindingSnapshots.validateBoundSnapshot(bound, bindings, snapshot.bindings());
-            }
         }
-
-        /** 兼容尚未关联 raw SQL 的模型；其样例绑定可从保存的渲染及证据派生。 */
-        public BoundModel(BoundSql bound, List<SqlExtraction.Binding> bindings,
-                          Optional<JointSqlInferenceResult.Combination> combination, List<String> issues) {
-            this(bound, bindings, combination, issues, Optional.empty());
-        }
-
-        public BoundModel withRawSql(RawSql.Variant variant) {
-            return new BoundModel(bound, bindings, combination, issues, Optional.of(variant));
-        }
-
-        /** 已关联模型以 raw SQL 中唯一的最终快照为准；旧构造器仍保留无关联派生路径。 */
-        List<SqlSample.Binding> bindingSnapshot(SourceLocation location) {
-            return rawSql.map(variant -> variant.bindingSnapshots().getFirst().bindings())
-                    .orElseGet(() -> SqlBindingSnapshots.bound(bound, location, bindings));
-        }
-    }
-
-    /** 回退只处理一个名称；属性和下标访问仍交给表达式适配器。 */
-    public Map<String, Object> environment(Map<String, InferredParameterValue> model) {
-        var values = new LinkedHashMap<String, Object>();
-        // A canonical input is one activity value even when the template exposes several names.
-        // Known accessors still protect the persisted model, so copy once per input, not per alias.
-        var activity = new HashMap<String, Object>();
-        aliases.forEach((alias, key) -> values.put(alias, value(model, key, activity)));
-        // 根参数 Map 在加入保留名称前复制，避免自引用或别名覆盖根对象。
-        parameterMapName.ifPresent(name -> values.put(name, immutable(values)));
-        values.putAll(constants());
-        renderAliases.forEach((alias, key) -> values.put(alias, value(model, key, activity)));
-        if (fallback.isEmpty()) return Collections.unmodifiableMap(values);
-        Object single = value(model, fallback.get(), activity);
-        return Collections.unmodifiableMap(new AbstractMap<>() {
-            @Override public Set<Entry<String, Object>> entrySet() { return values.entrySet(); }
-            @Override public boolean containsKey(Object key) { return values.containsKey(key) || identifier(key); }
-            @Override public Object get(Object key) { return values.containsKey(key) ? values.get(key) : identifier(key) ? single : null; }
-        });
-    }
-    private static boolean identifier(Object key) {
-        return key instanceof String name && name.matches("[\\p{L}_$][\\p{L}\\p{N}_$]*");
-    }
-    private static Object value(Map<String, InferredParameterValue> model, String key, Map<String, Object> activity) {
-        if (activity.containsKey(key)) return activity.get(key);
-        var inferred = model.get(key);
-        Object value = inferred == null ? new SqlValue.Unknown("Template parameter inference was not requested: " + key)
-                : inferred.value() instanceof SqlValue.Known known ? known.value() : inferred.value();
-        activity.put(key, value);
-        return value;
     }
 }

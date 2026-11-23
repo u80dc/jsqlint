@@ -29,7 +29,7 @@ class JdbcTraceBoundaryTest {
                 static void query(java.sql.Statement s) throws Exception { s.execute("SELECT 1"); }
                 """), AnalyzerConfig.defaults().withMaxCallDepth(1));
         assertEquals(AnalysisResult.Status.PARTIAL, result.status());
-        var extraction = only(result.extractions());
+        var extraction = only(result.calls());
         assertTrue(extraction.issues().stream().anyMatch(issue -> issue.contains("LIMIT")));
         assertUnknown(only(sqls(result)), "LIMIT");
     }
@@ -55,7 +55,7 @@ class JdbcTraceBoundaryTest {
                 static void query(java.sql.Statement s) throws Exception { s.execute("SELECT 1"); }
                 """), AnalyzerConfig.defaults().withMaxCallDepth(1));
         assertEquals(AnalysisResult.Status.SUCCESS, result.status());
-        assertTrue(only(result.extractions()).issues().isEmpty());
+        assertTrue(only(result.calls()).issues().isEmpty());
         assertEquals(SATISFIABLE, only(sqls(result)).jointInference().orElseThrow().status());
     }
 
@@ -155,12 +155,12 @@ class JdbcTraceBoundaryTest {
     }
 
     private List<RawSql.Variant> sqls(AnalysisResult result) {
-        return result.extractions().stream().filter(e -> Set.of("execute", "executeQuery").contains(e.callSite().target().getName()))
+        return result.calls().stream().filter(e -> Set.of("execute", "executeQuery").contains(e.callSite().target().getName()))
                 .flatMap(e -> e.statements().stream()).flatMap(s -> s.rawSql().variants().stream()).toList();
     }
 
     private SqlExtraction execution(AnalysisResult result) {
-        return only(result.extractions().stream().filter(e -> e.callSite().target().getName().equals("executeQuery")).toList());
+        return only(result.calls().stream().filter(e -> e.callSite().target().getName().equals("executeQuery")).toList());
     }
 
     private void assertUnknown(RawSql.Variant sql, String reason) {

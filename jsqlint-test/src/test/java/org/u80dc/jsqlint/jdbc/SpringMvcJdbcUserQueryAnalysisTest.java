@@ -59,7 +59,7 @@ class SpringMvcJdbcUserQueryAnalysisTest {
         assertEquals(3, capture.callSites.size(), "一个 Statement 执行点、一个准备点、一个 PreparedStatement 执行点");
         assertTrue(capture.callSites.stream().allMatch(site -> site.caller().orElseThrow()
                 .getDeclClassType().toString().equals(REPOSITORY)));
-        assertEquals(Set.of("findById", "findUsers"), result.extractions().stream()
+        assertEquals(Set.of("findById", "findUsers"), result.calls().stream()
                 .map(extraction -> extraction.callSite().caller().orElseThrow().getName()).collect(Collectors.toSet()));
 
         // 核对 SQL 结构，不用准备点/执行点及传播路径的重复候选数量代替结构覆盖率。
@@ -82,7 +82,7 @@ class SpringMvcJdbcUserQueryAnalysisTest {
 
     /** 固定入口只允许年龄排序；SQL 分支、绑定快照和实际参数模型必须共同成立。 */
     private static void assertJointPaths(AnalysisResult result) {
-        var fixed = result.extractions().stream().filter(extraction -> extraction.callChain().stream()
+        var fixed = result.calls().stream().filter(extraction -> extraction.callChain().stream()
                 .anyMatch(call -> call.target().getName().equals("findActiveAdults"))).toList();
         assertEquals(2, fixed.size(), "固定业务入口应分别产生准备点和执行点结果");
         for (var extraction : fixed) {
@@ -117,7 +117,7 @@ class SpringMvcJdbcUserQueryAnalysisTest {
             assertEquals(1, feasible, "固定入口在每个调用点只能有一种可行 SQL/绑定快照");
         }
         // 通用接口允许四种结构，每种结构只允许与它的问号数量一致的绑定快照。
-        var searches = result.extractions().stream().filter(extraction -> extraction.callSite().target().getName().equals("executeQuery")
+        var searches = result.calls().stream().filter(extraction -> extraction.callSite().target().getName().equals("executeQuery")
                 && extraction.callChain().stream().anyMatch(call -> call.caller().orElseThrow().getName().equals("search")))
                 .flatMap(extraction -> extraction.statements().stream()).flatMap(statement -> statement.rawSql().variants().stream()).toList();
         assertFalse(searches.isEmpty());
@@ -155,7 +155,7 @@ class SpringMvcJdbcUserQueryAnalysisTest {
         var report = new StringBuilder("springmvc-jdbc-user-query SQL 分析报告\n")
                 .append("分析状态: ").append(result.status())
                 .append("\nSQL 调用点: ").append(capture.callSites.size())
-                .append("\n提取结果: ").append(result.extractions().size())
+                .append("\n提取结果: ").append(result.calls().size())
                 .append("\nSQL 候选记录: ").append(result.rawSqls().size())
                 .append("\n不同 SQL 文本: ").append(texts.size())
                 .append("\n联合状态统计: ").append(result.rawSqls().stream()
@@ -164,7 +164,7 @@ class SpringMvcJdbcUserQueryAnalysisTest {
                 .append("\n说明: 候选保留准备点/执行点及不同路径，不代表数据库实际执行次数。\n")
                 .append("${name} 为拼接变量占位符，? 为 JDBC 绑定参数；此清单未执行 SQL。\n");
         int index = 0;
-        for (var extraction : result.extractions()) {
+        for (var extraction : result.calls()) {
             report.append("\n所属方法: ").append(extraction.callSite().caller().orElseThrow())
                     .append("\n调用点: ").append(extraction.callSite().target())
                     .append("\n位置: ").append(extraction.callSite().location())

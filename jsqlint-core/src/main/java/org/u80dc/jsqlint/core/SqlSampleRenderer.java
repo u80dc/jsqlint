@@ -9,6 +9,12 @@ import java.util.*;
 public final class SqlSampleRenderer {
     private SqlSampleRenderer() {}
 
+    /** 显式汇总派生由渲染服务管理容量和取消，AnalysisResult 只保留默认读取视图。 */
+    public static List<SqlSample> render(AnalysisResult result, SqlEvaluationContext context) {
+        Objects.requireNonNull(result); Objects.requireNonNull(context);
+        return context.evaluate(() -> result.sqlResults().stream().flatMap(source -> source.samples(context).stream()).toList());
+    }
+
     public static List<SqlSample> render(SqlResult source) {
         return render(source, Optional.empty());
     }
@@ -67,7 +73,7 @@ public final class SqlSampleRenderer {
                 assessment);
         return new SqlSample(source, Optional.empty(), bound.rendered(), bindings,
                 feasibility, assessment,
-                new ArrayList<>(issues), Optional.empty(), Optional.empty(), source.definition(),bound.rewrites());
+                new ArrayList<>(issues), new SqlSampleEvidence(Optional.empty(), Optional.empty(), source.definition(), bound.rewrites()));
     }
 
     private static SqlSample template(SqlTemplateResult source, SqlNodeRenderer.RenderedSql rendered) {
@@ -77,17 +83,17 @@ public final class SqlSampleRenderer {
         var assessment = SqlAssessmentPolicy.templateSample(source, rendered.complete());
         return new SqlSample(source, Optional.empty(), rendered, List.of(),
                 SqlAssessmentPolicy.feasibility(SqlSample.Feasibility.UNVERIFIED, assessment), assessment,
-                new ArrayList<>(issues), Optional.empty(), Optional.empty());
+                new ArrayList<>(issues), SqlSampleEvidence.empty());
     }
 
     private static List<SqlSample> render(SqlExtraction source, Optional<SqlEvaluationContext> context) {
         List<SqlSample> samples = new ArrayList<>();
         for (var statement : source.statements()) {
             context.ifPresent(SqlEvaluationContext::check);
-            if (statement.templateInference().isPresent()) {
-                for (var model : statement.templateInference().get().models()) {
+            if (statement.content() instanceof SqlExtraction.Statement.Content.Modeled modeled) {
+                for (int index = 0; index < modeled.inference().models().size(); index++) {
                     context.ifPresent(SqlEvaluationContext::check);
-                    samples.add(templateSample(source, statement, model));
+                    samples.add(templateSample(source, statement, modeled.inference().models().get(index), modeled.candidate(index)));
                 }
                 continue;
             }
@@ -127,21 +133,22 @@ public final class SqlSampleRenderer {
     }
 
     private static SqlSample templateSample(SqlExtraction source, SqlExtraction.Statement statement,
-                                             TemplateInferenceResult.BoundModel model) {
+                                             TemplateInferenceResult.BoundModel model, Optional<RawSql.Variant> candidate) {
         var saved = statement.templateInference().orElseThrow();
         var rendered = model.bound().rendered();
         var issues = new LinkedHashSet<>(source.issues());
         issues.addAll(statement.issues()); issues.addAll(statement.templateIssues()); issues.addAll(saved.issues());
         issues.addAll(model.issues()); model.combination().ifPresent(value -> issues.addAll(value.issues()));
         rendered.diagnostics().forEach(diagnostic -> issues.add(diagnostic.code() + ": " + diagnostic.message()));
-        var bindings = model.bindingSnapshot(statement.definition().orElseThrow().location());
+        var bindings = candidate.map(variant -> variant.bindingSnapshots().getFirst().bindings())
+                .orElseGet(() -> SqlBindingSnapshots.bound(model.bound(), statement.definition().orElseThrow().location(), model.bindings()));
         var assessment = SqlAssessmentPolicy.modelSample(source, statement, model);
         var feasibility = model.combination().map(value -> value.status() == JointSqlInferenceResult.Status.SATISFIABLE
                 ? SqlSample.Feasibility.SATISFIABLE : SqlSample.Feasibility.UNKNOWN)
                 .orElse(saved.jointInference().isPresent() ? SqlSample.Feasibility.UNKNOWN : SqlSample.Feasibility.UNVERIFIED);
         feasibility = SqlAssessmentPolicy.feasibility(feasibility, assessment);
         return new SqlSample(source, statement.batchEntry(), rendered, bindings, feasibility, assessment,
-                new ArrayList<>(issues), model.rawSql(), model.combination(), statement.definition(),model.bound().rewrites());
+                new ArrayList<>(issues), new SqlSampleEvidence(candidate, model.combination(), statement.definition(), model.bound().rewrites()));
     }
 
     private static SqlSample sample(SqlExtraction source, SqlExtraction.Statement statement,
@@ -158,7 +165,7 @@ public final class SqlSampleRenderer {
         var assessment = SqlAssessmentPolicy.rawSample(source, statement, variant, rendered, bindings, combination);
         feasibility = SqlAssessmentPolicy.feasibility(feasibility, assessment);
         return new SqlSample(source, statement.batchEntry(), rendered, bindings, feasibility, assessment,
-                new ArrayList<>(issues), variant, combination);
+                new ArrayList<>(issues), new SqlSampleEvidence(variant, combination, statement.definition(), List.of()));
     }
 
     private static List<SqlSample.Binding> unknownBindings(SqlExtraction.Statement statement, String reason) {

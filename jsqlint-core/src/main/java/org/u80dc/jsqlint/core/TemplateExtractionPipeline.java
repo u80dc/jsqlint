@@ -55,8 +55,8 @@ final class TemplateExtractionPipeline {
             traces.put(name, trace);
             parameters.put(name, inferParameter.infer(inference, name, trace, parameter.type()));
         });
-        var state = new TemplateInferenceResult(traces, parameters, aliases, fallback, input.parameterMapName(),
-                input.constants(), Optional.empty(), List.of(), List.of(), renderAliases);
+        var layout = new TemplateInputLayout(aliases, fallback, input.parameterMapName(), input.constants(), renderAliases);
+        var state = new TemplateInferenceResult(traces, parameters, layout, Optional.empty(), List.of(), List.of());
         Optional<JointSqlInferenceResult> jointResult = Optional.empty();
         if (joint != null) {
             try { jointResult = Optional.of(joint.inferParameters(parameters.values(), point, source.controlFlowPaths(), sourceIssues)); }
@@ -101,38 +101,10 @@ final class TemplateExtractionPipeline {
             var result = jointResult.get(); var issues = new ArrayList<>(result.issues()); issues.addAll(renderLimits);
             jointResult = Optional.of(new JointSqlInferenceResult(JointSqlInferenceResult.Status.UNKNOWN, result.combinations(), issues, false));
         }
-        List<String> graphLimits = new ArrayList<>();
-        var bindings = SqlBindingSnapshots.modelBindings(models, replayBudgets, checkpoint, graphLimits::add);
-        graphLimits.forEach(message -> incomplete.incomplete("VALUE_GRAPH_LIMIT", message, Set.of(SqlAssessment.Dimension.VALUES, SqlAssessment.Dimension.PATH_COVERAGE)));
-        if (!graphLimits.isEmpty() && jointResult.isPresent()) {
-            for (int i = 0; i < models.size(); i++) {
-                var model = models.get(i);
-                var unknown = model.combination().map(value -> new JointSqlInferenceResult.Combination(
-                        JointSqlInferenceResult.Status.UNKNOWN, value.parameters(), value.bindings(), value.conditions(), value.inputs(),
-                        java.util.stream.Stream.concat(value.issues().stream(), graphLimits.stream()).distinct().toList()));
-                models.set(i, new TemplateInferenceResult.BoundModel(model.bound(), model.bindings(), unknown, model.issues()));
-            }
-            var result = jointResult.get(); var issues = new ArrayList<>(result.issues()); issues.addAll(graphLimits);
-            jointResult = Optional.of(new JointSqlInferenceResult(JointSqlInferenceResult.Status.UNKNOWN,
-                    models.stream().flatMap(model -> model.combination().stream()).toList(), issues, false));
-        }
-        var savedJoint = jointResult;
-        List<RawSql.Variant> variants = new ArrayList<>();
-        List<TemplateInferenceResult.BoundModel> associatedModels = new ArrayList<>();
-        for (var model : models) {
-            if (model.bound().rendered().sql().isPresent()) {
-                var snapshot = new RawSql.BindingSnapshot(
-                        SqlBindingSnapshots.bound(model.bound(), definition.location(), model.bindings()), model.combination());
-                var variant = new RawSql.Variant(model.bound().rendered().sql().orElseThrow(), List.of(),
-                        input.sqlSource(), model.bindings(), savedJoint, List.of(snapshot));
-                variants.add(variant);
-                associatedModels.add(model.withRawSql(variant));
-            } else associatedModels.add(model);
-        }
-        var saved = new TemplateInferenceResult(traces, parameters, aliases, fallback, input.parameterMapName(), input.constants(),
-                jointResult, associatedModels, jointResult.map(JointSqlInferenceResult::issues).orElse(graphLimits), renderAliases);
-        return new SqlExtraction.Statement(input.sqlSource(), definition.template(), bindings, source.batchEntry(), sourceIssues,
-                definition.issues(), new RawSql(variants, definition.issues()), Optional.of(definition), Optional.of(saved));
+        var saved = new TemplateInferenceResult(traces, parameters, layout, jointResult, models,
+                jointResult.map(JointSqlInferenceResult::issues).orElse(List.of()));
+        return new SqlExtraction.Statement(input.sqlSource(), source.batchEntry(), sourceIssues,
+                new SqlExtraction.Statement.Content.Modeled(definition, saved, input.sqlSource()));
     }
 
     private static String key(Map<TemplateSqlInput.Parameter, String> keys, TemplateSqlInput.Parameter parameter) {

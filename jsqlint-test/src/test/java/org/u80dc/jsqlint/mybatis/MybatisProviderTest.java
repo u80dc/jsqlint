@@ -34,13 +34,13 @@ class MybatisProviderTest {
                 }
                 """);
         assertEquals(AnalysisResult.Status.SUCCESS, result.status(), result.diagnostics().toString());
-        assertEquals(4, result.extractions().size());
+        assertEquals(4, result.calls().size());
         assertEquals(5, definitions(result).size());
         assertEquals("SELECT COUNT(*) FROM users", definition(result, "unused").samples().getFirst().sql().orElseThrow());
         assertEquals("UPDATE users SET active=1 WHERE id=9", sample(result, "update").sql().orElseThrow());
         assertEquals(new SqlValue.Known(7), sample(result, "select").bindings().getFirst().value());
         assertEquals(new SqlValue.Known(10), sample(result, "delete").bindings().getFirst().value());
-        assertTrue(result.extractions().stream().flatMap(extraction -> extraction.statements().stream())
+        assertTrue(result.calls().stream().flatMap(extraction -> extraction.statements().stream())
                 .allMatch(statement -> statement.sql().isPresent() && statement.sql().get().complete()));
     }
 
@@ -86,8 +86,8 @@ class MybatisProviderTest {
                 }
                 """);
         assertEquals(AnalysisResult.Status.SUCCESS, result.status(), result.diagnostics().toString());
-        assertEquals(2, result.extractions().size());
-        for (var extraction : result.extractions()) {
+        assertEquals(2, result.calls().size());
+        for (var extraction : result.calls()) {
             assertEquals(1, extraction.samples().size(), extraction.samples().toString());
             var sample = extraction.samples().getFirst();
             Object flag = ((SqlValue.Known) sample.bindings().getFirst().value()).value();
@@ -150,7 +150,7 @@ class MybatisProviderTest {
         assertEquals("SELECT 4 AS n FROM users WHERE id=?", sample(result,"dynamic").sql().orElseThrow());
         assertEquals("SELECT 0 AS n", sample(result,"empty").sql().orElseThrow());
         assertEquals(new SqlValue.Known(8), sample(result,"dynamic").bindings().getFirst().value());
-        for (var extraction : result.extractions()) {
+        for (var extraction : result.calls()) {
             var input = extraction.statements().getFirst().templateInference().orElseThrow();
             assertTrue(input.aliases().keySet().stream().noneMatch(name -> name.startsWith("__jsqlint_provider_")));
             var environment = input.environment(input.models().getFirst().combination().orElseThrow().parameters());
@@ -185,7 +185,7 @@ class MybatisProviderTest {
             var result = analyze("interface Mapper { @SelectProvider(type=Sample.class,method=\"sql\") Object query(@Param(\"id\") int id); } "
                     + "public class Sample { " + provider + " public void run(Mapper mapper) { mapper.query(7); } }");
             assertEquals(AnalysisResult.Status.PARTIAL, result.status(), result.diagnostics().toString());
-            assertTrue(result.extractions().getFirst().samples().stream().allMatch(sample -> sample.sql().isEmpty()));
+            assertTrue(result.calls().getFirst().samples().stream().allMatch(sample -> sample.sql().isEmpty()));
         }
         var custom = analyze("""
                 interface Mapper { @SelectProvider(type=Sample.class) Object query(); }
@@ -238,10 +238,10 @@ class MybatisProviderTest {
                 }
                 """);
         assertEquals(AnalysisResult.Status.SUCCESS, result.status(), result.diagnostics().toString());
-        assertEquals(2, result.extractions().size());
-        assertEquals(Set.of("SELECT name FROM users WHERE (active=?)", "SELECT name FROM users"), result.extractions().stream()
+        assertEquals(2, result.calls().size());
+        assertEquals(Set.of("SELECT name FROM users WHERE (active=?)", "SELECT name FROM users"), result.calls().stream()
                 .flatMap(value -> value.samples().stream()).map(value -> normalize(value.sql().orElseThrow())).collect(java.util.stream.Collectors.toSet()));
-        for (var extraction : result.extractions()) {
+        for (var extraction : result.calls()) {
             assertEquals(1, extraction.samples().size(), extraction.samples().toString());
             assertEquals(SqlSample.Feasibility.SATISFIABLE, extraction.samples().getFirst().feasibility());
         }
@@ -264,7 +264,7 @@ class MybatisProviderTest {
                     }
                     """.formatted(override));
             assertEquals(AnalysisResult.Status.PARTIAL, result.status(), result.diagnostics().toString());
-            assertTrue(result.extractions().getFirst().samples().stream().allMatch(sample -> sample.sql().isEmpty()));
+            assertTrue(result.calls().getFirst().samples().stream().allMatch(sample -> sample.sql().isEmpty()));
             assertTrue(result.diagnostics().stream().anyMatch(diagnostic -> diagnostic.message().contains("SQL subclass overrides")),
                     result.diagnostics().toString());
         }
@@ -303,8 +303,8 @@ class MybatisProviderTest {
                     + "public class Sample { static Object held; public static native void external(Object value); public static native void external(); "
                     + "public static String sql(java.util.Map<String,Object> args) { " + body + " } public void run(Mapper mapper) { mapper.query(\"users\"); } }");
             assertEquals(AnalysisResult.Status.PARTIAL, result.status(), result.diagnostics().toString());
-            assertTrue(result.extractions().getFirst().samples().stream().allMatch(sample -> sample.sql().isEmpty()));
-            assertFalse(result.extractions().getFirst().complete());
+            assertTrue(result.calls().getFirst().samples().stream().allMatch(sample -> sample.sql().isEmpty()));
+            assertFalse(result.calls().getFirst().complete());
         }
         var builder = analyze("""
                 interface Mapper { @SelectProvider(type=Sample.class,method="sql") Object query(); }
@@ -314,7 +314,7 @@ class MybatisProviderTest {
                 }
                 """);
         assertEquals(AnalysisResult.Status.PARTIAL, builder.status(), builder.diagnostics().toString());
-        assertTrue(builder.extractions().getFirst().samples().stream().allMatch(sample -> sample.sql().isEmpty()));
+        assertTrue(builder.calls().getFirst().samples().stream().allMatch(sample -> sample.sql().isEmpty()));
     }
 
     @Test void agreesWithRealMybatisForParamMapContextsAndPrimitiveWidening() throws Exception {
@@ -365,7 +365,7 @@ class MybatisProviderTest {
                 }
                 """);
         assertEquals(AnalysisResult.Status.SUCCESS, result.status(), result.diagnostics().toString());
-        assertEquals(Set.of("SELECT 'Child'","SELECT 'Parent'"), result.extractions().stream().flatMap(value -> value.samples().stream())
+        assertEquals(Set.of("SELECT 'Child'","SELECT 'Parent'"), result.calls().stream().flatMap(value -> value.samples().stream())
                 .map(value -> value.sql().orElseThrow()).collect(java.util.stream.Collectors.toSet()));
     }
 
@@ -378,21 +378,21 @@ class MybatisProviderTest {
             assertEquals(AnalysisResult.Status.PARTIAL, result.status());
             assertEquals(1, definitions(result).size());
             assertEquals("sample.Mapper.query", definitions(result).getFirst().definition().orElseThrow().id());
-            assertTrue(result.extractions().getFirst().statements().getFirst().definition().isPresent());
+            assertTrue(result.calls().getFirst().statements().getFirst().definition().isPresent());
         }
         for (String method : List.of(
                 "public String sql() { return \"SELECT 1\"; } private Sample() {}",
                 "public static String sql(org.apache.ibatis.builder.annotation.ProviderContext a,org.apache.ibatis.builder.annotation.ProviderContext b) { return \"SELECT 1\"; }")) {
             var result = analyze("interface Mapper { @SelectProvider(type=Sample.class,method=\"sql\") Object query(); } public class Sample { " + method + " public void run(Mapper mapper) { mapper.query(); } }");
             assertEquals(AnalysisResult.Status.PARTIAL, result.status());
-            assertTrue(result.extractions().getFirst().samples().stream().allMatch(sample -> sample.sql().isEmpty()));
+            assertTrue(result.calls().getFirst().samples().stream().allMatch(sample -> sample.sql().isEmpty()));
         }
         var explicitVoid = analyze("""
                 interface Mapper { @SelectProvider(type=Void.class,method="sql") Object query(); }
                 public class Sample { public static String sql() { return "SELECT 1"; } public void run(Mapper mapper) { mapper.query(); } }
                 """, MybatisOptions.defaults().withDefaultSqlProviderType("sample.Sample"));
         assertEquals(AnalysisResult.Status.PARTIAL,explicitVoid.status(),explicitVoid.diagnostics().toString());
-        assertTrue(explicitVoid.extractions().getFirst().samples().stream().allMatch(sample -> sample.sql().isEmpty()));
+        assertTrue(explicitVoid.calls().getFirst().samples().stream().allMatch(sample -> sample.sql().isEmpty()));
     }
 
     @Test void doesNotFallbackWhenTheDefaultResolverCannotFindTheMapperMethod() throws Exception {
@@ -422,7 +422,7 @@ class MybatisProviderTest {
         assertTrue(limited.diagnostics().stream().anyMatch(value -> value.message().toLowerCase(Locale.ROOT).contains("budget")));
         var loop = new Analyzer(modules,List.of()).analyze(classes);
         assertEquals(AnalysisResult.Status.PARTIAL, loop.status(), loop.diagnostics().toString());
-        assertTrue(loop.extractions().getFirst().samples().stream().allMatch(value -> value.feasibility() != SqlSample.Feasibility.SATISFIABLE));
+        assertTrue(loop.calls().getFirst().samples().stream().allMatch(value -> value.feasibility() != SqlSample.Feasibility.SATISFIABLE));
         var checks = new java.util.concurrent.atomic.AtomicInteger();
         var cancelled = new Analyzer(modules,List.of()).analyze(classes,AnalysisOptions.defaults().withCancelled(() -> checks.incrementAndGet()>120));
         assertEquals(AnalysisResult.Status.CANCELLED,cancelled.status());
@@ -438,7 +438,7 @@ class MybatisProviderTest {
                 }
                 """);
         assertEquals(AnalysisResult.Status.SUCCESS,result.status(),result.diagnostics().toString());
-        assertEquals(1,result.extractions().getFirst().samples().size());
+        assertEquals(1,result.calls().getFirst().samples().size());
         assertEquals("SELECT 'base'",sample(result,"query").sql().orElseThrow());
         assertEquals("SELECT 'base'",definition(result,"query").samples().getFirst().sql().orElseThrow());
         var inherited = analyze("""
@@ -529,7 +529,7 @@ class MybatisProviderTest {
         return definitions(result).stream().filter(value -> value.definition().orElseThrow().id().endsWith("."+name)).findFirst().orElseThrow();
     }
     private static SqlSample sample(AnalysisResult result, String name) {
-        return result.extractions().stream().filter(value -> value.callSite().target().getName().equals(name))
+        return result.calls().stream().filter(value -> value.callSite().target().getName().equals(name))
                 .flatMap(value -> value.samples().stream()).findFirst().orElseThrow();
     }
     private static String normalize(String sql) { return sql.replaceAll("\\s+", " ").strip(); }

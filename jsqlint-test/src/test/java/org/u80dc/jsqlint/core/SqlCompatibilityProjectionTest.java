@@ -18,9 +18,9 @@ class SqlCompatibilityProjectionTest {
         var capture = new Capture();
         var result = analyze(config(), AnalysisOptions.defaults().withListener(capture));
         assertEquals(AnalysisResult.Status.PARTIAL, result.status(), result.diagnostics().toString());
-        assertEquals(1, result.extractions().size());
-        assertEquals(3000, result.extractions().getFirst().statements().size());
-        assertTrue(result.extractions().getFirst().complete());
+        assertEquals(1, result.calls().size());
+        assertEquals(3000, result.calls().getFirst().statements().size());
+        assertTrue(result.calls().getFirst().complete());
         assertEquals(1, capture.delivered);
         assertEquals(1, capture.legacy.size());
         assertFalse(capture.legacy.getFirst().complete());
@@ -47,8 +47,8 @@ class SqlCompatibilityProjectionTest {
                 .withCancelled(() -> projected.get() && checks.incrementAndGet() > 20);
         var result = analyze(config(), options);
         assertEquals(AnalysisResult.Status.CANCELLED, result.status());
-        assertEquals(1, result.extractions().size());
-        assertTrue(result.extractions().getFirst().complete());
+        assertEquals(1, result.calls().size());
+        assertTrue(result.calls().getFirst().complete());
         assertTrue(capture.legacy.isEmpty());
         assertTrue(result.diagnostics().isEmpty());
     }

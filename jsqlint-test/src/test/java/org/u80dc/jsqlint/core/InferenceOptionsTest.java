@@ -180,7 +180,7 @@ class InferenceOptionsTest {
     private Analyzer analyzer(AnalyzerConfig config) { return new Analyzer(config, List.of(new JdbcAnalysisModule()), List.of()); }
     private static SqlExtraction execution(AnalysisResult result) {
         assertNotEquals(AnalysisResult.Status.FAILED, result.status(), result.diagnostics().toString());
-        return only(result.extractions().stream().filter(value -> value.callSite().target().getName().equals("executeQuery")).toList());
+        return only(result.calls().stream().filter(value -> value.callSite().target().getName().equals("executeQuery")).toList());
     }
     private Path compile(String methods) throws Exception {
         Path root = Files.createDirectory(temporary.resolve(UUID.randomUUID().toString()));

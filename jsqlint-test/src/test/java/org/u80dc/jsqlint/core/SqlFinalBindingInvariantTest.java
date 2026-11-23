@@ -114,6 +114,19 @@ class SqlFinalBindingInvariantTest {
                 List.of(boundModel(fixture, Optional.empty()))));
     }
 
+    @Test void jointTemplateResultCannotOmitAvailableModelsOrUnknownFallback() {
+        var first = fixture(7); var second = fixture(8);
+        var joint = new JointSqlInferenceResult(JointSqlInferenceResult.Status.SATISFIABLE,
+                List.of(first.combination(), second.combination()), List.of(), true);
+        assertThrows(IllegalArgumentException.class, () -> templateState(Optional.of(joint), List.of()));
+        assertThrows(IllegalArgumentException.class, () -> templateState(Optional.of(joint),
+                List.of(boundModel(first, Optional.of(first.combination())))));
+        assertDoesNotThrow(() -> templateState(Optional.of(joint), List.of(
+                boundModel(first, Optional.of(first.combination())), boundModel(second, Optional.of(second.combination())))));
+        var unknown = new JointSqlInferenceResult(JointSqlInferenceResult.Status.UNKNOWN, List.of(), List.of("No resolved input"), false);
+        assertThrows(IllegalArgumentException.class, () -> templateState(Optional.of(unknown), List.of()));
+    }
+
     private static TemplateInferenceResult.BoundModel boundModel(Fixture fixture,
             Optional<JointSqlInferenceResult.Combination> combination) {
         var definition = new SqlDefinition("query", LOCATION, SqlNodeBuilder.templateText("SELECT #{value}"));
