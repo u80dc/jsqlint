@@ -13,6 +13,7 @@ import org.codehaus.plexus.util.xml.Xpp3Dom;
 import org.u80dc.jsqlint.commons.location.AnalysisInputException;
 import org.u80dc.jsqlint.commons.location.InputLocationOptions;
 import org.u80dc.jsqlint.commons.location.InputMode;
+import org.u80dc.jsqlint.core.statistics.StatisticsRecorder;
 
 import java.io.IOException;
 import java.io.PrintStream;
@@ -23,7 +24,11 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
+
+import static org.u80dc.jsqlint.core.AnalysisStatistics.Phase.COMPILATION;
+import static org.u80dc.jsqlint.core.AnalysisStatistics.Phase.WAITING;
 
 /**
  * 通过 Maven Embedder 编译，并从有效 reactor 模型中读取产物和依赖。
@@ -42,6 +47,11 @@ public final class MavenProjectCompiler {
 
     /** 编译 Maven 主代码，并返回校验后的 class 目录和分析依赖。 */
     public static CompiledProject compile(Path root, InputLocationOptions options) throws IOException {
+        return compile(root, options, StatisticsRecorder.none());
+    }
+
+    public static CompiledProject compile(Path root, InputLocationOptions options, StatisticsRecorder statisticsRecorder) throws IOException {
+        Objects.requireNonNull(statisticsRecorder, "statisticsRecorder");
         if (!isProject(root)) {
             throw new AnalysisInputException("Maven pom.xml does not exist: " + root);
         }
@@ -49,22 +59,28 @@ public final class MavenProjectCompiler {
         var cli = new CapturingMavenCli(options.classOutputDirectory());
         var output = new BuildLog();
         int status;
-        try (var settings = MavenBuildSettings.create(options.mavenRepositories())) {
+        try (var settings = MavenBuildSettings.create(options.mavenRepositories(), statisticsRecorder)) {
             var arguments = new ArrayList<>(List.of("-B", "-ntp"));
             arguments.addAll(options.buildArguments());
             arguments.addAll(settings.arguments());
             arguments.addAll(List.of("-f", root.resolve("pom.xml").toString(), "-DskipTests=true", "compile"));
-            synchronized (CLI_LOCK) {
-                String property = MavenCli.MULTIMODULE_PROJECT_DIRECTORY;
-                String previous = System.getProperty(property);
-                ClassLoader previousLoader = Thread.currentThread().getContextClassLoader();
-                try (var stream = new PrintStream(output, true, StandardCharsets.UTF_8)) {
-                    System.setProperty(property, root.toString());
-                    status = cli.doMain(arguments.toArray(String[]::new), root.toString(), stream, stream);
-                } finally {
-                    if (previous == null) System.clearProperty(property);
-                    else System.setProperty(property, previous);
-                    Thread.currentThread().setContextClassLoader(previousLoader);
+            try (var waiting = statisticsRecorder.measure(WAITING)) {
+                synchronized (CLI_LOCK) {
+                    // 等待只计入获取全局CLI锁之前，实际Maven执行单独归因。
+                    waiting.close();
+                    String property = MavenCli.MULTIMODULE_PROJECT_DIRECTORY;
+                    String previous = System.getProperty(property);
+                    ClassLoader previousLoader = Thread.currentThread().getContextClassLoader();
+                    try (var stream = new PrintStream(output, true, StandardCharsets.UTF_8)) {
+                        System.setProperty(property, root.toString());
+                        try (var compilation = statisticsRecorder.measure(COMPILATION)) {
+                            status = cli.doMain(arguments.toArray(String[]::new), root.toString(), stream, stream);
+                        }
+                    } finally {
+                        if (previous == null) System.clearProperty(property);
+                        else System.setProperty(property, previous);
+                        Thread.currentThread().setContextClassLoader(previousLoader);
+                    }
                 }
             }
         }

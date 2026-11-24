@@ -18,7 +18,7 @@ class CorePackageArchitectureTest {
     private static final String CORE = "org.u80dc.jsqlint.core";
     private static final String PREFIX = CORE + ".";
     private static final Set<String> PACKAGES = Set.of("", "node", "parameter", "dataflow", "semantics",
-            "template", "spi", "input", "resource", "bytecode");
+            "template", "spi", "input", "resource", "bytecode", "statistics");
     private static final Set<String> FORBIDDEN_FRAMEWORKS = Set.of("org.apache.ibatis.", "org.springframework.",
             "org.hibernate.", "jakarta.persistence.", "javax.persistence.");
     private static final Map<String, Set<String>> ALLOWED_PACKAGES = Map.of(
@@ -30,12 +30,13 @@ class CorePackageArchitectureTest {
             "spi", Set.of("spi"),
             "input", Set.of("input"),
             "resource", Set.of("resource"),
-            "bytecode", Set.of("bytecode"));
+            "bytecode", Set.of("bytecode"),
+            "statistics", Set.of("statistics"));
     private static final Map<String, Set<String>> ALLOWED_TYPES = Map.of(
-            "node", types("ReplayBudgets", "SqlRenderBudgets", "semantics.ValueEvaluationLimitException"),
+            "node", types("ReplayBudgets", "SqlRenderBudgets", "semantics.ValueEvaluationLimitException", "statistics.StatisticsRecorder"),
             "parameter", types("JointBudgets", "ReplayBudgets", "RawSql", "SqlExtraction",
-                    "spi.InvocationSite", "spi.SqlCallSite"),
-            "dataflow", types("spi.InvocationSite", "spi.SqlCallSite", "spi.SourceLocation"),
+                    "spi.InvocationSite", "spi.SqlCallSite", "AnalysisStatistics", "statistics.StatisticsRecorder"),
+            "dataflow", types("spi.InvocationSite", "spi.SqlCallSite", "spi.SourceLocation", "AnalysisStatistics", "statistics.StatisticsRecorder"),
             "semantics", types("dataflow.ValueTrace"),
             "template", types("RawSql", "ReplayBudgets", "SqlRecoveryBudgets", "dataflow.ValueTrace",
                     "dataflow.ValueTraceGraphs", "parameter.ParameterValueInferencer",
@@ -43,8 +44,9 @@ class CorePackageArchitectureTest {
                     "parameter.ExternalValueGenerator", "semantics.ValueEvaluationLimitException", "spi.SqlCallSite"),
             "spi", types("SqlDefinition", "dataflow.DataFlowAnalysis", "dataflow.FlowPoint",
                     "dataflow.ValueTrace", "dataflow.ControlFlowEdge", "node.SqlNode", "node.SqlValueSnapshots",
-                    "resource.AnalysisResource", "resource.AnalysisResourceSource"),
-            "input", types("spi.AnalysisInputResolver", "spi.PreparedInput", "resource.PathResourceSource"));
+                    "resource.AnalysisResource", "resource.AnalysisResourceSource", "statistics.StatisticsRecorder"),
+            "input", types("spi.AnalysisInputResolver", "spi.PreparedInput", "resource.PathResourceSource"),
+            "statistics", types("AnalysisStatistics", "AnalysisStatisticsOptions"));
     // 仅这些原全限定名可跨越兼容边界；新实现和新调用方仍受普通规则约束。
     private static final Map<String, Set<String>> COMPATIBILITY_TYPES = Map.of(
             PREFIX + "dataflow.RawSqlBuilder", types("RawSql", "SqlRecoveryBudgets", "template.RawSqlBuilder"),
@@ -95,6 +97,10 @@ class CorePackageArchitectureTest {
         assertFalse(allowed(PREFIX + "template.NewProjection", PREFIX + "dataflow.ProgramIndex"));
         assertFalse(allowed(PREFIX + "parameter.ParameterValueInferencer", PREFIX + "parameter.JavaValueOperations"));
         assertFalse(allowed(PREFIX + "resource.NewResource", "sootup.java.core.views.JavaView"));
+        assertTrue(allowed(PREFIX + "dataflow.DataFlowAnalysis", PREFIX + "statistics.StatisticsRecorder"));
+        assertTrue(allowed(PREFIX + "statistics.StatisticsRecorder", PREFIX + "AnalysisStatistics"));
+        assertFalse(allowed(PREFIX + "statistics.StatisticsRecorder", PREFIX + "dataflow.DataFlowAnalysis"));
+        assertFalse(allowed(PREFIX + "statistics.StatisticsRecorder", "sootup.java.core.views.JavaView"));
         assertFalse(allowed(PREFIX + "node.NewNode", "sootup.core.signatures.MethodSignature"));
         assertTrue(allowed(PREFIX + "dataflow.FlowPoint$ValuePoint", PREFIX + "spi.SqlInput"));
         assertTrue(allowed(PREFIX + "dataflow.FlowPoint$ValuePoint", PREFIX + "spi.SqlInput$ValueAt"));

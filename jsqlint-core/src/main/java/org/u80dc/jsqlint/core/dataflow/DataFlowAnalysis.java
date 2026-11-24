@@ -1,5 +1,7 @@
 package org.u80dc.jsqlint.core.dataflow;
 
+import org.u80dc.jsqlint.core.AnalysisStatistics;
+import org.u80dc.jsqlint.core.statistics.StatisticsRecorder;
 import org.u80dc.jsqlint.core.spi.InvocationSite;
 import sootup.core.jimple.common.*;
 import sootup.core.jimple.common.constant.*;
@@ -25,6 +27,7 @@ public final class DataFlowAnalysis {
     public static final int MAX_PATHS = 256;
     public static final int MAX_STEPS = 10000;
     private final ProgramIndex program;
+    private final StatisticsRecorder statistics;
     private final LocalDefinitions definitions;
     private final NormalCompletion completion;
     private final int maxCallDepth, maxTraceDepth, maxTraceNodes;
@@ -58,17 +61,19 @@ public final class DataFlowAnalysis {
         this.program = program; this.maxCallDepth = maxCallDepth; this.maxTraceDepth = maxTraceDepth;
         this.maxTraceNodes = maxTraceNodes; this.checkpoint = checkpoint; this.incomplete = incomplete;
         this.entry = Objects.requireNonNull(entry); this.scopeMethods = Set.copyOf(scopeMethods);
-        definitions = new LocalDefinitions(cacheSize, checkpoint);
+        statistics = program.statisticsRecorder();
+        definitions = new LocalDefinitions(cacheSize, checkpoint, statistics);
         completion = new NormalCompletion(this, maxCallDepth);
     }
     private DataFlowAnalysis(DataFlowAnalysis source) {
-        program = source.program; definitions = source.definitions; maxCallDepth = source.maxCallDepth;
+        program = source.program; statistics = source.statistics; definitions = source.definitions; maxCallDepth = source.maxCallDepth;
         maxTraceDepth = source.maxTraceDepth; maxTraceNodes = source.maxTraceNodes; checkpoint = source.checkpoint;
         incomplete = source.incomplete; models.putAll(source.models); implicitTargets.putAll(source.implicitTargets);
         entry = source.entry; scopeMethods = source.scopeMethods;
         completion = new NormalCompletion(this, maxCallDepth);
     }
     public ProgramIndex program() { return program; }
+    public StatisticsRecorder statisticsRecorder() { return statistics; }
     public void checkpoint() { checkpoint.run(); }
     /** 仅在已有证据证明语句不能正常完成时返回 true；未知目标和递归保留可能性。 */
     public boolean cannotCompleteNormally(FlowPoint point) { return completion.statement(point) == NormalCompletion.Status.IMPOSSIBLE; }
@@ -85,7 +90,11 @@ public final class DataFlowAnalysis {
 
     /** 穷举项目内调用路径，直到 main 或没有调用方的方法；不在 public 方法处提前停止。 */
     public List<ContextPath> contexts(JavaSootMethod method) {
-        return contextCache.computeIfAbsent(method.getSignature(), ignored -> findContexts(method));
+        return contextCache.computeIfAbsent(method.getSignature(), ignored -> {
+            try (var timing = statistics.measure(AnalysisStatistics.Phase.TRACING)) {
+                return findContexts(method);
+            }
+        });
     }
     private List<ContextPath> findContexts(JavaSootMethod method) {
         if (entry.isPresent() && !scopeMethods.contains(method.getSignature())) return List.of();
@@ -125,8 +134,10 @@ public final class DataFlowAnalysis {
     }
 
     public ValueTrace trace(ValuePoint input) {
-        int[] steps = {0};
-        return new ValueTrace(input.snapshot(program), input.point().context().snapshot(), trace(input, new HashSet<>(), 0, steps));
+        try (var timing = statistics.measure(AnalysisStatistics.Phase.TRACING)) {
+            int[] steps = {0};
+            return new ValueTrace(input.snapshot(program), input.point().context().snapshot(), trace(input, new HashSet<>(), 0, steps));
+        }
     }
 
     /** 按 JavaBean getter 或最近的实例字段读取属性，不执行目标对象；来源与调用上下文随结果保存。 */
@@ -136,10 +147,12 @@ public final class DataFlowAnalysis {
     public ValueTrace traceProperty(ValuePoint receiver,String property,String propertyType,PropertyAccess access) {
         Objects.requireNonNull(receiver); Objects.requireNonNull(property); Objects.requireNonNull(propertyType);
         Objects.requireNonNull(access);
-        int[] steps = {0};
-        var active = new HashSet<ValuePoint>();
-        var root = property(receiver, property, propertyType,access, active, 0, steps);
-        return new ValueTrace(root.variable(), receiver.point().context().snapshot(), root);
+        try (var timing = statistics.measure(AnalysisStatistics.Phase.TRACING)) {
+            int[] steps = {0};
+            var active = new HashSet<ValuePoint>();
+            var root = property(receiver, property, propertyType,access, active, 0, steps);
+            return new ValueTrace(root.variable(), receiver.point().context().snapshot(), root);
+        }
     }
 
     private ValueTrace.Node property(ValuePoint receiver, String property, String propertyType,PropertyAccess access,
@@ -467,9 +480,11 @@ public final class DataFlowAnalysis {
 
     /** 沿赋值、参数、返回值和 cast 追踪引用身份；框架可声明其工厂方法为终点。 */
     public Origins origins(ValuePoint input, Predicate<InvocationSite> factory) {
-        List<ValuePoint> values = new ArrayList<>();
-        boolean complete = origins(input, factory, new HashSet<>(), 0, new int[]{0}, values);
-        return new Origins(values.stream().distinct().toList(), complete);
+        try (var timing = statistics.measure(AnalysisStatistics.Phase.TRACING)) {
+            List<ValuePoint> values = new ArrayList<>();
+            boolean complete = origins(input, factory, new HashSet<>(), 0, new int[]{0}, values);
+            return new Origins(values.stream().distinct().toList(), complete);
+        }
     }
     private boolean origins(ValuePoint input, Predicate<InvocationSite> factory, Set<ValuePoint> active,
                             int depth, int[] steps, List<ValuePoint> values) {
@@ -540,6 +555,11 @@ public final class DataFlowAnalysis {
      * 自动进入应用方法的返回点、退出到对应实参调用点；框架仅解释它关心的操作。
      */
     public <S> void backward(FlowPoint start, S initial, Transfer<S> transfer, Consumer<FlowEnd<S>> sink) {
+        try (var timing = statistics.measure(AnalysisStatistics.Phase.TRACING)) {
+            traverseBackward(start, initial, transfer, sink);
+        }
+    }
+    private <S> void traverseBackward(FlowPoint start, S initial, Transfer<S> transfer, Consumer<FlowEnd<S>> sink) {
         record Work<S>(FlowPoint point, S state, Set<FlowPoint> visited, List<String> issues, boolean exceptional, List<ControlFlowEdge> path) {}
         Deque<Work<S>> work = new ArrayDeque<>();
         Consumer<Work<S>> previous = new Consumer<>() {

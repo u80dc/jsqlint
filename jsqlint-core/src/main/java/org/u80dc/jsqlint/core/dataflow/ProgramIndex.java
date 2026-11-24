@@ -1,5 +1,7 @@
 package org.u80dc.jsqlint.core.dataflow;
 
+import org.u80dc.jsqlint.core.AnalysisStatistics;
+import org.u80dc.jsqlint.core.statistics.StatisticsRecorder;
 import org.u80dc.jsqlint.core.spi.InvocationSite;
 import org.u80dc.jsqlint.core.spi.SqlCallSite;
 import sootup.core.jimple.common.expr.*;
@@ -21,6 +23,7 @@ public final class ProgramIndex {
     private final JavaView view;
     private final List<JavaSootClass> classes;
     private final Runnable checkpoint;
+    private final StatisticsRecorder statistics;
     private final Map<Dispatch, CallResolution> targets = new HashMap<>();
     private final Map<MethodSignature, List<InvocationSite>> callers;
     private final Map<SqlCallSite, InvocationSite> invocations = new LinkedHashMap<>();
@@ -31,33 +34,43 @@ public final class ProgramIndex {
     private boolean fieldsIndexed;
 
     public ProgramIndex(JavaView view, List<JavaSootClass> classes, Collection<InvocationSite> calls, Runnable checkpoint) {
+        this(view, classes, calls, checkpoint, StatisticsRecorder.none());
+    }
+    public ProgramIndex(JavaView view, List<JavaSootClass> classes, Collection<InvocationSite> calls, Runnable checkpoint,
+                        StatisticsRecorder statistics) {
         this.view = view; this.classes = List.copyOf(classes); this.checkpoint = checkpoint;
-        Map<MethodSignature, List<InvocationSite>> callerIndex = new LinkedHashMap<>();
-        for (InvocationSite call : calls) {
-            checkpoint.run();
-            indexInvocation(call);
-            Set<MethodSignature> signatures = new LinkedHashSet<>();
-            signatures.add(call.invocation().getMethodSignature());
-            targets(call).forEach(method -> signatures.add(method.getSignature()));
-            for (MethodSignature signature : signatures) callerIndex.computeIfAbsent(signature, ignored -> new ArrayList<>()).add(call);
+        this.statistics = Objects.requireNonNull(statistics);
+        try (var timing = statistics.measure(AnalysisStatistics.Phase.INDEXING)) {
+            Map<MethodSignature, List<InvocationSite>> callerIndex = new LinkedHashMap<>();
+            for (InvocationSite call : calls) {
+                checkpoint.run();
+                indexInvocation(call);
+                Set<MethodSignature> signatures = new LinkedHashSet<>();
+                signatures.add(call.invocation().getMethodSignature());
+                targets(call).forEach(method -> signatures.add(method.getSignature()));
+                for (MethodSignature signature : signatures) callerIndex.computeIfAbsent(signature, ignored -> new ArrayList<>()).add(call);
+            }
+            callerIndex.replaceAll((signature, sites) -> List.copyOf(sites));
+            callers = Collections.unmodifiableMap(callerIndex);
         }
-        callerIndex.replaceAll((signature, sites) -> List.copyOf(sites));
-        callers = Collections.unmodifiableMap(callerIndex);
     }
     /** 仅当被追踪的值读取字段时建立写入索引，普通局部变量分析不额外扫描方法体。 */
     private void indexFields() {
         if (fieldsIndexed) return;
-        for (JavaSootClass clazz : classes) for (JavaSootMethod method : clazz.getMethods()) {
-            checkpoint.run();
-            if (!method.hasBody()) continue;
-            for (Stmt stmt : method.getBody().getStmts()) {
-                if (stmt instanceof AbstractDefinitionStmt definition && definition.getLeftOp() instanceof JFieldRef field)
-                    writes.computeIfAbsent(field.getFieldSignature(), ignored -> new ArrayList<>()).add(new FlowPoint(method, stmt, CallContext.EMPTY));
+        try (var timing = statistics.measure(AnalysisStatistics.Phase.INDEXING)) {
+            for (JavaSootClass clazz : classes) for (JavaSootMethod method : clazz.getMethods()) {
+                checkpoint.run();
+                if (!method.hasBody()) continue;
+                for (Stmt stmt : method.getBody().getStmts()) {
+                    if (stmt instanceof AbstractDefinitionStmt definition && definition.getLeftOp() instanceof JFieldRef field)
+                        writes.computeIfAbsent(field.getFieldSignature(), ignored -> new ArrayList<>()).add(new FlowPoint(method, stmt, CallContext.EMPTY));
+                }
             }
+            fieldsIndexed = true;
         }
-        fieldsIndexed = true;
     }
     public JavaView view() { return view; }
+    public StatisticsRecorder statisticsRecorder() { return statistics; }
     /** 保存框架声明的隐式调用，仅用于本次分析，不改变目标字节码或实际调用者索引。 */
     public void registerImplicitInvocation(InvocationSite site) { indexInvocation(site); }
     public Optional<InvocationSite> invocation(SqlCallSite site) { return Optional.ofNullable(invocations.get(site)); }
@@ -74,12 +87,14 @@ public final class ProgramIndex {
     public int statementIndex(JavaSootMethod method, Stmt statement) {
         Objects.requireNonNull(method); Objects.requireNonNull(statement);
         Map<Stmt, Integer> positions = statementPositions.computeIfAbsent(method, owner -> {
-            Map<Stmt, Integer> indexed = new IdentityHashMap<>();
-            int i = 0;
-            for (Stmt actual : owner.getBody().getStmts()) {
-                checkpoint.run(); indexed.put(actual, i++);
+            try (var timing = statistics.measure(AnalysisStatistics.Phase.INDEXING)) {
+                Map<Stmt, Integer> indexed = new IdentityHashMap<>();
+                int i = 0;
+                for (Stmt actual : owner.getBody().getStmts()) {
+                    checkpoint.run(); indexed.put(actual, i++);
+                }
+                return indexed;
             }
-            return indexed;
         });
         Integer position = positions.get(statement);
         if (position != null) return position;
@@ -94,6 +109,12 @@ public final class ProgramIndex {
     /** 使用共享调用索引和分派缓存选择入口及下游方法，不改变完整程序视图。 */
     public Set<MethodSignature> reachableMethods(JavaSootMethod entry, int maxCallDepth,
                                                 BiConsumer<String, String> incomplete) {
+        try (var timing = statistics.measure(AnalysisStatistics.Phase.INDEXING)) {
+            return findReachableMethods(entry, maxCallDepth, incomplete);
+        }
+    }
+    private Set<MethodSignature> findReachableMethods(JavaSootMethod entry, int maxCallDepth,
+                                                     BiConsumer<String, String> incomplete) {
         if (maxCallDepth < 1) throw new IllegalArgumentException("Call depth must be positive");
         Map<MethodSignature, List<InvocationSite>> outgoing = new LinkedHashMap<>();
         for (var site : invocations.values()) {
@@ -128,7 +149,9 @@ public final class ProgramIndex {
     }
     /** 只按已确定的接收者类型解析，不扩展到其他 CHA 实现。 */
     public Optional<JavaSootMethod> resolveMethod(ClassType receiver, MethodSubSignature signature) {
-        return classMethod(receiver, signature).or(() -> interfaceMethod(receiver, signature));
+        try (var timing = statistics.measure(AnalysisStatistics.Phase.INDEXING)) {
+            return classMethod(receiver, signature).or(() -> interfaceMethod(receiver, signature));
+        }
     }
 
     /** 来源候选和分派完备性分别保存；应用声明体可以可分析，却不能证明没有库子类覆盖。 */
@@ -136,7 +159,11 @@ public final class ProgramIndex {
         AbstractInvokeExpr invocation = site.invocation();
         if (invocation instanceof JDynamicInvokeExpr) return new CallResolution(List.of(), true);
         boolean exact = invocation instanceof JStaticInvokeExpr || invocation instanceof JSpecialInvokeExpr;
-        return targets.computeIfAbsent(new Dispatch(invocation.getMethodSignature(), exact), key -> {
+        return targets.computeIfAbsent(new Dispatch(invocation.getMethodSignature(), exact), this::resolveTargets);
+    }
+    private CallResolution resolveTargets(Dispatch key) {
+        try (var timing = statistics.measure(AnalysisStatistics.Phase.INDEXING)) {
+            boolean exact = key.exact();
             Set<JavaSootMethod> found = new LinkedHashSet<>();
             boolean unresolvedReceiver = false;
             Optional<JavaSootMethod> declaration = resolveDeclaration(key.signature().getDeclClassType(), key.signature().getSubSignature());
@@ -176,21 +203,23 @@ public final class ProgramIndex {
                     || declaration.get().isPrivate() || declaration.get().isFinal()
                     || declaringClass.map(JavaSootClass::isFinal).orElse(false));
             return new CallResolution(applicationTargets, external || applicationTargets.isEmpty(), complete);
-        });
+        }
     }
 
     /** 接收者来源已确定为一个实际分配类型时，只选择该类型的合法虚调用目标。 */
     public CallResolution resolution(InvocationSite site, ClassType receiver) {
-        if (!(site.invocation() instanceof AbstractInstanceInvokeExpr)
-                || site.invocation() instanceof JSpecialInvokeExpr) return resolution(site);
-        var signature = site.invocation().getMethodSignature();
-        var selected = resolveDeclaration(signature.getDeclClassType(), signature.getSubSignature())
-                .flatMap(declaration -> selectVirtual(receiver, declaration));
-        if (selected.isEmpty()) return new CallResolution(List.of(), true, false);
-        var method = selected.get();
-        boolean application = method.hasBody() && view.getClass(method.getDeclClassType())
-                .map(JavaSootClass::isApplicationClass).orElse(false);
-        return new CallResolution(application ? List.of(method) : List.of(), !application, true);
+        try (var timing = statistics.measure(AnalysisStatistics.Phase.INDEXING)) {
+            if (!(site.invocation() instanceof AbstractInstanceInvokeExpr)
+                    || site.invocation() instanceof JSpecialInvokeExpr) return resolution(site);
+            var signature = site.invocation().getMethodSignature();
+            var selected = resolveDeclaration(signature.getDeclClassType(), signature.getSubSignature())
+                    .flatMap(declaration -> selectVirtual(receiver, declaration));
+            if (selected.isEmpty()) return new CallResolution(List.of(), true, false);
+            var method = selected.get();
+            boolean application = method.hasBody() && view.getClass(method.getDeclClassType())
+                    .map(JavaSootClass::isApplicationClass).orElse(false);
+            return new CallResolution(application ? List.of(method) : List.of(), !application, true);
+        }
     }
     private Optional<JavaSootMethod> resolveDeclaration(ClassType type, MethodSubSignature signature) {
         return classMethod(type, signature).or(() -> interfaceMethod(type, signature));

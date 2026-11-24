@@ -14,6 +14,7 @@ import org.u80dc.jsqlint.core.*;
 import org.u80dc.jsqlint.core.node.SqlNode;
 import org.u80dc.jsqlint.core.node.SqlNodeRenderer;
 import org.u80dc.jsqlint.core.spi.AnalysisSeed;
+import org.u80dc.jsqlint.core.statistics.StatisticsRecorder;
 
 import javax.tools.ToolProvider;
 import java.io.IOException;
@@ -188,8 +189,10 @@ class MavenProjectCompilerTest {
             };
             // 用户只构造配置并交给 Analyzer，真实 ServiceLoader 链路完成仓库传递、编译和 SQL 分析。
             var analyzer = new Analyzer(AnalyzerConfig.defaults().withInputOptions(options));
-            var result = analyzer.analyze(project, AnalysisOptions.defaults().withClassOutputId("maven-project").withListener(listener));
+            var result = analyzer.analyze(project, AnalysisOptions.defaults().withClassOutputId("maven-project")
+                    .withListener(listener).withStatistics(true));
             assertEquals(AnalysisResult.Status.SUCCESS, result.status(), () -> String.join("\n", diagnostics));
+            assertCompilationAccounting(result.statistics().orElseThrow());
             assertEquals(List.of("SELECT 1"), sql);
             assertTrue(Files.isRegularFile(temporary.resolve("tmp/.jsqlint/maven-project/Example.class")));
             assertFalse(Files.exists(options.classOutputDirectory()));
@@ -230,13 +233,26 @@ class MavenProjectCompilerTest {
                 .withMavenRepositories(MavenRepositoryOptions.defaults().withLocalRepository(temporary.resolve("empty-cache")));
         var originalOut = System.out;
         var originalError = System.err;
-        var failure = assertThrows(AnalysisInputException.class, () -> MavenProjectCompiler.compile(project, options));
+        var recorder = StatisticsRecorder.create(AnalysisStatisticsOptions.timings());
+        var failure = assertThrows(AnalysisInputException.class, () -> MavenProjectCompiler.compile(project, options, recorder));
+        assertCompilationAccounting(recorder.snapshot().orElseThrow());
         assertTrue(failure.getMessage().contains("Maven compilation failed"), failure.getMessage());
         assertTrue(failure.getMessage().contains("Non-readable POM"), failure.getMessage());
         assertTrue(failure.getMessage().contains("pom.xml"), failure.getMessage());
         assertSame(originalOut, System.out);
         assertSame(originalError, System.err);
         assertNoTemporarySettings();
+    }
+
+    private static void assertCompilationAccounting(AnalysisStatistics statistics) {
+        for (var phase : List.of(AnalysisStatistics.Phase.COMPILATION, AnalysisStatistics.Phase.WAITING,
+                AnalysisStatistics.Phase.CLEANUP)) {
+            assertNotNull(statistics.phases().get(phase), "实际构建应记录 " + phase);
+            assertTrue(statistics.phases().get(phase).invocations() > 0);
+        }
+        assertEquals(statistics.elapsedNanos(), statistics.phases().values().stream()
+                .mapToLong(AnalysisStatistics.PhaseCost::selfNanos).sum());
+        assertTrue(statistics.measurements().isEmpty(), "编译资源必须在统计冻结前正常关闭");
     }
 
     private void publishFixtures(Path repository) throws Exception {

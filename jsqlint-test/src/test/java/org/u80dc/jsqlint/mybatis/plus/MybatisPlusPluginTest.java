@@ -28,7 +28,12 @@ class MybatisPlusPluginTest {
         assertTrue(result.calls().getFirst().samples().getFirst().rewrites().getFirst().beforeSql().isPresent());
     }
     @Test void mysqlPaginationRecordsCountAndBoundParameters()throws Exception {
-        verify("selectPage",new PlusPluginConfig(List.of(new PlusPluginConfig.Tenant("tenant_id",new SqlValue.Known(7L)),new PlusPluginConfig.Pagination(PlusPluginConfig.Dialect.MYSQL))),"",null,true);
+        var result=verify("selectPage",new PlusPluginConfig(List.of(new PlusPluginConfig.Tenant("tenant_id",new SqlValue.Known(7L)),new PlusPluginConfig.Pagination(PlusPluginConfig.Dialect.MYSQL))),"",null,true,true);
+        var statistics=result.statistics().orElseThrow();
+        assertTrue(statistics.phases().get(AnalysisStatistics.Phase.REWRITING).invocations()>0);
+        assertTrue(statistics.phases().get(AnalysisStatistics.Phase.RENDERING).invocations()>0);
+        assertEquals(statistics.elapsedNanos(),statistics.phases().values().stream().mapToLong(AnalysisStatistics.PhaseCost::selfNanos).sum());
+        assertTrue(statistics.measurements().isEmpty());
     }
     @Test void postgresPaginationWithoutCountAndMaxLimitMatchFramework()throws Exception {
         verify("selectPage",new PlusPluginConfig(List.of(new PlusPluginConfig.Pagination(PlusPluginConfig.Dialect.POSTGRESQL,Optional.of(4L),false,true))),"page.setSearchCount(false);",null,true);
@@ -59,6 +64,9 @@ class MybatisPlusPluginTest {
         assertTrue(result.calls().getFirst().samples().stream().allMatch(sample->sample.sql().isEmpty()));
     }
     private AnalysisResult verify(String operation,PlusPluginConfig plugins,String extra,String xml,boolean compare)throws Exception {
+        return verify(operation,plugins,extra,xml,compare,false);
+    }
+    private AnalysisResult verify(String operation,PlusPluginConfig plugins,String extra,String xml,boolean compare,boolean collectStatistics)throws Exception {
         boolean paging=operation.equals("selectPage");String call=paging?"page,wrapper":operation.equals("insert")||operation.equals("updateById")?"new User(\"one\",\"Alice\",3)":"\"one\"";
         String setup=paging?"com.baomidou.mybatisplus.extension.plugins.pagination.Page<User> page=new com.baomidou.mybatisplus.extension.plugins.pagination.Page<>(2,10);com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<User> wrapper=new com.baomidou.mybatisplus.core.conditions.query.QueryWrapper<>();wrapper.eq(\"name\",\"Alice\");":"";
         String parameter=paging?"java.util.Map.of(\"page\",page,\"ew\",wrapper)":operation.equals("updateById")?"java.util.Map.of(\"et\",new User(\"one\",\"Alice\",3))":operation.equals("insert")?"new User(\"one\",\"Alice\",3)":"\"one\"";
@@ -77,7 +85,7 @@ class MybatisPlusPluginTest {
                 libraries.add(Path.of(type.getProtectionDomain().getCodeSource().getLocation().toURI()));
             for(Path library:libraries)inputs.add(new JavaClassPathAnalysisInputLocation(library.toString(),SourceType.Library));
             result=new Analyzer(List.of(new MybatisAnalysisModule(MybatisOptions.defaults(),List.of(new MybatisPlusExtension(MybatisPlusOptions.defaults(),plugins)))),List.of()).analyze(
-                    new AnalysisRequest(inputs,xml==null?List.of():List.of(new org.u80dc.jsqlint.core.resource.PathResourceSource(resources))),"<sample.Fixture: void entry(sample.UserMapper)>");
+                    new AnalysisRequest(inputs,xml==null?List.of():List.of(new org.u80dc.jsqlint.core.resource.PathResourceSource(resources)),AnalysisOptions.defaults().withStatistics(collectStatistics)),"<sample.Fixture: void entry(sample.UserMapper)>");
         }finally{for(var input:inputs)if(input instanceof JavaClassPathAnalysisInputLocation location)location.close();}
         assertEquals(1,result.calls().size(),result.diagnostics().toString());
         var samples=result.calls().getFirst().samples();assertTrue(samples.stream().allMatch(sample->!sample.rewrites().isEmpty()),result.diagnostics().toString());if(!compare)return result;

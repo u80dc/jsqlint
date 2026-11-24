@@ -230,7 +230,7 @@ analyzer.analyze(Path.of("project-c")); // 仍使用五分钟超时和结束清�
 | 配置归属 | 内容 |
 |---|---|
 | `AnalyzerConfig` | 默认超时、调用深度、数据依赖深度与节点预算、方法缓存容量、默认结束清理策略、输入扩展配置、SQL 恢复/参数重演/联合求解预算、推断策略 |
-| `AnalysisOptions` | 本次超时覆盖、取消信号、监听器、输出标识、结束清理覆盖、推断策略覆盖 |
+| `AnalysisOptions` | 本次超时覆盖、取消信号、监听器、输出标识、结束清理覆盖、推断策略覆盖、统计收集选项 |
 
 配置优先级为：单次显式覆盖 → Analyzer 实例默认值；`AnalyzerConfig.defaults()` 提供系统默认值：
 不限时、调用深度 32、数据依赖深度 256、单次溯源访问节点数 10000、方法缓存容量 128、保留编译产物、
@@ -331,13 +331,84 @@ analyzer.analyze(project, options); // 仅本次提取来源与结构。
 
 ## 进度、结果与长任务控制
 
-`AnalysisResult` 包含内部枚举 `Status`、不可变的统一结果 `sqlResults()` 和结构化诊断 `diagnostics()`。
+`AnalysisResult` 包含内部枚举 `Status`、不可变的统一结果 `sqlResults()`、结构化诊断 `diagnostics()`，
+以及默认为空的分析统计快照 `statistics()`。
 `SqlResult` 的两个实现分别保留字节码传播结果 `SqlExtraction` 和资源/注解模板 `SqlTemplateResult`。
 `calls()` 提供实际调用结果视图；`rawSqls()` 汇总已恢复的字节码 SQL 和静态模板 SQL。
 动态模板通过 `templates()` 保存完整节点，尚未展开时不伪造 raw SQL；可使用
 `SqlNodeRenderer.render(template, parameters)` 在分析结束后提供参数渲染样例。
 所有结果均保留模块和来源位置，在输入关闭后仍可读取，不持有 JavaView、方法体或编译目录资源。
 同一 JDBC 调用点同时注册的旧模板事件与完整提取结果不会导致返回列表重复。
+
+### 分析统计
+
+统计按单次请求开启，不从 AnalyzerConfig 或上一次调用继承；默认不收集：
+
+```java
+var options = AnalysisOptions.defaults().withStatistics(true);
+var result = analyzer.bind(Path.of("project")).analyze(options,
+        "<example.UserService: void query(java.sql.Connection)>");
+
+result.statistics().ifPresent(statistics -> {
+    System.out.println("总耗时: " + statistics.elapsed());
+    statistics.phases().forEach((phase, cost) -> {
+        double percent = statistics.elapsedNanos() == 0 ? 0
+                : 100.0 * cost.selfNanos() / statistics.elapsedNanos();
+        System.out.printf("%s: 自身 %.3f ms (%.1f%%), 包含子工作 %.3f ms, 次数 %d%n",
+                phase, cost.selfNanos() / 1_000_000.0, percent,
+                cost.totalNanos() / 1_000_000.0, cost.invocations());
+    });
+});
+```
+
+也可使用 `withStatisticsOptions(AnalysisStatisticsOptions.timings())` 明确选择时间收集；
+`withStatistics(false)` 或 `withStatisticsOptions(null)` 关闭。其他 with 方法保留当前统计选项，
+原五/六参数 AnalysisOptions 构造器和原 AnalysisResult 构造器保持统计关闭。
+
+AnalysisStatistics 保存 `elapsedNanos`、`phases` 和 `measurements`，映射及其中数据均不可变。
+总耗时使用单调时钟，从分析会话创建到输入清理和 FINISHED 回调结束后冻结。
+SUCCESS、PARTIAL、CANCELLED、FAILED 都保留截至结束时的统计；会话创建前的参数校验异常仍直接抛出。
+调用前自行编译、调用后读取或显式渲染样例的成本不进入该快照。
+
+每个 PhaseCost 包含 `invocations`（进入次数）、`totalNanos`（包含子工作）、
+`selfNanos`（扣除直接子工作）、`maxNanos`（单次最大包含耗时），并提供 `averageNanos()`。
+概览和占比使用 selfNanos，各类别自身耗时之和等于 elapsedNanos。
+同一类别可以重复或递归嵌套，totalNanos 可能超过请求总耗时，不应用它求占比或加总。
+未发生的类别不出现在 phases 中；未分类的间隙和协调开销计入 OTHER。
+OTHER 的补足时间作为一次合并项记账，其次数和最大值不表示各个间隙的分布。
+
+| 成本类别 | 当前采集边界 |
+| --- | --- |
+| `PREPARATION` | 路径识别、输出准备、输入解析及请求组装 |
+| `COMPILATION` | JDK 编译任务、即时编译输入构造、Maven/Gradle 实际构建调用 |
+| `WAITING` | 等待进程内 Maven 构建锁，与拿锁后的编译时间分开 |
+| `DISCOVERY` | 资源、定义、方法元数据及调用点发现 |
+| `INDEXING` | 调用、字段写入、语句位置及到达定义索引构建，方法与分派解析；直接返回缓存的分支不计构建成本 |
+| `TRACING` | SQL/参数来源查询、逆向路径查询及提取处理 |
+| `INFERENCE` | 独立参数重演、联合求解及同一模型重演 |
+| `RENDERING` | SQL 候选投影、模板渲染、预览与绑定快照生成 |
+| `REWRITING` | 模板渲染后的 SQL/绑定改写及结果校验 |
+| `NOTIFICATION` | 进度、诊断、SQL 及结束监听器回调 |
+| `LOGGING` | SQL 调用点、提取结果及分析错误日志 |
+| `CLEANUP` | 关闭编译资源与已准备输入，清理临时构建配置及分析器管理的编译输出 |
+| `OTHER` | 未单独分类的工作及协调间隙 |
+
+成本类别与 AnalysisListener.Stage 独立：索引可能在发现或溯源时按需触发，
+求解过程中可能继续溯源，渲染过程中也可能重演 Java 模板表达式。
+候选到模板投影中的内部 Java 重演当前整体计入 RENDERING；
+计算定义及兼容事件协调中未设置独立边界的部分计入 OTHER。
+旧输入解析器仍由上下文重载转发到原 resolve 协议，准备时间可见；
+要细分编译等成本，扩展可重写接收 AnalysisInputContext 的 resolve 并使用其中的 StatisticsRecorder。
+当前采集限定在分析执行线程，Maven 构建内部并行任务的墙钟成本包含在构建调用中。
+默认关闭时计时器不读统计时钟、不创建计时帧；已有超时检查仍按原规则执行。
+
+后续可在 AnalysisStatisticsOptions.Feature 中增加收集内容，并在 measurements 中增加命名测量，
+无需为 AnalysisResult 增加 CPU、内存、GC 等字段。Measurement 保存 BigDecimal 数值、
+Unit（NANOSECONDS/BYTES/COUNT/RATIO）和 Scope（REQUEST/ANALYSIS_THREAD/JVM_PROCESS）。
+例如线程 CPU 时间可使用 ANALYSIS_THREAD，JVM 堆快照和 GC 增量使用 JVM_PROCESS；
+测量名应明确快照时点或增量口径。不可用或未启用的测量不发布，不用零冒充未采集。
+当前仅启用 TIMINGS，measurements 通常为空；作用域未正常关闭时保留
+`statistics.unclosedScopes` 计数，不改变 SQL 结果或终态。
 
 ### 统一获取 SQL 样例
 
@@ -904,7 +975,8 @@ SQL 字符串来自先前的 `prepareStatement(sql)`；JDBC 的过程间提取�
 `new Analyzer(config, modules, resolvers)`，只启用传入扩展；
 core 的字节码解析器始终存在。通过 `config.withInputOptions(...)` 可以保留自动发现行为；
 原有显式传入 `new AutoCompileInputResolver(inputLocationOptions)` 的方式仍可使用。
-输入解析器在 `resolve(source, classOutputDirectory, inputOptions, checkpoint)` 中读取支持的配置类型。
+输入解析器在 `resolve(source, classOutputDirectory, inputOptions, context)` 中读取支持的配置类型，
+AnalysisInputContext 传递本次检查点和统计计时器；默认实现转发到原 Runnable checkpoint 重载。
 未指定配置时默认实现兼容旧的 resolve 重载；编译解析器不支持传入配置时应报错，避免静默忽略配置。
 
 模块在 `register(DiscoveryRegistry)` 中注册资源、方法元数据和调用点规则。

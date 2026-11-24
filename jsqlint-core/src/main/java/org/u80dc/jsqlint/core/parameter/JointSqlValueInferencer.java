@@ -3,6 +3,7 @@ package org.u80dc.jsqlint.core.parameter;
 import org.u80dc.jsqlint.core.*;
 import org.u80dc.jsqlint.core.dataflow.*;
 import org.u80dc.jsqlint.core.node.SqlValue;
+import org.u80dc.jsqlint.core.statistics.StatisticsRecorder;
 import java.util.*;
 import java.util.function.Supplier;
 
@@ -13,6 +14,7 @@ public final class JointSqlValueInferencer {
     private final JointBudgets budgets;
     private final ReplayBudgets replayBudgets;
     private final DataFlowAnalysis flow;
+    private final StatisticsRecorder statistics;
     private final JointPathExplorer explorer;
     private final PathPredicateSolver solver;
     private final Supplier<? extends ExternalValueGenerator> generators;
@@ -33,6 +35,7 @@ public final class JointSqlValueInferencer {
     public JointSqlValueInferencer(DataFlowAnalysis flow, JointBudgets budgets,
                                    Supplier<? extends ExternalValueGenerator> generators, ReplayBudgets replayBudgets) {
         this.flow = Objects.requireNonNull(flow);
+        this.statistics = flow.statisticsRecorder();
         this.budgets = Objects.requireNonNull(budgets);
         this.generators = Objects.requireNonNull(generators);
         this.replayBudgets = Objects.requireNonNull(replayBudgets);
@@ -48,13 +51,15 @@ public final class JointSqlValueInferencer {
     /** controlFlowPaths 是产生框架快照的路径析取；不提供时仅按变量来源重建控制路径。 */
     public RawSql infer(RawSql raw, List<SqlExtraction.Binding> bindings, FlowPoint execution,
                         List<List<ControlFlowEdge>> controlFlowPaths, List<String> snapshotIssues) {
-        List<RawSql.Variant> variants = new ArrayList<>();
-        for (var variant : raw.variants()) {
-            flow.checkpoint();
-            JointSqlInferenceResult result = infer(variant, bindings, execution, controlFlowPaths, snapshotIssues);
-            variants.add(new RawSql.Variant(variant.text(), variant.placeholders(), variant.trace(), bindings, Optional.of(result)));
+        try (var timing = statistics.measure(AnalysisStatistics.Phase.INFERENCE)) {
+            List<RawSql.Variant> variants = new ArrayList<>();
+            for (var variant : raw.variants()) {
+                flow.checkpoint();
+                JointSqlInferenceResult result = infer(variant, bindings, execution, controlFlowPaths, snapshotIssues);
+                variants.add(new RawSql.Variant(variant.text(), variant.placeholders(), variant.trace(), bindings, Optional.of(result)));
+            }
+            return new RawSql(variants, raw.issues());
         }
-        return new RawSql(variants, raw.issues());
     }
 
     private record Dimension(String name, int binding, boolean key, List<InferredParameterValue> values) {}
@@ -66,16 +71,18 @@ public final class JointSqlValueInferencer {
     /** 联合重演通用输入，不创建虚构的 SQL 文本或 SQL 传播树。 */
     public JointSqlInferenceResult inferParameters(Collection<ParameterValueInferenceResult> parameters, FlowPoint execution,
                                                    List<List<ControlFlowEdge>> histories, List<String> snapshotIssues) {
-        List<Dimension> dimensions = new ArrayList<>();
-        Set<String> issues = new LinkedHashSet<>(snapshotIssues);
-        Set<String> names = new HashSet<>();
-        for (var parameter : parameters) {
-            if (!names.add(parameter.name()))
-                throw new IllegalArgumentException("Duplicate joint parameter name: " + parameter.name());
-            dimensions.add(new Dimension(parameter.name(), -1, false, parameter.possibleValues()));
-            addLimits(issues, parameter);
+        try (var timing = statistics.measure(AnalysisStatistics.Phase.INFERENCE)) {
+            List<Dimension> dimensions = new ArrayList<>();
+            Set<String> issues = new LinkedHashSet<>(snapshotIssues);
+            Set<String> names = new HashSet<>();
+            for (var parameter : parameters) {
+                if (!names.add(parameter.name()))
+                    throw new IllegalArgumentException("Duplicate joint parameter name: " + parameter.name());
+                dimensions.add(new Dimension(parameter.name(), -1, false, parameter.possibleValues()));
+                addLimits(issues, parameter);
+            }
+            return solve(Optional.empty(), List.of(), execution, histories, snapshotIssues, dimensions, issues);
         }
-        return solve(Optional.empty(), List.of(), execution, histories, snapshotIssues, dimensions, issues);
     }
     private JointSqlInferenceResult infer(RawSql.Variant variant, List<SqlExtraction.Binding> bindings, FlowPoint execution,
                                          List<List<ControlFlowEdge>> histories, List<String> snapshotIssues) {
@@ -84,7 +91,7 @@ public final class JointSqlValueInferencer {
         for (var parameter : variant.parameters()) {
             dimensions.add(new Dimension(parameter.name(), -1, false, parameter.possibleValues())); addLimits(issues, parameter);
         }
-        var keyInferencer = new ParameterValueInferencer(Objects.requireNonNull(generators.get()), flow::checkpoint, replayBudgets);
+        var keyInferencer = new ParameterValueInferencer(Objects.requireNonNull(generators.get()), flow::checkpoint, replayBudgets, statistics);
         for (int i = 0; i < bindings.size(); i++) {
             var binding = bindings.get(i);
             var keys = keyInferencer.infer(binding.keyTrace());
@@ -188,7 +195,7 @@ public final class JointSqlValueInferencer {
                 var solution = solver.solve(path.conditions());
                 if (solution.status() == Status.UNSATISFIABLE) continue;
                 if (solution.status() == Status.UNKNOWN) coverageComplete = false;
-                var replay = new ParameterValueInferencer(Objects.requireNonNull(generators.get()), flow::checkpoint, solution.inputs(), replayBudgets);
+                var replay = new ParameterValueInferencer(Objects.requireNonNull(generators.get()), flow::checkpoint, solution.inputs(), replayBudgets, statistics);
                 List<InferredParameterValue> values = new ArrayList<>();
                 Set<String> localIssues = new LinkedHashSet<>(solution.issues());
                 localIssues.addAll(snapshotIssues);

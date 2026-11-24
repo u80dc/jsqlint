@@ -1,6 +1,7 @@
 package org.u80dc.jsqlint.commons.compiler;
 
 import org.u80dc.jsqlint.commons.location.AnalysisInputException;
+import org.u80dc.jsqlint.core.statistics.StatisticsRecorder;
 import sootup.core.inputlocation.AnalysisInputLocation;
 import sootup.core.interceptor.BodyInterceptor;
 import sootup.core.model.SourceType;
@@ -8,10 +9,15 @@ import sootup.java.bytecode.frontend.inputlocation.OTFCompileAnalysisInputLocati
 
 import javax.tools.StandardLocation;
 import javax.tools.ToolProvider;
+import java.io.Closeable;
 import java.io.IOException;
 import java.io.StringWriter;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Objects;
+
+import static org.u80dc.jsqlint.core.AnalysisStatistics.Phase.CLEANUP;
+import static org.u80dc.jsqlint.core.AnalysisStatistics.Phase.COMPILATION;
 
 /**
  * 普通 Java 源码编译：提供指定目录的 JDK 编译及 OTF 便捷入口。
@@ -25,13 +31,24 @@ public final class JavaSourceCompiler {
 
     /** OTF 不开放输出目录配置，通过 JDK 编译器写入已准备好的指定目录。 */
     public static void compile(List<Path> sources, Path output) throws IOException {
+        compile(sources, output, StatisticsRecorder.none());
+    }
+
+    public static void compile(List<Path> sources, Path output, StatisticsRecorder statisticsRecorder) throws IOException {
+        Objects.requireNonNull(statisticsRecorder, "statisticsRecorder");
         var compiler = ToolProvider.getSystemJavaCompiler();
         if (compiler == null) throw new AnalysisInputException("Source compilation requires a JDK with JavaCompiler");
-        try (var manager = compiler.getStandardFileManager(null, null, null)) {
+        var manager = compiler.getStandardFileManager(null, null, null);
+        try (var closingManager = measuredClose(manager, statisticsRecorder)) {
             manager.setLocationFromPaths(StandardLocation.CLASS_OUTPUT, List.of(output));
             var diagnostics = new StringWriter();
             var units = manager.getJavaFileObjectsFromPaths(sources);
-            if (!compiler.getTask(diagnostics, manager, null, null, null, units).call()) {
+            var task = compiler.getTask(diagnostics, manager, null, null, null, units);
+            boolean success;
+            try (var compilation = statisticsRecorder.measure(COMPILATION)) {
+                success = task.call();
+            }
+            if (!success) {
                 throw new AnalysisInputException("Java compilation failed for " + sources + "\n" + diagnostics);
             }
         }
@@ -40,13 +57,29 @@ public final class JavaSourceCompiler {
     /** 使用 OTF 的默认输出目录，并保留目标代码类型及方法体拦截器。 */
     public static AnalysisInputLocation compileOnTheFly(List<Path> paths, SourceType sourceType,
                                                         List<BodyInterceptor> interceptors) {
+        return compileOnTheFly(paths, sourceType, interceptors, StatisticsRecorder.none());
+    }
+
+    public static AnalysisInputLocation compileOnTheFly(List<Path> paths, SourceType sourceType,
+                                                        List<BodyInterceptor> interceptors, StatisticsRecorder statisticsRecorder) {
+        Objects.requireNonNull(statisticsRecorder, "statisticsRecorder");
         if (ToolProvider.getSystemJavaCompiler() == null) {
             throw new AnalysisInputException("OTF compilation requires a JDK with JavaCompiler");
         }
-        try {
+        try (var compilation = statisticsRecorder.measure(COMPILATION)) {
             return new OTFCompileAnalysisInputLocation(paths, sourceType, interceptors);
         } catch (RuntimeException e) {
             throw new AnalysisInputException("OTF compilation failed for " + paths + "\n" + e.getMessage(), e);
         }
+    }
+
+    /** 使用同一关闭契约保留TWR异常抑制；禁用统计时直接复用原资源。 */
+    private static Closeable measuredClose(Closeable resource, StatisticsRecorder statisticsRecorder) {
+        if (!statisticsRecorder.enabled()) return resource;
+        return () -> {
+            try (var cleanup = statisticsRecorder.measure(CLEANUP)) {
+                resource.close();
+            }
+        };
     }
 }

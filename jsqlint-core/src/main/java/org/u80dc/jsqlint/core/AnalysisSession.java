@@ -6,6 +6,7 @@ import org.u80dc.jsqlint.core.SqlDiscovery.Pending;
 import org.u80dc.jsqlint.core.node.*;
 import org.u80dc.jsqlint.core.dataflow.*;
 import org.u80dc.jsqlint.core.spi.*;
+import org.u80dc.jsqlint.core.statistics.StatisticsRecorder;
 import sootup.core.signatures.MethodSignature;
 
 import java.util.*;
@@ -23,6 +24,7 @@ final class AnalysisSession {
     private static final Logger LOG = LoggerFactory.getLogger(AnalysisSession.class);
     private final AnalyzerConfig config;
     private final AnalysisOptions options;
+    private final StatisticsRecorder statisticsRecorder;
     private final SqlAnalysisLogger sqlLogger = new SqlAnalysisLogger(this::checkpoint);
     private final long started = System.nanoTime();
     private final List<SqlResult> sqlResults = new ArrayList<>();
@@ -36,7 +38,10 @@ final class AnalysisSession {
     AnalysisSession(AnalyzerConfig config, AnalysisOptions options) {
         this.config = config;
         this.options = options;
+        statisticsRecorder = StatisticsRecorder.create(options.statisticsOptions());
     }
+
+    StatisticsRecorder statisticsRecorder() { return statisticsRecorder; }
 
     /** 在工作边界协作停止；单次第三方编译或解析调用仍需自行返回。 */
     void checkpoint() {
@@ -77,7 +82,7 @@ final class AnalysisSession {
     }
 
     private void notifyListener(Consumer<AnalysisListener> action) {
-        try { action.accept(options.listener()); }
+        try (var timing = statisticsRecorder.measure(AnalysisStatistics.Phase.NOTIFICATION)) { action.accept(options.listener()); }
         catch (RuntimeException e) {
             recordListenerFailure(e);
             throw new ListenerFailure(e);
@@ -88,7 +93,7 @@ final class AnalysisSession {
         var discovery = new SqlDiscovery(this::checkpoint, this::recover, event -> {
             resources = event.resources(); methods = event.methods(); candidates = event.candidates();
             progress(event.stage());
-        }, this::reportCallSite);
+        }, this::reportCallSite, statisticsRecorder);
         var plan = discovery.discover(request, extensions, entry, config.maxCallDepth(), this::incomplete);
         var pending = plan.seeds();
         var extractionRequests = plan.extractions();
@@ -180,10 +185,10 @@ final class AnalysisSession {
         definition.ifPresent(source -> source.issues().forEach(issue -> incomplete("SQL_DEFINITION", issue)));
         var parameters = item.seed().parameters();
         SqlNodeRenderer.BoundSql bound = null;
-        if (definition.isPresent()) try { bound = definition.get().render(parameters, renderingContext()); }
+        if (definition.isPresent()) try (var timing = statisticsRecorder.measure(AnalysisStatistics.Phase.RENDERING)) { bound = definition.get().render(parameters, renderingContext()); }
         catch (Exception e) { recover("SQL_RENDERING", item.seed().location().toString(), e, true, Set.of(SqlAssessment.Dimension.VALUES)); }
         SqlNodeRenderer.RenderedSql rendered;
-        try {
+        try (var timing = statisticsRecorder.measure(AnalysisStatistics.Phase.RENDERING)) {
             // 已截断的参数化渲染不再启动第二次预览遍历；旧事件仍收到未完成的结果。
             rendered = bound != null && hasRenderLimit(bound.rendered()) ? bound.rendered()
                     : SqlNodeRenderer.render(template, parameters,
@@ -208,7 +213,7 @@ final class AnalysisSession {
     }
 
     private SqlNodeRenderer.RenderedSql render(Pending item, SqlNode template) {
-        try {
+        try (var timing = statisticsRecorder.measure(AnalysisStatistics.Phase.RENDERING)) {
             var rendered = SqlNodeRenderer.render(template, item.seed().parameters(), SqlExpressionEvaluator.simple(), renderingContext());
             if (hasRenderLimit(rendered)) incomplete("SQL_RENDER_LIMIT", "SQL template rendering budget exceeded", Set.of(SqlAssessment.Dimension.VALUES));
             return rendered;
@@ -221,7 +226,7 @@ final class AnalysisSession {
     }
 
     private SqlEvaluationContext renderingContext() {
-        return new SqlEvaluationContext(config.replayBudgets(), config.sqlRenderBudgets(), this::checkpoint);
+        return new SqlEvaluationContext(config.replayBudgets(), config.sqlRenderBudgets(), this::checkpoint, statisticsRecorder);
     }
 
     private void notifySql(Pending item, SqlNode template, SqlNodeRenderer.RenderedSql rendered) {
@@ -240,15 +245,17 @@ final class AnalysisSession {
                     joint.combinations().stream().flatMap(combination -> combination.issues().stream()))).distinct().toList();
             incomplete("JOINT_ANALYSIS_INCOMPLETE", reasons.isEmpty() ? "Joint analysis did not cover all paths" : String.join("; ", reasons), Set.of(SqlAssessment.Dimension.PATH_COVERAGE));
         }
-        sqlLogger.extraction(extraction);
+        try (var timing = statisticsRecorder.measure(AnalysisStatistics.Phase.LOGGING)) { sqlLogger.extraction(extraction); }
         notifyListener(listener -> listener.onSqlResult(extraction));
         analyzed++;
     }
 
     private void reportCallSite(String moduleId, SqlCallSite site) {
-        LOG.info("SQL 调用点: module={}, kind={}, class={}, method={}, caller={}, location={}",
-                moduleId, site.kind(), site.target().getDeclClassType(), site.target(),
-                site.caller().map(Object::toString).orElse("<声明>"), site.location());
+        try (var timing = statisticsRecorder.measure(AnalysisStatistics.Phase.LOGGING)) {
+            LOG.info("SQL 调用点: module={}, kind={}, class={}, method={}, caller={}, location={}",
+                    moduleId, site.kind(), site.target().getDeclClassType(), site.target(),
+                    site.caller().map(Object::toString).orElse("<声明>"), site.location());
+        }
         notifyListener(listener -> listener.onSqlCallSite(moduleId, site));
     }
 
@@ -268,7 +275,9 @@ final class AnalysisSession {
             Thread.currentThread().interrupt();
             throw new Stop(Status.CANCELLED);
         }
-        LOG.warn("{}: {}", code, message, error);
+        try (var timing = statisticsRecorder.measure(AnalysisStatistics.Phase.LOGGING)) {
+            LOG.warn("{}: {}", code, message, error);
+        }
         diagnostic(code, message + ": " + error.getMessage(), incomplete, dimensions);
     }
 
@@ -281,7 +290,9 @@ final class AnalysisSession {
             Thread.currentThread().interrupt();
             return Status.CANCELLED;
         }
-        LOG.error("Analysis failed", error);
+        try (var timing = statisticsRecorder.measure(AnalysisStatistics.Phase.LOGGING)) {
+            LOG.error("Analysis failed", error);
+        }
         if (!(error instanceof ListenerFailure)) {
             try { incomplete("ANALYSIS_FAILED", Objects.toString(error.getMessage(), error.getClass().getSimpleName())); }
             catch (ListenerFailure ignored) { /* notifyListener 已保存回调失败，不再次通知。 */ }
@@ -293,10 +304,12 @@ final class AnalysisSession {
         // 收尾时不再检查取消或超时，确保包括提前停止在内的执行都能发出结束事件。
         try { progress(Stage.FINISHED); }
         catch (ListenerFailure e) {
-            LOG.error("Analysis listener failed", e);
+            try (var timing = statisticsRecorder.measure(AnalysisStatistics.Phase.LOGGING)) {
+                LOG.error("Analysis listener failed", e);
+            }
             status = Status.FAILED;
         }
-        return new AnalysisResult(status, sqlResults, diagnostics);
+        return new AnalysisResult(status, sqlResults, diagnostics, statisticsRecorder.snapshot());
     }
 
     /** 监听器本身失败时直接保存诊断，避免再次回调形成递归失败。 */

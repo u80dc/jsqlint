@@ -42,7 +42,9 @@ public record SqlDefinition(String id, SourceLocation location, SqlNode template
     }
     public SqlNodeRenderer.BoundSql render(Map<String, ?> parameters,
             Function<SqlExpressionEvaluator.Reference, SqlValueOrigin> inputs, SqlEvaluationContext context) {
-        return rendered(SqlNodeRenderer.renderBound(template, parameters, evaluator, inputs, context),context,inputs);
+        try (var timing = context.statisticsRecorder().measure(AnalysisStatistics.Phase.RENDERING)) {
+            return rendered(SqlNodeRenderer.renderBound(template, parameters, evaluator, inputs, context),context,inputs);
+        }
     }
     private SqlNodeRenderer.BoundSql rendered(SqlNodeRenderer.BoundSql bound,SqlEvaluationContext context,
             Function<SqlExpressionEvaluator.Reference,SqlValueOrigin> inputs) {
@@ -50,7 +52,9 @@ public record SqlDefinition(String id, SourceLocation location, SqlNode template
         var normalized=new SqlNodeRenderer.BoundSql(new SqlNodeRenderer.RenderedSql(rendered.sql().map(String::strip),
                 rendered.residual(), rendered.parameters(), rendered.diagnostics(), rendered.recoveryMode()), bound.bindings(),bound.rewrites());
         if(transform.isEmpty()||!normalized.rendered().complete())return normalized;
-        return context.evaluate(()->SqlBoundTransformResults.validate(normalized,
-                Objects.requireNonNull(transform.get().apply(normalized,metadata,context,inputs)),context));
+        try (var timing = context.statisticsRecorder().measure(AnalysisStatistics.Phase.REWRITING)) {
+            return context.evaluate(()->SqlBoundTransformResults.validate(normalized,
+                    Objects.requireNonNull(transform.get().apply(normalized,metadata,context,inputs)),context));
+        }
     }
 }

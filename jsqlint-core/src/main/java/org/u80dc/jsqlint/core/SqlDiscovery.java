@@ -4,6 +4,7 @@ import org.u80dc.jsqlint.core.resource.AnalysisResource;
 import org.u80dc.jsqlint.core.spi.*;
 import org.u80dc.jsqlint.core.dataflow.ProgramIndex;
 import org.u80dc.jsqlint.core.semantics.JavaValueOperations;
+import org.u80dc.jsqlint.core.statistics.StatisticsRecorder;
 import sootup.core.model.SourceType;
 import sootup.core.signatures.MethodSignature;
 import sootup.java.core.JavaSootClass;
@@ -22,6 +23,7 @@ final class SqlDiscovery {
     private final AnalysisErrorHandler errors;
     private final Consumer<Progress> updates;
     private final BiConsumer<String, SqlCallSite> callSites;
+    private final StatisticsRecorder statisticsRecorder;
     private final List<Registered> modules = new ArrayList<>();
     private final List<Pending> seeds = new ArrayList<>();
     private final List<ExtractionRequest> extractions = new ArrayList<>();
@@ -29,14 +31,25 @@ final class SqlDiscovery {
 
     SqlDiscovery(Runnable checkpoint, AnalysisErrorHandler errors, Consumer<Progress> updates,
                  BiConsumer<String, SqlCallSite> callSites) {
+        this(checkpoint, errors, updates, callSites, StatisticsRecorder.none());
+    }
+    SqlDiscovery(Runnable checkpoint, AnalysisErrorHandler errors, Consumer<Progress> updates,
+                 BiConsumer<String, SqlCallSite> callSites, StatisticsRecorder statisticsRecorder) {
         this.checkpoint = checkpoint;
         this.errors = errors;
         this.updates = updates;
         this.callSites = callSites;
+        this.statisticsRecorder = Objects.requireNonNull(statisticsRecorder);
     }
 
     Plan discover(AnalysisRequest request, List<SqlAnalysisModule> extensions, Optional<MethodSignature> entry,
                   int maxCallDepth, BiConsumer<String, String> incomplete) throws Exception {
+        try (var timing = statisticsRecorder.measure(AnalysisStatistics.Phase.DISCOVERY)) {
+            return discoverPlan(request, extensions, entry, maxCallDepth, incomplete);
+        }
+    }
+    private Plan discoverPlan(AnalysisRequest request, List<SqlAnalysisModule> extensions, Optional<MethodSignature> entry,
+                              int maxCallDepth, BiConsumer<String, String> incomplete) throws Exception {
         checkpoint.run();
         // 每次重新注册，允许模块建立本次独占的处理器和跨资源定义索引。
         for (var module : extensions) {
@@ -125,7 +138,7 @@ final class SqlDiscovery {
                 }
             } catch (Exception e) { errors.recover("CODE_DISCOVERY", "Cannot enumerate application classes", e); }
         }
-        var program = new ProgramIndex(view, classes, callIndexRequired ? calls : List.of(), checkpoint);
+        var program = new ProgramIndex(view, classes, callIndexRequired ? calls : List.of(), checkpoint, statisticsRecorder);
         Optional<JavaSootMethod> root = entry.map(signature -> view.getMethod(signature)
                 .or(() -> program.resolveMethod(signature.getDeclClassType(), signature.getSubSignature()))
                 .filter(method -> method.getDeclClassType().equals(signature.getDeclClassType())

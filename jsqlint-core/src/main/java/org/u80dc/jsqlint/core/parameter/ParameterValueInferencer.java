@@ -1,5 +1,7 @@
 package org.u80dc.jsqlint.core.parameter;
 
+import org.u80dc.jsqlint.core.AnalysisStatistics;
+import org.u80dc.jsqlint.core.statistics.StatisticsRecorder;
 import org.u80dc.jsqlint.core.dataflow.ValueTrace;
 import org.u80dc.jsqlint.core.ReplayBudgets;
 import org.u80dc.jsqlint.core.node.SqlValue;
@@ -20,6 +22,7 @@ public final class ParameterValueInferencer {
     private final ReplayBudgets budgets;
     private final ExternalValueGenerator generator;
     private final Runnable checkpoint;
+    private final StatisticsRecorder statistics;
     private final Map<SampleKey, SqlValue> samples = new HashMap<>();
     private final Map<Variable, SqlValue> inputs;
 
@@ -35,11 +38,20 @@ public final class ParameterValueInferencer {
     public ParameterValueInferencer(ExternalValueGenerator generator, Runnable checkpoint, ReplayBudgets budgets) {
         this(generator, checkpoint, Map.of(), budgets);
     }
+    public ParameterValueInferencer(ExternalValueGenerator generator, Runnable checkpoint, ReplayBudgets budgets,
+                                    StatisticsRecorder statistics) {
+        this(generator, checkpoint, Map.of(), budgets, statistics);
+    }
     public ParameterValueInferencer(ExternalValueGenerator generator, Runnable checkpoint, Map<Variable, SqlValue> inputs,
                                     ReplayBudgets budgets) {
+        this(generator, checkpoint, inputs, budgets, StatisticsRecorder.none());
+    }
+    public ParameterValueInferencer(ExternalValueGenerator generator, Runnable checkpoint, Map<Variable, SqlValue> inputs,
+                                    ReplayBudgets budgets, StatisticsRecorder statistics) {
         this.generator = Objects.requireNonNull(generator); this.checkpoint = Objects.requireNonNull(checkpoint);
         this.inputs = Map.copyOf(inputs);
         this.budgets = Objects.requireNonNull(budgets);
+        this.statistics = Objects.requireNonNull(statistics);
     }
 
     public ParameterValueInferenceResult infer(ValueTrace trace) { return infer(variableName(trace.root()), trace); }
@@ -55,11 +67,13 @@ public final class ParameterValueInferencer {
     }
     public ParameterValueInferenceResult infer(String name, ValueTrace trace) {
         Objects.requireNonNull(name); Objects.requireNonNull(trace);
-        var query = new Query();
-        var values = query.visit(trace.root(), 0).stream().map(value -> new InferredParameterValue(
-                value.value(), new ValueTrace(trace.variable(), trace.callChain(), value.node()),
-                value.initials(), value.issues())).toList();
-        return new ParameterValueInferenceResult(name, trace.variable().type(), values, new ArrayList<>(query.issues), query.truncated);
+        try (var timing = statistics.measure(AnalysisStatistics.Phase.INFERENCE)) {
+            var query = new Query();
+            var values = query.visit(trace.root(), 0).stream().map(value -> new InferredParameterValue(
+                    value.value(), new ValueTrace(trace.variable(), trace.callChain(), value.node()),
+                    value.initials(), value.issues())).toList();
+            return new ParameterValueInferenceResult(name, trace.variable().type(), values, new ArrayList<>(query.issues), query.truncated);
+        }
     }
 
     /** 变量名用于展示和槽位关联，源代码调试信息缺失时保留字节码名称/参数编号。 */

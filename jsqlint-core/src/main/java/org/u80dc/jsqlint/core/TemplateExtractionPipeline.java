@@ -5,6 +5,7 @@ import org.u80dc.jsqlint.core.dataflow.*;
 import org.u80dc.jsqlint.core.node.*;
 import org.u80dc.jsqlint.core.parameter.*;
 import org.u80dc.jsqlint.core.spi.*;
+import org.u80dc.jsqlint.core.statistics.StatisticsRecorder;
 
 import java.util.*;
 import java.util.function.Consumer;
@@ -12,6 +13,7 @@ import java.util.function.Consumer;
 /** 将资源模板与真实调用实参接入通用溯源、联合求解和参数化渲染。 @author u80dc */
 final class TemplateExtractionPipeline {
     private final DataFlowAnalysis flow;
+    private final StatisticsRecorder statistics;
     private final Runnable checkpoint;
     private final Consumer<ValueTrace> traceLimits;
     private final AnalysisErrorHandler errors;
@@ -29,6 +31,7 @@ final class TemplateExtractionPipeline {
                                AnalysisErrorHandler errors, InferParameter inferParameter, AnalysisIssueReporter incomplete,
                                ReplayBudgets replayBudgets, SqlRenderBudgets renderBudgets) {
         this.flow = flow; this.checkpoint = checkpoint; this.traceLimits = traceLimits;
+        this.statistics = flow.statisticsRecorder();
         this.errors = errors; this.inferParameter = inferParameter;
         this.incomplete = incomplete;
         this.replayBudgets = replayBudgets;
@@ -113,10 +116,16 @@ final class TemplateExtractionPipeline {
 
     private TemplateInferenceResult.BoundModel render(SqlDefinition definition, TemplateInferenceResult state, FlowPoint point,
                                                       Optional<JointSqlInferenceResult.Combination> combination, List<String> issues) {
+        try (var timing = statistics.measure(AnalysisStatistics.Phase.RENDERING)) {
+            return renderModel(definition, state, point, combination, issues);
+        }
+    }
+    private TemplateInferenceResult.BoundModel renderModel(SqlDefinition definition, TemplateInferenceResult state, FlowPoint point,
+                                                           Optional<JointSqlInferenceResult.Combination> combination, List<String> issues) {
         var selected = combination.map(JointSqlInferenceResult.Combination::parameters).orElse(Map.of());
         var environment = state.environment(selected);
         var bound = definition.render(environment, reference -> inputOrigin(state, environment, reference),
-                new SqlEvaluationContext(replayBudgets, renderBudgets, checkpoint));
+                new SqlEvaluationContext(replayBudgets, renderBudgets, checkpoint, statistics));
         var sources = new TemplateSources(state, selected, point);
         List<SqlExtraction.Binding> bindings = new ArrayList<>();
         List<JointSqlInferenceResult.BindingValue> values = new ArrayList<>();

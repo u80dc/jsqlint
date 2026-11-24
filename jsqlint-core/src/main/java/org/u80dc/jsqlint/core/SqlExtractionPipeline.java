@@ -5,6 +5,7 @@ import org.u80dc.jsqlint.core.dataflow.*;
 import org.u80dc.jsqlint.core.node.*;
 import org.u80dc.jsqlint.core.parameter.*;
 import org.u80dc.jsqlint.core.spi.*;
+import org.u80dc.jsqlint.core.statistics.StatisticsRecorder;
 import org.u80dc.jsqlint.core.template.SqlTemplateProjection;
 import org.u80dc.jsqlint.core.template.RawSqlBuilder;
 import java.util.*;
@@ -13,6 +14,7 @@ import java.util.function.Consumer;
 /** 会话内的 SQL 提取与推断管线；结果、监听器和执行终态由会话管理。 @author u80dc */
 final class SqlExtractionPipeline {
     private final DataFlowAnalysis flow;
+    private final StatisticsRecorder statistics;
     private final AnalyzerConfig config;
     private final Runnable checkpoint;
     private final AnalysisIssueReporter incomplete;
@@ -21,17 +23,22 @@ final class SqlExtractionPipeline {
     SqlExtractionPipeline(DataFlowAnalysis flow, AnalyzerConfig config, Runnable checkpoint,
                           AnalysisIssueReporter incomplete, AnalysisErrorHandler errors) {
         this.flow = flow; this.config = config; this.checkpoint = checkpoint;
+        this.statistics = flow.statisticsRecorder();
         this.incomplete = incomplete; this.errors = errors;
     }
 
     SqlNode template(SqlInput.ValueAt input) {
-        List<SqlNode> templates = new ArrayList<>();
-        for (var context : flow.contexts(input.method())) {
-            checkpoint.run();
-            var trace = flow.trace(new FlowPoint(input.method(), input.statement(), context.context()).value(input.value()));
-            templates.add(SqlTemplateProjection.template(rawSql(Optional.of(trace), input.toString()), config.replayBudgets(), config.sqlRecoveryBudgets(), checkpoint));
+        try (var timing = statistics.measure(AnalysisStatistics.Phase.TRACING)) {
+            List<SqlNode> templates = new ArrayList<>();
+            for (var context : flow.contexts(input.method())) {
+                checkpoint.run();
+                var trace = flow.trace(new FlowPoint(input.method(), input.statement(), context.context()).value(input.value()));
+                templates.add(project(rawSql(Optional.of(trace), input.toString())));
+            }
+            try (var rendering = statistics.measure(AnalysisStatistics.Phase.RENDERING)) {
+                return SqlTemplateProjection.alternatives(templates, config.sqlRecoveryBudgets(), checkpoint);
+            }
         }
-        return SqlTemplateProjection.alternatives(templates, config.sqlRecoveryBudgets(), checkpoint);
     }
 
     List<SqlExtraction> extract(String moduleId, InvocationSite site, SqlExtractionHandler handler,
@@ -48,12 +55,12 @@ final class SqlExtractionPipeline {
             if (!context.complete()) issues.add("Caller chain ended at " + context.end());
             try {
                 var point = new FlowPoint(site.method(), site.statement(), context.context());
-                for (var source : handler.extract(point, flow)) {
+                for (var source : extractSources(handler, point)) {
                     checkpoint.run();
                     var sourceIssues = new ArrayList<>(issues); sourceIssues.addAll(source.issues());
                     Optional<ValueTrace> sql = source.sql().map(flow::trace);
                     // 同一语句共享入口值；其他调用上下文和批次使用独立的推断状态。
-                    var inference = mode.parametersEnabled() ? new ParameterValueInferencer(externalGenerator(), checkpoint, config.replayBudgets()) : null;
+                    var inference = mode.parametersEnabled() ? new ParameterValueInferencer(externalGenerator(), checkpoint, config.replayBudgets(), statistics) : null;
                     if (source.templateInput().isPresent()) {
                         statements.add(templates.extract(source, point, inference, joint, sourceIssues));
                         continue;
@@ -69,7 +76,7 @@ final class SqlExtractionPipeline {
                     RawSql raw = rawSql(sql, site.location().toString());
                     SqlNode template = ValueSqlNode.raw("unresolvedSql");
                     var templateIssues = new ArrayList<>(raw.issues());
-                    try { template = SqlTemplateProjection.template(raw, config.replayBudgets(), config.sqlRecoveryBudgets(), checkpoint); }
+                    try { template = project(raw); }
                     catch (Exception e) {
                         errors.recover("SQL_TEMPLATE", site.location().toString(), e, false, Set.of(SqlAssessment.Dimension.TEXT));
                         templateIssues.add("SQL template projection failed: " + e.getMessage());
@@ -96,9 +103,21 @@ final class SqlExtractionPipeline {
         return List.copyOf(extracted);
     }
 
+    private List<SqlTraceSource> extractSources(SqlExtractionHandler handler, FlowPoint point) {
+        try (var timing = statistics.measure(AnalysisStatistics.Phase.TRACING)) {
+            return handler.extract(point, flow);
+        }
+    }
+
+    private SqlNode project(RawSql raw) {
+        try (var timing = statistics.measure(AnalysisStatistics.Phase.RENDERING)) {
+            return SqlTemplateProjection.template(raw, config.replayBudgets(), config.sqlRecoveryBudgets(), checkpoint);
+        }
+    }
+
     private RawSql rawSql(Optional<ValueTrace> sql, String location) {
         sql.ifPresent(this::reportTraceLimits);
-        try {
+        try (var timing = statistics.measure(AnalysisStatistics.Phase.TRACING)) {
             var raw = sql.map(trace -> RawSqlBuilder.build(trace, config.sqlRecoveryBudgets(), checkpoint))
                     .orElseGet(() -> new RawSql(List.of(), List.of("SQL source is unavailable")));
             // 框架没有找到 SQL 来源时由提取结果报告，不将缺失来源误当作未知表达式。
@@ -111,14 +130,16 @@ final class SqlExtractionPipeline {
     }
 
     private void reportTraceLimits(ValueTrace trace) {
-        Deque<ValueTrace.Node> pending = new ArrayDeque<>(); pending.add(trace.root());
-        Set<ValueTrace.Node> seen = Collections.newSetFromMap(new IdentityHashMap<>());
-        while (!pending.isEmpty()) {
-            checkpoint.run();
-            var node = pending.removeFirst();
-            if (!seen.add(node)) continue;
-            if (node.kind() == ValueTrace.Kind.LIMIT) incomplete.incomplete("TRACE_LIMIT", node.detail() + ": " + node.variable());
-            pending.addAll(node.inputs());
+        try (var timing = statistics.measure(AnalysisStatistics.Phase.TRACING)) {
+            Deque<ValueTrace.Node> pending = new ArrayDeque<>(); pending.add(trace.root());
+            Set<ValueTrace.Node> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+            while (!pending.isEmpty()) {
+                checkpoint.run();
+                var node = pending.removeFirst();
+                if (!seen.add(node)) continue;
+                if (node.kind() == ValueTrace.Kind.LIMIT) incomplete.incomplete("TRACE_LIMIT", node.detail() + ": " + node.variable());
+                pending.addAll(node.inputs());
+            }
         }
     }
 
@@ -155,7 +176,7 @@ final class SqlExtractionPipeline {
     }
 
     private ExternalValueGenerator externalGenerator() {
-        try { return config.inferenceOptions().createGenerator(); }
+        try (var timing = statistics.measure(AnalysisStatistics.Phase.INFERENCE)) { return config.inferenceOptions().createGenerator(); }
         catch (Exception e) {
             errors.recover("EXTERNAL_VALUE_GENERATOR", "Cannot create external value generator", e, true, Set.of(SqlAssessment.Dimension.VALUES));
             return (type, name) -> new SqlValue.Unknown("External value generator is unavailable: " + e.getMessage());

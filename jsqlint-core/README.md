@@ -8,10 +8,15 @@
 本次六项设计契约修复与验证见 [core 设计修复记录](CORE_DESIGN_FIXES.md)。
 core 独立提供核心分析能力；commons、jdbc、mybatis 按需引入。
 
-结果统一保留 `AnalysisResult.status/sqlResults/diagnostics`；调用、独立定义和样例通过
+结果统一保留 `AnalysisResult.status/sqlResults/diagnostics`，以及可选的 `statistics` 快照；调用、独立定义和样例通过
 `calls()/definitions()/samples()` 读取。已移除 `extractions()` 及旧二参数构造器，
 显式样例聚合的执行上下文使用 `SqlSampleRenderer.render(result, context)`。
 结果模型本轮收敛与迁移说明见 [结果模型简化](RESULT_MODEL.md)。
+
+分析统计默认关闭；单次通过 `AnalysisOptions.defaults().withStatistics(true)` 启用，
+在 `result.statistics()` 中读取总耗时及各类工作的次数、包含子工作的耗时、自身耗时和最大耗时。
+各类别自身耗时可加总为本次总耗时；扩展测量保存单位和请求/线程/JVM 归属范围，
+后续可增加 CPU、内存、GC 收集。当前仅收集时间，使用及口径见 [分析统计](ANALYSIS.md#分析统计)。
 
 核心节点位于 `org.u80dc.jsqlint.core.node`，作为通用动态 SQL 中间表示，
 独立于 JDBC、MyBatis、旧 analysis 模块和 SootUp。两种来源共用同一套节点：

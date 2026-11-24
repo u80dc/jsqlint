@@ -1,8 +1,13 @@
 # 结果模型简化
 
-AnalysisResult 只保存一次分析的 status、sqlResults 和 diagnostics。
+AnalysisResult 保存一次分析的 status、sqlResults、diagnostics 和可选 statistics 快照。
 它不存储 calls、definitions、rawSqls 或 samples 的另一份列表；这些都是读取视图。
 取消或准备失败、没有 SQL 的全局诊断与单条 SQL 的完整性保持独立。
+
+statistics 默认为空，由单次 AnalysisOptions 的统计选项启用。它保存总耗时、阶段成本和
+带单位/归属范围的扩展测量，不持有会话、活动程序索引或执行上下文；分析结束后读取不会再次采集。
+原三参数和单参数 AnalysisResult 构造器继续可用，统计为空。
+统计口径及 CPU/内存/GC 的扩展方式见 [分析统计](ANALYSIS.md#分析统计)。
 
 ## 本轮实施
 

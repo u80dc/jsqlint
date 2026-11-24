@@ -8,7 +8,8 @@
  * 范围和查询缓存属于一次分析，模型副本继承相同边界，默认查询仍枚举全程序调用上下文。
  *
  * <p>除下述兼容入口外，本包实现对 core 其他包的直接依赖仅允许 core.semantics 的 Java 语义模型
- * 和 core.spi 的 InvocationSite、SqlCallSite、SourceLocation；也可使用 SootUp 与 Java 标准库。
+ * 和 core.spi 的 InvocationSite、SqlCallSite、SourceLocation；统计仅依赖公开的 AnalysisStatistics
+ * 与 core.statistics.StatisticsRecorder；也可使用 SootUp 与 Java 标准库。
  * 不得依赖参数推断、SQL 模板、节点渲染，或 core 根包的会话与提取流程。</p>
  *
  * <p>{@link org.u80dc.jsqlint.core.dataflow.FlowPoint.ValuePoint#input()} 将值使用位置转换为

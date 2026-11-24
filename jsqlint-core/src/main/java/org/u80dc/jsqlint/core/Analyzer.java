@@ -5,6 +5,7 @@ import org.jspecify.annotations.Nullable;
 import org.objectweb.asm.Type;
 import org.u80dc.jsqlint.core.input.BytecodeInputResolver;
 import org.u80dc.jsqlint.core.spi.AnalysisInputResolver;
+import org.u80dc.jsqlint.core.spi.AnalysisInputContext;
 import org.u80dc.jsqlint.core.spi.PreparedInput;
 import org.u80dc.jsqlint.core.spi.SqlAnalysisModule;
 import sootup.core.inputlocation.AnalysisInputLocation;
@@ -225,47 +226,52 @@ public final class Analyzer {
         ClassOutputDirectory classOutput = null;
         Status status;
         try {
-            session.checkpoint();
-            session.progress(AnalysisListener.Stage.PREPARING);
-            List<Path> libraries = dependencyPaths(library);
-            AnalysisInputResolver selected = null;
-            // 只在最高匹配优先级内检查歧义；选中后解析失败也不回退，以免使用旧编译产物。
-            for (var resolver : resolvers) {
+            AnalysisRequest request;
+            try (var timing = session.statisticsRecorder().measure(AnalysisStatistics.Phase.PREPARATION)) {
                 session.checkpoint();
-                if (selected != null && resolver.priority() < selected.priority()) break;
-                if (!resolver.supports(input)) continue;
-                if (selected != null) throw new IllegalArgumentException("Ambiguous input resolvers for " + input);
-                selected = resolver;
+                session.progress(AnalysisListener.Stage.PREPARING);
+                List<Path> libraries = dependencyPaths(library);
+                AnalysisInputResolver selected = null;
+                // 只在最高匹配优先级内检查歧义；选中后解析失败也不回退，以免使用旧编译产物。
+                for (var resolver : resolvers) {
+                    session.checkpoint();
+                    if (selected != null && resolver.priority() < selected.priority()) break;
+                    if (!resolver.supports(input)) continue;
+                    if (selected != null) throw new IllegalArgumentException("Ambiguous input resolvers for " + input);
+                    selected = resolver;
+                }
+                if (selected == null) throw new IllegalArgumentException(
+                        "No input resolver supports " + input + "; add jsqlint-commons for source/project compilation");
+                // Analyzer 统一决定输出路径，解析器只负责将完整路径传递给编译输入。
+                String outputId = options.classOutputId() == null ? UUID.randomUUID().toString() : options.classOutputId();
+                Path output = Path.of(System.getProperty("java.io.tmpdir"), ".jsqlint", outputId)
+                        .toAbsolutePath().normalize();
+                if (selected.requiresCompilation(input)) {
+                    classOutput = ClassOutputDirectory.prepare(output, input, library,
+                            options.classOutputId() != null, effectiveConfig.cleanupClassOutput());
+                }
+                PreparedInput prepared = selected.resolve(input, output, effectiveConfig.inputOptions(),
+                        new AnalysisInputContext(session::checkpoint, session.statisticsRecorder()));
+                // 先接管输入再检查取消，确保编译期间收到取消信号时也能释放新创建的输入。
+                owned.addAll(prepared.locations());
+                session.checkpoint();
+                for (Path path : libraries)
+                    owned.add(new JavaClassPathAnalysisInputLocation(path.toString(), SourceType.Library));
+                owned.add(new DefaultRuntimeAnalysisInputLocation());
+                request = new AnalysisRequest(owned, prepared.resources(), options);
             }
-            if (selected == null) throw new IllegalArgumentException(
-                    "No input resolver supports " + input + "; add jsqlint-commons for source/project compilation");
-            // Analyzer 统一决定输出路径，解析器只负责将完整路径传递给编译输入。
-            String outputId = options.classOutputId() == null ? UUID.randomUUID().toString() : options.classOutputId();
-            Path output = Path.of(System.getProperty("java.io.tmpdir"), ".jsqlint", outputId)
-                    .toAbsolutePath().normalize();
-            if (selected.requiresCompilation(input)) {
-                classOutput = ClassOutputDirectory.prepare(output, input, library,
-                        options.classOutputId() != null, effectiveConfig.cleanupClassOutput());
-            }
-            PreparedInput prepared = selected.resolve(input, output, effectiveConfig.inputOptions(), session::checkpoint);
-            // 先接管输入再检查取消，确保编译期间收到取消信号时也能释放新创建的输入。
-            owned.addAll(prepared.locations());
-            session.checkpoint();
-            for (Path path : libraries)
-                owned.add(new JavaClassPathAnalysisInputLocation(path.toString(), SourceType.Library));
-            owned.add(new DefaultRuntimeAnalysisInputLocation());
-            status = session.execute(new AnalysisRequest(owned, prepared.resources(), options), modules, entry);
+            status = session.execute(request, modules, entry);
         } catch (Exception e) {
             status = fail(session, e);
         } finally {
-            try {
+            try (var timing = session.statisticsRecorder().measure(AnalysisStatistics.Phase.CLEANUP)) {
                 new PreparedInput(owned, List.of()).close();
             } catch (Exception e) {
                 status = fail(session, e);
             }
             // 先释放 SootUp 输入，再删除编译产物；输入关闭失败也继续尝试清理。
             if (classOutput != null) {
-                try {
+                try (var timing = session.statisticsRecorder().measure(AnalysisStatistics.Phase.CLEANUP)) {
                     classOutput.close();
                 } catch (Exception e) {
                     status = fail(session, e);
@@ -298,8 +304,10 @@ public final class Analyzer {
         AnalysisSession session = new AnalysisSession(request.options().resolveAgainst(config), request.options());
         Status status;
         try {
-            session.checkpoint();
-            session.progress(AnalysisListener.Stage.PREPARING);
+            try (var timing = session.statisticsRecorder().measure(AnalysisStatistics.Phase.PREPARATION)) {
+                session.checkpoint();
+                session.progress(AnalysisListener.Stage.PREPARING);
+            }
             status = session.execute(request, modules, entry);
         } catch (Exception e) {
             status = fail(session, e);

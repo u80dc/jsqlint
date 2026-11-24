@@ -7,6 +7,9 @@ import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.u80dc.jsqlint.commons.compiler.ProjectCompiler;
+import org.u80dc.jsqlint.core.AnalysisStatistics;
+import org.u80dc.jsqlint.core.AnalysisStatisticsOptions;
+import org.u80dc.jsqlint.core.statistics.StatisticsRecorder;
 import sootup.core.interceptor.BodyInterceptor;
 import sootup.core.model.SourceType;
 import sootup.java.core.views.JavaView;
@@ -320,7 +323,8 @@ class AutoCompileAnalysisInputLocationTest {
         Path output = temporary.resolve("Gradle 输出 ' classes");
         Path appOutput = multiModule ? output.resolve("project-%3Aapp") : output;
         Path libOutput = multiModule ? output.resolve("project-%3Alib") : output;
-        try (var input = new AutoCompileAnalysisInputLocation(root, gradleOptions().withClassOutputDirectory(output))) {
+        var recorder = StatisticsRecorder.create(AnalysisStatisticsOptions.timings());
+        try (var input = new AutoCompileAnalysisInputLocation(root, gradleOptions().withClassOutputDirectory(output), recorder)) {
             assertTrue(body(input, "Example").contains("dep.Helper"));
             assertTrue(body(input, "dep.Helper").contains("return 53"));
             assertTrue(input.getDependencies().isEmpty());
@@ -330,6 +334,12 @@ class AutoCompileAnalysisInputLocationTest {
         assertTrue(Files.isRegularFile(libOutput.resolve("dep/Helper.class")));
         assertFalse(Files.exists(application.resolve("build/classes/java/main/Example.class")));
         assertEquals(script, Files.readString(root.resolve("build.gradle")));
+        var statistics = recorder.snapshot().orElseThrow();
+        assertTrue(statistics.phases().get(AnalysisStatistics.Phase.COMPILATION).invocations() > 0);
+        assertTrue(statistics.phases().get(AnalysisStatistics.Phase.CLEANUP).invocations() > 0);
+        assertEquals(statistics.elapsedNanos(), statistics.phases().values().stream()
+                .mapToLong(AnalysisStatistics.PhaseCost::selfNanos).sum());
+        assertTrue(statistics.measurements().isEmpty());
     }
 
     @Test

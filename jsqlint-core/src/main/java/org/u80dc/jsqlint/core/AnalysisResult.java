@@ -2,17 +2,26 @@ package org.u80dc.jsqlint.core;
 
 import java.util.Objects;
 import java.util.List;
+import java.util.Optional;
 
 /**
- * 分析终态、raw SQL 与已保存的 SQL/参数溯源结果；执行中的阶段通过监听器报告。
+ * 分析终态、raw SQL、已保存的 SQL/参数溯源结果及可选统计快照；执行中的阶段通过监听器报告。
+ * statistics 未启用时为空，读取已结束的统计不会重新采集或保留执行资源。
  *
  * @author u80dc
  */
-public record AnalysisResult(Status status, List<SqlResult> sqlResults, List<AnalysisDiagnostic> diagnostics) {
+public record AnalysisResult(Status status, List<SqlResult> sqlResults, List<AnalysisDiagnostic> diagnostics,
+                             Optional<AnalysisStatistics> statistics) {
     public AnalysisResult {
         Objects.requireNonNull(status, "status");
         sqlResults = List.copyOf(sqlResults);
         diagnostics = List.copyOf(diagnostics);
+        Objects.requireNonNull(statistics, "statistics");
+    }
+
+    /** 兼容未启用统计的原结果构造器。 */
+    public AnalysisResult(Status status, List<SqlResult> sqlResults, List<AnalysisDiagnostic> diagnostics) {
+        this(status, sqlResults, diagnostics, Optional.empty());
     }
 
     public AnalysisResult(Status status) { this(status, List.of(), List.of()); }

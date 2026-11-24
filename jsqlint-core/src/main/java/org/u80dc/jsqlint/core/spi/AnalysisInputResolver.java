@@ -47,4 +47,10 @@ public interface AnalysisInputResolver {
         }
         return resolve(source, classOutputDirectory, checkpoint);
     }
+
+    /** 请求级上下文重载；旧解析器继续使用原检查点协议，整体准备成本由 Analyzer 记录。 */
+    default PreparedInput resolve(Path source, @Nullable Path classOutputDirectory,
+                                  @Nullable AnalysisInputOptions options, AnalysisInputContext context) throws Exception {
+        return resolve(source, classOutputDirectory, options, context.checkpoint());
+    }
 }

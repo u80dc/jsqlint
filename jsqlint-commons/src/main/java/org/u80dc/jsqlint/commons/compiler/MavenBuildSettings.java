@@ -2,6 +2,7 @@ package org.u80dc.jsqlint.commons.compiler;
 
 import org.apache.maven.settings.*;
 import org.apache.maven.settings.io.xpp3.SettingsXpp3Writer;
+import org.u80dc.jsqlint.core.statistics.StatisticsRecorder;
 
 import java.io.IOException;
 import java.net.URI;
@@ -10,6 +11,9 @@ import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
+
+import static org.u80dc.jsqlint.core.AnalysisStatistics.Phase.CLEANUP;
 
 /**
  * 本次调用专用的 settings 文件，包含仓库与认证信息，构建结束后立即删除。
@@ -21,15 +25,22 @@ final class MavenBuildSettings implements AutoCloseable {
     private final Path userSettings;
     private final Path globalSettings;
     private final Path localRepository;
+    private final StatisticsRecorder statisticsRecorder;
 
-    private MavenBuildSettings(Path directory, Path localRepository) {
+    private MavenBuildSettings(Path directory, Path localRepository, StatisticsRecorder statisticsRecorder) {
         this.directory = directory;
         this.userSettings = directory.resolve("settings.xml");
         this.globalSettings = directory.resolve("global-settings.xml");
         this.localRepository = localRepository;
+        this.statisticsRecorder = statisticsRecorder;
     }
 
     static MavenBuildSettings create(MavenRepositoryOptions options) throws IOException {
+        return create(options, StatisticsRecorder.none());
+    }
+
+    static MavenBuildSettings create(MavenRepositoryOptions options, StatisticsRecorder statisticsRecorder) throws IOException {
+        Objects.requireNonNull(statisticsRecorder, "statisticsRecorder");
         Path local = options.localRepository() == null
                 ? Path.of(System.getProperty("user.home"), ".m2", "repository").toAbsolutePath().normalize()
                 : options.localRepository();
@@ -40,7 +51,7 @@ final class MavenBuildSettings implements AutoCloseable {
         Path directory = Files.getFileStore(temporary).supportsFileAttributeView("posix")
                 ? Files.createTempDirectory(temporary, "jsqlint-maven-", PosixFilePermissions.asFileAttribute(PosixFilePermissions.fromString("rwx------")))
                 : Files.createTempDirectory(temporary, "jsqlint-maven-");
-        var result = new MavenBuildSettings(directory, local);
+        var result = new MavenBuildSettings(directory, local, statisticsRecorder);
         try {
             var settings = new Settings();
             settings.setLocalRepository(local.toString());
@@ -111,13 +122,15 @@ final class MavenBuildSettings implements AutoCloseable {
     @Override
     public void close() throws IOException {
         // 路径全部来自本次创建的目录，不递归删除，不触碰用户的仓库缓存。
-        try {
-            Files.deleteIfExists(userSettings);
-        } finally {
+        try (var cleanup = statisticsRecorder.measure(CLEANUP)) {
             try {
-                Files.deleteIfExists(globalSettings);
+                Files.deleteIfExists(userSettings);
             } finally {
-                Files.deleteIfExists(directory);
+                try {
+                    Files.deleteIfExists(globalSettings);
+                } finally {
+                    Files.deleteIfExists(directory);
+                }
             }
         }
     }

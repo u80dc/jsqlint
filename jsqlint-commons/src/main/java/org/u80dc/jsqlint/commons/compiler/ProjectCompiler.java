@@ -3,6 +3,7 @@ package org.u80dc.jsqlint.commons.compiler;
 import org.u80dc.jsqlint.commons.location.AnalysisInputException;
 import org.u80dc.jsqlint.commons.location.InputLocationOptions;
 import org.u80dc.jsqlint.commons.location.InputMode;
+import org.u80dc.jsqlint.core.statistics.StatisticsRecorder;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -19,7 +20,12 @@ public final class ProjectCompiler {
 
     /** 根据输入选项选择项目编译后端，并统一处理构建失败。 */
     public static CompiledProject compile(Path directory, InputLocationOptions options) {
+        return compile(directory, options, StatisticsRecorder.none());
+    }
+
+    public static CompiledProject compile(Path directory, InputLocationOptions options, StatisticsRecorder statisticsRecorder) {
         Objects.requireNonNull(options, "options");
+        Objects.requireNonNull(statisticsRecorder, "statisticsRecorder");
         Path root = Objects.requireNonNull(directory, "directory").toAbsolutePath().normalize();
         if (!Files.isDirectory(root)) {
             throw new IllegalArgumentException("Project directory does not exist: " + root);
@@ -32,8 +38,8 @@ public final class ProjectCompiler {
         InputMode mode = options.inputMode() == InputMode.AUTO ? detect(root) : options.inputMode();
         try {
             return switch (mode) {
-                case MAVEN_PROJECT -> MavenProjectCompiler.compile(root, options);
-                case GRADLE_PROJECT -> GradleProjectCompiler.compile(root, options);
+                case MAVEN_PROJECT -> MavenProjectCompiler.compile(root, options, statisticsRecorder);
+                case GRADLE_PROJECT -> GradleProjectCompiler.compile(root, options, statisticsRecorder);
                 case JAVA_SOURCE, AUTO -> throw new IllegalArgumentException("Only Maven/Gradle projects require a custom compiler: " + root);
             };
         } catch (IOException e) {

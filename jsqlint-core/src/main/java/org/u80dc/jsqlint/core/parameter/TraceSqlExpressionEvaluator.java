@@ -37,7 +37,7 @@ public final class TraceSqlExpressionEvaluator implements SqlExpressionEvaluator
             }
         });
         var context = SqlEvaluationContext.currentOr(replayBudgets);
-        var result = new ParameterValueInferencer((type, name) -> new SqlValue.Unknown("Missing Java template input: " + name), context::check, values, context.replayBudgets())
+        var result = new ParameterValueInferencer((type, name) -> new SqlValue.Unknown("Missing Java template input: " + name), context::check, values, context.replayBudgets(), context.statisticsRecorder())
                 .infer(expressions.get(expression));
         if (result.truncated()) context.limit("Java template expression replay budget exceeded");
         var possible = result.possibleValues().stream().map(InferredParameterValue::value).distinct().toList();

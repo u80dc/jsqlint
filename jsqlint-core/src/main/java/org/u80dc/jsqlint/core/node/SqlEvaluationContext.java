@@ -2,6 +2,7 @@ package org.u80dc.jsqlint.core.node;
 
 import org.u80dc.jsqlint.core.ReplayBudgets;
 import org.u80dc.jsqlint.core.SqlRenderBudgets;
+import org.u80dc.jsqlint.core.statistics.StatisticsRecorder;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Consumer;
@@ -19,30 +20,41 @@ public final class SqlEvaluationContext {
     private final Consumer<String> limits;
     private final SqlEvaluationTracker.Activity activity;
     private final boolean explicitReplay;
+    private final StatisticsRecorder statisticsRecorder;
 
     public SqlEvaluationContext(ReplayBudgets replayBudgets, Runnable checkpoint, Consumer<String> limits) {
         this(replayBudgets, SqlRenderBudgets.fromReplay(replayBudgets), checkpoint, limits);
     }
     public SqlEvaluationContext(ReplayBudgets replayBudgets, SqlRenderBudgets renderBudgets, Runnable checkpoint, Consumer<String> limits) {
-        this(replayBudgets, renderBudgets, new Checkpoints(checkpoint, 1), limits, true, new SqlEvaluationTracker.Activity());
+        this(replayBudgets, renderBudgets, checkpoint, limits, StatisticsRecorder.none());
+    }
+    public SqlEvaluationContext(ReplayBudgets replayBudgets, SqlRenderBudgets renderBudgets, Runnable checkpoint,
+                                Consumer<String> limits, StatisticsRecorder statisticsRecorder) {
+        this(replayBudgets, renderBudgets, new Checkpoints(checkpoint, 1), limits, true, new SqlEvaluationTracker.Activity(), statisticsRecorder);
+    }
+    public SqlEvaluationContext(ReplayBudgets replayBudgets, SqlRenderBudgets renderBudgets, Runnable checkpoint,
+                                StatisticsRecorder statisticsRecorder) {
+        this(replayBudgets, renderBudgets, checkpoint, ignored -> {}, statisticsRecorder);
     }
     public SqlEvaluationContext(ReplayBudgets replayBudgets, SqlRenderBudgets renderBudgets, Runnable checkpoint) {
         this(replayBudgets, renderBudgets, checkpoint, ignored -> {});
     }
     private SqlEvaluationContext(ReplayBudgets replayBudgets, SqlRenderBudgets renderBudgets, Checkpoints checkpoints, Consumer<String> limits,
-                                  boolean explicitReplay, SqlEvaluationTracker.Activity activity) {
+                                  boolean explicitReplay, SqlEvaluationTracker.Activity activity, StatisticsRecorder statisticsRecorder) {
         this.replayBudgets = Objects.requireNonNull(replayBudgets);
         this.renderBudgets = Objects.requireNonNull(renderBudgets);
         this.checkpoints = Objects.requireNonNull(checkpoints);
         this.limits = Objects.requireNonNull(limits);
         this.explicitReplay = explicitReplay;
         this.activity = activity;
+        this.statisticsRecorder = Objects.requireNonNull(statisticsRecorder);
     }
     public SqlEvaluationContext(ReplayBudgets replayBudgets, Runnable checkpoint) {
         this(replayBudgets, checkpoint, ignored -> {});
     }
     public ReplayBudgets replayBudgets() { return replayBudgets; }
     public SqlRenderBudgets renderBudgets() { return renderBudgets; }
+    public StatisticsRecorder statisticsRecorder() { return statisticsRecorder; }
     SqlEvaluationTracker.Activity activity() { return activity; }
 
     /** 新引用扩展可显式返回活动身份；句柄不能跨执行复用，也不暴露可修改的原始值。 */
@@ -65,13 +77,13 @@ public final class SqlEvaluationContext {
         return new SqlEvaluationContext(replayBudgets, renderBudgets, checkpoints, message -> {
             limits.accept(message);
             listener.accept(message);
-        }, explicitReplay, activity);
+        }, explicitReplay, activity, statisticsRecorder);
     }
 
     /** 无活动作用域时每次创建独立默认状态，不跨渲染共享可变引用。 */
     public static SqlEvaluationContext defaults(Runnable checkpoint, Consumer<String> limits) {
         return new SqlEvaluationContext(ReplayBudgets.defaults(), SqlRenderBudgets.defaults(), new Checkpoints(checkpoint, 64), limits, false,
-                new SqlEvaluationTracker.Activity());
+                new SqlEvaluationTracker.Activity(), StatisticsRecorder.none());
     }
     public static SqlEvaluationContext current() {
         SqlEvaluationContext current = CURRENT.get();
@@ -81,7 +93,7 @@ public final class SqlEvaluationContext {
         SqlEvaluationContext current = CURRENT.get();
         if (current == null) return new SqlEvaluationContext(fallback, () -> {});
         return current.explicitReplay ? current
-                : new SqlEvaluationContext(fallback, current.renderBudgets, current.checkpoints, current.limits, true, current.activity);
+                : new SqlEvaluationContext(fallback, current.renderBudgets, current.checkpoints, current.limits, true, current.activity, current.statisticsRecorder);
     }
 
     public void check() {

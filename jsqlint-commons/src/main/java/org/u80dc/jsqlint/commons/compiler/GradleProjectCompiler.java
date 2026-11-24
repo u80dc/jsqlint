@@ -7,7 +7,9 @@ import org.jspecify.annotations.Nullable;
 import org.u80dc.jsqlint.commons.location.AnalysisInputException;
 import org.u80dc.jsqlint.commons.location.InputLocationOptions;
 import org.u80dc.jsqlint.commons.location.InputMode;
+import org.u80dc.jsqlint.core.statistics.StatisticsRecorder;
 
+import java.io.Closeable;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileVisitResult;
@@ -17,9 +19,13 @@ import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Properties;
 import java.util.UUID;
 import java.util.stream.Stream;
+
+import static org.u80dc.jsqlint.core.AnalysisStatistics.Phase.COMPILATION;
+import static org.u80dc.jsqlint.core.AnalysisStatistics.Phase.CLEANUP;
 
 /**
  * 用临时 init script 读取 Gradle 实际 main source set 产物，不修改项目构建文件。
@@ -37,6 +43,11 @@ public final class GradleProjectCompiler {
 
     /** 编译 Gradle 主代码，并返回校验后的 class 目录和分析依赖。 */
     public static CompiledProject compile(Path root, InputLocationOptions options) throws IOException {
+        return compile(root, options, StatisticsRecorder.none());
+    }
+
+    public static CompiledProject compile(Path root, InputLocationOptions options, StatisticsRecorder statisticsRecorder) throws IOException {
+        Objects.requireNonNull(statisticsRecorder, "statisticsRecorder");
         if (!isProject(root)) throw new AnalysisInputException("No Gradle build files: " + root);
         Path temporary = Files.createTempDirectory("jsqlint-gradle-");
         GradleConnector connector = GradleConnector.newConnector().forProjectDirectory(root.toFile());
@@ -53,9 +64,15 @@ public final class GradleProjectCompiler {
             var arguments = new ArrayList<>(options.buildArguments());
             arguments.addAll(List.of("--init-script", script.toString(), "--console=plain", "--no-configuration-cache"));
             var output = new BuildLog();
-            try (var connection = connector.connect()) {
-                connection.newBuild().forTasks(":" + taskName).withArguments(arguments.toArray(String[]::new))
-                        .setStandardOutput(output).setStandardError(output).run();
+            try {
+                var connection = connector.connect();
+                try (var closeConnection = measuredClose(connection, statisticsRecorder)) {
+                    var build = connection.newBuild().forTasks(":" + taskName).withArguments(arguments.toArray(String[]::new))
+                            .setStandardOutput(output).setStandardError(output);
+                    try (var compilation = statisticsRecorder.measure(COMPILATION)) {
+                        build.run();
+                    }
+                }
             } catch (GradleConnectionException e) {
                 throw new AnalysisInputException("Gradle compilation failed for " + root + "\n"
                         + output.text(), e);
@@ -71,9 +88,20 @@ public final class GradleProjectCompiler {
             dependencies.addAll(paths(properties, "dependency"));
             return CompiledProject.fromOutputs(root, InputMode.GRADLE_PROJECT, paths(properties, "classes"), dependencies);
         } finally {
-            connector.disconnect();
-            deleteTemporaryDirectory(temporary);
+            try (var cleanup = statisticsRecorder.measure(CLEANUP)) {
+                connector.disconnect();
+                deleteTemporaryDirectory(temporary);
+            }
         }
+    }
+
+    private static @Nullable Closeable measuredClose(@Nullable Closeable resource, StatisticsRecorder statisticsRecorder) {
+        if (resource == null || !statisticsRecorder.enabled()) return resource;
+        return () -> {
+            try (var cleanup = statisticsRecorder.measure(CLEANUP)) {
+                resource.close();
+            }
+        };
     }
 
     private static void deleteTemporaryDirectory(Path directory) throws IOException {

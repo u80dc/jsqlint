@@ -16,7 +16,8 @@
  * 不能通过公开内部存储或活动句柄读取方法来代替该边界。
  *
  * <p>允许依赖本包、根包的 {@code ReplayBudgets} 与 {@code SqlRenderBudgets}，
- * 以及 {@code core.semantics.ValueEvaluationLimitException} 的容量终止契约。
+ * 以及 {@code core.semantics.ValueEvaluationLimitException} 的容量终止契约，
+ * {@code core.statistics.StatisticsRecorder} 的请求级观测协议。
  * 文本、XML、容器和对象属性读取使用 JDK API，现有节点使用 Lombok 生成值对象访问方法。
  * 程序数据流、Java 来源重演和框架发现由调用层适配到本包的节点与表达式接口；
  * 本包不依赖 {@code core.dataflow}、{@code core.parameter}、{@code core.template}、

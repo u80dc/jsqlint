@@ -11,6 +11,7 @@
  * 对 core.dataflow 的直接依赖允许 DataFlowAnalysis、FlowPoint（含 ValuePoint）、
  * ValueTrace 和 ControlFlowEdge；对 core.node 允许 SqlNode 与 SqlValueSnapshots；
  * 对 core.resource 允许 AnalysisResource 与 AnalysisResourceSource。
+ * 输入上下文可使用 core.statistics.StatisticsRecorder 的通用观测协议。
  * 此外允许 SootUp、JDK 与空值注解库。
  * 不依赖 core 根包的会话、发现和提取实现，不依赖 core.input 的具体解析器、
  * core.parameter 的推断实现、core.template 的恢复实现或 SQL 框架扩展模块。</p>

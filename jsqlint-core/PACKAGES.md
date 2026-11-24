@@ -12,15 +12,16 @@
 | 包 | 职责 | 允许的其他 core 包或类型 |
 | --- | --- | --- |
 | 根包 | 公共入口、配置、结果契约，以及一次分析的流程协调 | 可组合各能力包；具体算法由相应能力包实现 |
-| `node` | SQL 模板结构、语法构建、表达式接口与部分渲染 | `ReplayBudgets`、`SqlRenderBudgets`、`semantics.ValueEvaluationLimitException` |
-| `parameter` | 参数候选重演、路径条件求解、联合输入模型推断 | `dataflow`、`node`、`semantics`；`JointBudgets`、`ReplayBudgets`、`RawSql`、`SqlExtraction`；`spi.InvocationSite`、`spi.SqlCallSite` |
-| `dataflow` | 程序索引、调用上下文、控制流查询、逆向数据流与冻结来源证据 | `semantics`；`spi.InvocationSite`、`spi.SqlCallSite`、`spi.SourceLocation`；下述精确桥接及兼容例外 |
+| `node` | SQL 模板结构、语法构建、表达式接口与部分渲染 | `ReplayBudgets`、`SqlRenderBudgets`、`semantics.ValueEvaluationLimitException`、`statistics.StatisticsRecorder` |
+| `parameter` | 参数候选重演、路径条件求解、联合输入模型推断 | `dataflow`、`node`、`semantics`；`JointBudgets`、`ReplayBudgets`、`RawSql`、`SqlExtraction`、`AnalysisStatistics`、`statistics.StatisticsRecorder`；`spi.InvocationSite`、`spi.SqlCallSite` |
+| `dataflow` | 程序索引、调用上下文、控制流查询、逆向数据流与冻结来源证据 | `semantics`；`spi.InvocationSite`、`spi.SqlCallSite`、`spi.SourceLocation`、`AnalysisStatistics`、`statistics.StatisticsRecorder`；下述精确桥接及兼容例外 |
 | `semantics` | Java 值运算、入口事实校验、已知方法的引用效果 | `dataflow.ValueTrace` 及其嵌套类型，仅作为共享数据描述 |
 | `template` | 根据冻结来源恢复 SQL，再从候选投影节点模板 | `node`；`RawSql`、`ReplayBudgets`、`SqlRecoveryBudgets`；`dataflow.ValueTrace`、`dataflow.ValueTraceGraphs`；下述参数重演类型；`semantics.ValueEvaluationLimitException`、`spi.SqlCallSite` |
-| `spi` | 输入解析与 SQL 分析模块的扩展协议、协议交换数据 | `SqlDefinition`；`dataflow.DataFlowAnalysis`、`dataflow.FlowPoint`、`dataflow.ValueTrace`、`dataflow.ControlFlowEdge`；`node.SqlNode`、`node.SqlValueSnapshots`；`resource.AnalysisResource`、`resource.AnalysisResourceSource` |
+| `spi` | 输入解析与 SQL 分析模块的扩展协议、协议交换数据 | `SqlDefinition`、`statistics.StatisticsRecorder`；`dataflow.DataFlowAnalysis`、`dataflow.FlowPoint`、`dataflow.ValueTrace`、`dataflow.ControlFlowEdge`；`node.SqlNode`、`node.SqlValueSnapshots`；`resource.AnalysisResource`、`resource.AnalysisResourceSource` |
 | `input` | 已编译目录、JAR、单个 class 的输入准备 | `spi.AnalysisInputResolver`、`spi.PreparedInput`、`resource.PathResourceSource` |
 | `resource` | 资源 URI、枚举与打开流的契约和路径实现 | 无 |
 | `bytecode` | 方法参数名称与注解的字节码元数据读取 | 无 |
+| `statistics` | 请求级计时作用域、阶段成本记账与不可变统计快照生成 | `AnalysisStatistics`、`AnalysisStatisticsOptions` |
 
 `template` 仅允许使用以下参数重演类型：`ParameterValueInferencer`、
 `ParameterValueInferenceResult`、`InferredParameterValue`、`ExternalValueGenerator`。
@@ -31,6 +32,10 @@
 `template` 仅限后两者，不引入活动视图和分析模型。
 其他包按职责使用现有 SootUp、ASM、日志及注解等基础依赖。
 具体允许范围还见各包的 `package-info.java`。
+
+统计基础设施只依赖 JDK 和上述公共统计数据/选项；不依赖分析引擎、输入解析器或框架实现。
+能力包仅通过 StatisticsRecorder 记录工作边界，不通过统计接口调用分析算法或控制取消。
+输入扩展通过 spi.AnalysisInputContext 获取请求检查点和计时器，core 不因此依赖 commons 的编译实现。
 
 ## 生命周期与封装
 
@@ -47,6 +52,11 @@
 程序视图、方法体、`FlowPoint`、`CallContext`、路径搜索状态和来源查询缓存属于分析期间。
 参数样例缓存、联合重演状态、模板恢复预算和节点求值作用域属于本次执行，
 不得在独立分析或渲染之间共享。
+
+StatisticsRecorder 属于一次同步分析及其执行线程；默认使用无状态空实现。
+采集结束后只向 AnalysisResult 保存 AnalysisStatistics 的不可变数据，不保存计时器或回调。
+延迟索引、溯源、推断和渲染可嵌套执行，成本类别独立于进度 Stage；
+未来 JVM 全局测量须标明范围，不能直接归因到单个请求。
 
 对外结果保存冻结来源、SQL 结构、候选值及完整性信息；
 SQL 改写的输入保留、证据连续性和输出预算由 node.SqlBoundTransformResults 统一校验，

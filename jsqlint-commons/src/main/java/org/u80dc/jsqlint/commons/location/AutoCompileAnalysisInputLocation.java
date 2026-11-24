@@ -7,6 +7,7 @@ import org.u80dc.jsqlint.commons.compiler.CompiledProject;
 import org.u80dc.jsqlint.commons.compiler.JavaSourceCompiler;
 import org.u80dc.jsqlint.commons.compiler.JavaSourceFiles;
 import org.u80dc.jsqlint.commons.compiler.ProjectCompiler;
+import org.u80dc.jsqlint.core.statistics.StatisticsRecorder;
 import sootup.core.frontend.SootClassSource;
 import sootup.core.inputlocation.AnalysisInputLocation;
 import sootup.core.interceptor.BodyInterceptor;
@@ -72,6 +73,10 @@ public final class AutoCompileAnalysisInputLocation implements AnalysisInputLoca
         this(List.of(input), options);
     }
 
+    public AutoCompileAnalysisInputLocation(Path input, InputLocationOptions options, StatisticsRecorder statisticsRecorder) {
+        this(List.of(input), options, statisticsRecorder);
+    }
+
     public AutoCompileAnalysisInputLocation(List<Path> inputs) {
         this(inputs, InputLocationOptions.defaults());
     }
@@ -80,15 +85,32 @@ public final class AutoCompileAnalysisInputLocation implements AnalysisInputLoca
         this(inputs, options, SourceType.Application, BytecodeBodyInterceptors.Default.getBodyInterceptors());
     }
 
+    public AutoCompileAnalysisInputLocation(List<Path> inputs, InputLocationOptions options, StatisticsRecorder statisticsRecorder) {
+        this(inputs, options, SourceType.Application, BytecodeBodyInterceptors.Default.getBodyInterceptors(), statisticsRecorder);
+    }
+
     public AutoCompileAnalysisInputLocation(Path input, InputLocationOptions options,
                                             SourceType sourceType, List<BodyInterceptor> bodyInterceptors) {
         this(List.of(input), options, sourceType, bodyInterceptors);
     }
 
+    public AutoCompileAnalysisInputLocation(Path input, InputLocationOptions options,
+                                            SourceType sourceType, List<BodyInterceptor> bodyInterceptors,
+                                            StatisticsRecorder statisticsRecorder) {
+        this(List.of(input), options, sourceType, bodyInterceptors, statisticsRecorder);
+    }
+
     public AutoCompileAnalysisInputLocation(List<Path> inputs, InputLocationOptions options,
                                             SourceType sourceType, List<BodyInterceptor> bodyInterceptors) {
+        this(inputs, options, sourceType, bodyInterceptors, StatisticsRecorder.none());
+    }
+
+    public AutoCompileAnalysisInputLocation(List<Path> inputs, InputLocationOptions options,
+                                            SourceType sourceType, List<BodyInterceptor> bodyInterceptors,
+                                            StatisticsRecorder statisticsRecorder) {
         Objects.requireNonNull(options, "options");
         Objects.requireNonNull(sourceType, "sourceType");
+        Objects.requireNonNull(statisticsRecorder, "statisticsRecorder");
         List<BodyInterceptor> interceptors = List.copyOf(bodyInterceptors);
         this.inputs = inputs.stream().map(path -> path.toAbsolutePath().normalize()).distinct().toList();
         if (this.inputs.isEmpty()) throw new IllegalArgumentException("At least one input path is required");
@@ -123,11 +145,11 @@ public final class AutoCompileAnalysisInputLocation implements AnalysisInputLoca
             List<Path> paths = resolved.stream().flatMap(input -> input.paths().stream()).distinct().toList();
             List<Path> libraries = options.classpath();
             if (isProject(inputType)) {
-                CompiledProject compiled = ProjectCompiler.compile(this.inputs.getFirst(), options.withClassOutputDirectory(output));
+                CompiledProject compiled = ProjectCompiler.compile(this.inputs.getFirst(), options.withClassOutputDirectory(output), statisticsRecorder);
                 paths = compiled.classDirectories();
                 libraries = compiled.dependencies();
             } else if (inputType == InputType.JAVA_SOURCE) {
-                JavaSourceCompiler.compile(paths, output);
+                JavaSourceCompiler.compile(paths, output, statisticsRecorder);
                 paths = List.of(output);
             }
             List<Path> applicationPaths = paths;

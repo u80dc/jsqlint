@@ -14,6 +14,8 @@
  * <p>允许依赖本包、{@code core.dataflow}、{@code core.node}、{@code core.semantics}，
  * {@code core.spi.InvocationSite} 与 {@code core.spi.SqlCallSite} 的调用位置契约，
  * 以及根包的 {@code JointBudgets}、{@code ReplayBudgets}、{@code RawSql} 和 {@code SqlExtraction}。
+ * 请求级统计仅使用 {@code AnalysisStatistics} 与 {@code core.statistics.StatisticsRecorder}，
+ * 计时器属于当前执行，不保存到冻结来源或模板表达式定义中。
  * SootUp 依赖用于程序路径模型及旧入口适配。
  * 输入准备、框架发现、结果发布和会话终态由调用层负责；本包不调用分析入口、会话、
  * 提取管线或 JDBC/MyBatis 分析模块。
