@@ -70,7 +70,12 @@ class MybatisPlusPluginTest {
         if(xml!=null)Files.writeString(resources.resolve("mapper.xml"),xmlText);
         var inputs=new ArrayList<sootup.core.inputlocation.AnalysisInputLocation>();AnalysisResult result;
         try(var code=new JavaClassPathAnalysisInputLocation(classes.toString(),SourceType.Application);var runtime=new DefaultRuntimeAnalysisInputLocation()) {
-            inputs.add(code);inputs.add(runtime);for(Class<?> type:List.of(com.baomidou.mybatisplus.core.mapper.BaseMapper.class,com.baomidou.mybatisplus.extension.plugins.pagination.Page.class))inputs.add(new JavaClassPathAnalysisInputLocation(Path.of(type.getProtectionDomain().getCodeSource().getLocation().toURI()).toString(),SourceType.Library));
+            inputs.add(code);inputs.add(runtime);
+            var libraries=new java.util.LinkedHashSet<Path>();
+            for(Class<?> type:List.of(com.baomidou.mybatisplus.core.mapper.BaseMapper.class,com.baomidou.mybatisplus.extension.plugins.pagination.Page.class,
+                    com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerInterceptor.class))
+                libraries.add(Path.of(type.getProtectionDomain().getCodeSource().getLocation().toURI()));
+            for(Path library:libraries)inputs.add(new JavaClassPathAnalysisInputLocation(library.toString(),SourceType.Library));
             result=new Analyzer(List.of(new MybatisAnalysisModule(MybatisOptions.defaults(),List.of(new MybatisPlusExtension(MybatisPlusOptions.defaults(),plugins)))),List.of()).analyze(
                     new AnalysisRequest(inputs,xml==null?List.of():List.of(new org.u80dc.jsqlint.core.resource.PathResourceSource(resources))),"<sample.Fixture: void entry(sample.UserMapper)>");
         }finally{for(var input:inputs)if(input instanceof JavaClassPathAnalysisInputLocation location)location.close();}

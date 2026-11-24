@@ -73,6 +73,13 @@ class MybatisPlusCrudTest {
         verify("insert", "Long id; String name; @TableField(insertStrategy=FieldStrategy.NEVER) String ignored;", "u.ignored=\"hidden\";", true, options);
         verify("updateById", "Long id; String ignored; @TableField(updateStrategy=FieldStrategy.ALWAYS) String name;", "u.id=7L;", true, options);
     }
+    @Test void globalNoneKeepsNullIdWithoutInventingGeneratedValue() throws Exception {
+        verify("insert", "Long id; String name;", "u.name=\"Alice\";", true, MybatisPlusOptions.defaults().withIdType("NONE"));
+    }
+    @Test void legacyGlobalStrategyAliasesUseEquivalentFrameworkRules() throws Exception {
+        verify("insert", "String id; String name;", "u.id=\"one\";", true,
+                MybatisPlusOptions.defaults().withIdType("id_worker_str").withFieldStrategies("ignored","default"));
+    }
     @Test void bindingOptionsAndExplicitAssignedIdMatchFramework() throws Exception {
         verify("insert", "@TableId(type=IdType.ASSIGN_UUID) String id; @TableField(jdbcType=org.apache.ibatis.type.JdbcType.VARCHAR) String name;", "u.id=\"explicit\";u.name=\"Alice\";", true);
     }

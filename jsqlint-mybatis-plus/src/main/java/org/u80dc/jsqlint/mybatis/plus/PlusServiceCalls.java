@@ -47,13 +47,8 @@ final class PlusServiceCalls {
     }
     private List<SqlTraceSource> extract(FlowPoint point,DataFlowAnalysis flow) {
         var site=point.invocation(flow.program()).orElseThrow();var service=type(site.invocation().getMethodSignature().getDeclClassType().toString(),site.view());
-        String version=versions.computeIfAbsent(site.view(),view->{
-            String core=PlusFrameworkVersion.read(view),extension=PlusFrameworkVersion.read(view,PREFIX+"repository.IRepository");
-            String spring=view.getClass(view.getIdentifierFactory().getClassType(PREFIX+"service.impl.ServiceImpl")).isPresent()
-                    ?PlusFrameworkVersion.read(view,PREFIX+"service.impl.ServiceImpl"):"3.5.16";
-            return core.equals("3.5.16")&&extension.equals("3.5.16")&&spring.equals("3.5.16")?"3.5.16":"core="+core+",extension="+extension+",spring="+spring;
-        });
-        if(!version.equals("3.5.16"))return List.of(incomplete(site,"Unsupported Service framework versions: "+version));
+        String version=versions.computeIfAbsent(site.view(),this::frameworkVersion);
+        if(!PlusFrameworkVersion.is3x(version))return List.of(incomplete(site,"Unsupported or inconsistent Service framework versions: "+version+"; supported release family is 3.x"));
         if(declaration(site.invocation().getMethodSignature(),site.view(),new HashSet<>()).isEmpty())return List.of(incomplete(site,"Service/chain declaration is unavailable"));
         boolean chain=site.invocation().getMethodSignature().getDeclClassType().toString().startsWith(CHAINS);
         String factoryMethod=null;
@@ -107,6 +102,18 @@ final class PlusServiceCalls {
             result.add(new SqlTraceSource(source.sql(),source.bindings(),source.batchEntry(),source.issues(),source.controlFlowPaths(),Optional.of(saved)));
         }
         return List.copyOf(result);
+    }
+    /** IService/ServiceImpl 曾位于 extension，较新版本另有 repository/spring；只校验目标实际提供的组件。 */
+    private String frameworkVersion(JavaView view) {
+        String core=PlusFrameworkVersion.read(view);
+        var components=new LinkedHashMap<String,String>();components.put("core",core);
+        for(String anchor:List.of("repository.IRepository","service.IService","service.impl.ServiceImpl","conditions.query.QueryChainWrapper")) {
+            String type=PREFIX+anchor;
+            if(view.getClass(view.getIdentifierFactory().getClassType(type)).isPresent())
+                components.put(anchor,PlusFrameworkVersion.read(view,type));
+        }
+        if(components.size()>1&&PlusFrameworkVersion.is3x(core)&&components.values().stream().allMatch(core::equals))return core;
+        return components.entrySet().stream().map(entry->entry.getKey()+"="+entry.getValue()).collect(java.util.stream.Collectors.joining(", "));
     }
     private List<SqlTraceSource> batch(InvocationSite site,FlowPoint point,DataFlowAnalysis flow,MapperMethodContext context) {
         if(site.invocation().getArgCount()<1||site.invocation().getArgCount()>2)return List.of(incomplete(site,"Unsupported batch overload"));

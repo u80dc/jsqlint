@@ -4,6 +4,7 @@ import org.u80dc.jsqlint.core.resource.AnalysisResource;
 import org.yaml.snakeyaml.Yaml;
 import org.yaml.snakeyaml.LoaderOptions;
 import org.yaml.snakeyaml.constructor.SafeConstructor;
+import sootup.java.core.views.JavaView;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
@@ -17,13 +18,35 @@ final class PlusProjectConfiguration {
         Map.entry(DB+"logic-delete-field","logicDeleteField"),Map.entry(DB+"logic-not-delete-value","logicNotDeleteValue"),
         Map.entry(DB+"logic-delete-value","logicDeleteValue"),Map.entry(DB+"id-type","idType"),
         Map.entry(DB+"insert-strategy","insertStrategy"),Map.entry(DB+"update-strategy","updateStrategy"),
+        Map.entry(DB+"field-strategy","fieldStrategy"),Map.entry(DB+"select-strategy","selectStrategy"),
+        Map.entry(DB+"where-strategy","whereStrategy"),
         Map.entry("mybatis-plus.configuration.map-underscore-to-camel-case","mapUnderscoreToCamelCase"));
     private record Setting(String value,String source) {}
+    private record TargetDefaults(String idType, Set<String> fields) {}
     private final MybatisPlusOptions initial;
     private final boolean project;
     private final Map<String,Setting> settings=new TreeMap<>();
     private final Set<String> problems=new TreeSet<>();
+    private final Map<JavaView,TargetDefaults> defaults=new IdentityHashMap<>();
+    private TargetDefaults target;
     PlusProjectConfiguration(MybatisPlusOptions initial,boolean project){this.initial=initial;this.project=project;}
+
+    /** 目标DbConfig决定全局默认值及新旧配置属性，显式Options构造器不读取或覆盖目标配置。 */
+    void configure(JavaView view) {
+        if(!project)return;
+        target=defaults.computeIfAbsent(view, current -> {
+            String type="com.baomidou.mybatisplus.core.config.GlobalConfig$DbConfig";
+            try {
+                var metadata=PlusClassMetadata.read(type,current);
+                String id=PlusClassMetadata.constructorEnumDefault(type,"idType",current).orElse(initial.idType());
+                var fields=new HashSet<String>();metadata.fields().forEach(field->fields.add(field.name()));
+                return new TargetDefaults(id,Set.copyOf(fields));
+            } catch(IOException|RuntimeException failure) {
+                problems.add("MyBatis-Plus global configuration defaults are unavailable: "+failure.getClass().getSimpleName());
+                return new TargetDefaults(initial.idType(),Set.of());
+            }
+        });
+    }
     static boolean accepts(AnalysisResource resource) {
         String name=resource.name().replace('\\','/');name=name.substring(name.lastIndexOf('/')+1);
         return name.matches("(?:application|bootstrap)(?:-[^.]+)?\\.(?:properties|ya?ml)");
@@ -53,7 +76,7 @@ final class PlusProjectConfiguration {
             }
             for(var entry:values.entrySet()) {
                 String key=entry.getKey();if(!KEYS.containsKey(key)) {
-                    if(key.equals("mybatis-plus.global-config.sql-injector")||key.equals(DB+"where-strategy")||key.equals("mybatis-plus.config-location"))problems.add("Unsupported SQL-affecting project configuration: "+key+" at "+resource.uri());
+                    if(key.equals("mybatis-plus.global-config.sql-injector")||key.equals("mybatis-plus.config-location"))problems.add("Unsupported SQL-affecting project configuration: "+key+" at "+resource.uri());
                     continue;
                 }
                 Object raw=entry.getValue();
@@ -75,10 +98,35 @@ final class PlusProjectConfiguration {
     MybatisPlusOptions options() {
         if(!project)return initial;
         try {
+            whereStrategy();
             return new MybatisPlusOptions(bool("tableUnderline",initial.tableUnderline()),bool("mapUnderscoreToCamelCase",initial.mapUnderscoreToCamelCase()),bool("capitalMode",initial.capitalMode()),
                 value("tablePrefix",initial.tablePrefix()),value("schema",initial.schema()),value("logicDeleteField",initial.logicDeleteField()),value("logicNotDeleteValue",initial.logicNotDeleteValue()),value("logicDeleteValue",initial.logicDeleteValue()),
-                value("idType",initial.idType()).toUpperCase(Locale.ROOT),value("insertStrategy",initial.insertStrategy()).toUpperCase(Locale.ROOT),value("updateStrategy",initial.updateStrategy()).toUpperCase(Locale.ROOT));
+                value("idType",target!=null&&initial.idType().equals(MybatisPlusOptions.defaults().idType())?target.idType():initial.idType()),
+                strategy("insertStrategy",initial.insertStrategy()),strategy("updateStrategy",initial.updateStrategy()));
         } catch(IllegalArgumentException failure){problems.add("Invalid MyBatis-Plus project setting: "+failure.getMessage());return initial;}
+    }
+    private String strategy(String name,String fallback) {
+        Setting setting=strategySetting(name);
+        return setting==null?fallback:setting.value();
+    }
+    private Setting strategySetting(String name) {
+        if(target==null||target.fields().contains(name)) {
+            Setting direct=settings.get(name);if(direct!=null)return direct;
+        }
+        return target==null||target.fields().contains("fieldStrategy")?settings.get("fieldStrategy"):null;
+    }
+    private Setting whereSetting() {
+        if(target==null||target.fields().contains("whereStrategy")) {
+            Setting direct=settings.get("whereStrategy");if(direct!=null)return direct;
+        }
+        if(target==null||target.fields().contains("selectStrategy")) {
+            Setting legacy=settings.get("selectStrategy");if(legacy!=null)return legacy;
+        }
+        return target==null||target.fields().contains("fieldStrategy")?settings.get("fieldStrategy"):null;
+    }
+    String whereStrategy() {
+        Setting setting=project?whereSetting():null;
+        return MybatisPlusOptions.normalizeFieldStrategy(setting==null?"NOT_NULL":setting.value());
     }
     private String value(String key,String fallback){return Optional.ofNullable(settings.get(key)).map(Setting::value).orElse(fallback);}
     private boolean bool(String key,boolean fallback){String value=value(key,Boolean.toString(fallback));if(!value.equalsIgnoreCase("true")&&!value.equalsIgnoreCase("false"))throw new IllegalArgumentException("Expected boolean for "+key);return Boolean.parseBoolean(value);}
@@ -86,7 +134,14 @@ final class PlusProjectConfiguration {
     Map<String,String> metadata() {
         var result=new LinkedHashMap<String,String>();result.put("configurationPolicy",project?"defaults < project resources; annotations override global defaults":"caller options; annotations override global defaults");
         result.put("configurationValues",options().toString());
-        for(String key:KEYS.values())result.put("configurationSource."+key,project&&settings.containsKey(key)?settings.get(key).source():project?"default":"caller");
+        try {result.put("configurationWhereStrategy",whereStrategy());}
+        catch(IllegalArgumentException failure){result.put("configurationWhereStrategy","unresolved");}
+        if(target!=null)result.put("frameworkDefault.idType",target.idType());
+        for(String key:KEYS.values()) {
+            Setting setting=key.equals("insertStrategy")||key.equals("updateStrategy")?strategySetting(key)
+                    :key.equals("whereStrategy")?whereSetting():settings.get(key);
+            result.put("configurationSource."+key,project&&setting!=null?setting.source():project?"default":"caller");
+        }
         return Map.copyOf(result);
     }
 }

@@ -6,6 +6,10 @@ import java.net.URI;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.nio.file.Path;
+import sootup.core.model.SourceType;
+import sootup.java.bytecode.frontend.inputlocation.JavaClassPathAnalysisInputLocation;
+import sootup.java.core.views.JavaView;
 import static org.junit.jupiter.api.Assertions.*;
 
 class PlusProjectConfigurationTest {
@@ -35,5 +39,64 @@ class PlusProjectConfigurationTest {
     @Test void customInjectorDeclarationsAreNeverTreatedAsDefaultInjector() {
         var configuration=new PlusProjectConfiguration(MybatisPlusOptions.defaults(),true);configuration.read(resource("application.properties","mybatis-plus.global-config.sql-injector=sample.CustomInjector"));assertFalse(configuration.issues().isEmpty());
         assertThrows(IllegalArgumentException.class,()->new PlusSqlInjectorModel("sample.Injector","3.5.16",false,List.of(new PlusSqlInjectorModel.Method("query",List.of(),"select","SELECT 1"),new PlusSqlInjectorModel.Method("query",List.of("int"),"select","SELECT 2"))));
+    }
+
+    @Test void legacyIdDoesNotDiscardOtherProjectSettings() {
+        var configuration=new PlusProjectConfiguration(MybatisPlusOptions.defaults(),true);
+        configuration.read(resource("application.properties","mybatis-plus.global-config.db-config.id-type=id_worker\n"
+                +"mybatis-plus.global-config.db-config.table-prefix=legacy_\nmybatis-plus.global-config.db-config.logic-delete-value=Y\n"
+                +"mybatis-plus.global-config.db-config.insert-strategy=not_empty\nmybatis-plus.global-config.db-config.update-strategy=ignored\n"));
+        var options=configuration.options();
+        assertEquals("ASSIGN_ID",options.idType());assertEquals("legacy_",options.tablePrefix());
+        assertEquals("Y",options.logicDeleteValue());assertEquals("NOT_EMPTY",options.insertStrategy());
+        assertEquals("ALWAYS",options.updateStrategy());assertTrue(configuration.issues().isEmpty());
+        assertEquals("memory:/application.properties#mybatis-plus.global-config.db-config.id-type",
+                configuration.metadata().get("configurationSource.idType"));
+    }
+
+    @Test void legacySingleStrategySuppliesUnsetWriteAndWhereStrategies() {
+        var configuration=new PlusProjectConfiguration(MybatisPlusOptions.defaults(),true);
+        configuration.read(resource("application.properties","mybatis-plus.global-config.db-config.field-strategy=ignored\n"
+                +"mybatis-plus.global-config.db-config.insert-strategy=not_empty\n"));
+        assertEquals("NOT_EMPTY",configuration.options().insertStrategy());
+        assertEquals("ALWAYS",configuration.options().updateStrategy());
+        assertEquals("ALWAYS",configuration.whereStrategy());assertTrue(configuration.issues().isEmpty());
+        assertEquals("memory:/application.properties#mybatis-plus.global-config.db-config.field-strategy",
+                configuration.metadata().get("configurationSource.updateStrategy"));
+    }
+
+    @Test void selectAndWhereStrategiesAreRecognizedWithoutChangingWrites() {
+        for(String name:List.of("select-strategy","where-strategy")) {
+            var configuration=new PlusProjectConfiguration(MybatisPlusOptions.defaults(),true);
+            configuration.read(resource("application.properties","mybatis-plus.global-config.db-config."+name+"=ignored\n"));
+            assertEquals("ALWAYS",configuration.whereStrategy());
+            assertEquals("NOT_NULL",configuration.options().insertStrategy());assertTrue(configuration.issues().isEmpty());
+            assertEquals("memory:/application.properties#mybatis-plus.global-config.db-config."+name,
+                    configuration.metadata().get("configurationSource.whereStrategy"));
+        }
+    }
+
+    @Test void targetDefaultAndSupportedPropertyLayoutComeFromCoreJar() throws Exception {
+        String library=Path.of(com.baomidou.mybatisplus.core.mapper.BaseMapper.class.getProtectionDomain().getCodeSource().getLocation().toURI()).toString();
+        try(var input=new JavaClassPathAnalysisInputLocation(library,SourceType.Library)) {
+            var configuration=new PlusProjectConfiguration(MybatisPlusOptions.defaults(),true);
+            configuration.read(resource("application.properties","mybatis-plus.global-config.db-config.field-strategy=ignored\n"
+                    +"mybatis-plus.global-config.db-config.insert-strategy=never\n"));
+            configuration.configure(new JavaView(List.of(input)));
+            assertEquals("NEVER",configuration.options().insertStrategy());
+            assertEquals("NOT_NULL",configuration.options().updateStrategy(),"现代DbConfig不读取旧fieldStrategy属性");
+            assertEquals(new com.baomidou.mybatisplus.core.config.GlobalConfig.DbConfig().getIdType().name(),
+                    configuration.metadata().get("frameworkDefault.idType"));
+            assertEquals("default",configuration.metadata().get("configurationSource.updateStrategy"));
+            assertTrue(configuration.issues().isEmpty());
+        }
+    }
+
+    @Test void explicitOptionsDoNotReadTargetDefaults() {
+        var options=MybatisPlusOptions.defaults().withIdType("INPUT").withFieldStrategies("ALWAYS","NEVER");
+        var configuration=new PlusProjectConfiguration(options,false);
+        configuration.configure(new JavaView(List.of()));
+        assertEquals(options,configuration.options());assertTrue(configuration.issues().isEmpty());
+        assertFalse(configuration.metadata().containsKey("frameworkDefault.idType"));
     }
 }

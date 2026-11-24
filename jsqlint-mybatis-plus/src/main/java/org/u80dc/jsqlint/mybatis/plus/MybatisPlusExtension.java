@@ -33,12 +33,15 @@ public final class MybatisPlusExtension implements MybatisExtension {
         private final PlusPluginConfig plugins;
         private final Map<JavaView, PlusEntityMetadataReader> readers = new IdentityHashMap<>();
         private final Map<JavaView, String> versions = new IdentityHashMap<>();
+        private final Map<JavaView, PlusSqlDefaults> sqlDefaults = new IdentityHashMap<>();
+        private final Map<JavaView, Optional<Map<String,String>>> paginationDefaults = new IdentityHashMap<>();
         PlusSession(MybatisPlusOptions options, MybatisOptions mybatisOptions,PlusPluginConfig plugins,boolean projectConfiguration,Optional<PlusSqlInjectorModel> injector) { this.options = options; this.mybatisOptions = mybatisOptions;this.plugins=plugins;this.injector=injector;configuration=new PlusProjectConfiguration(options,projectConfiguration); }
         @Override public void register(DiscoveryRegistry registry, MybatisExtension.MapperAccess mappers) {
             registry.resource(PlusProjectConfiguration::accepts,(resource,seeds)->configuration.read(resource));
             new PlusServiceCalls(mappers, mybatisOptions).register(registry);
         }
         private Optional<EntityMapping> mapping(MapperMethodContext context) {
+            configuration.configure(context.view());
             options=configuration.options();
             return readers.computeIfAbsent(context.view(), view -> new PlusEntityMetadataReader(view, options))
                     .resolve(context.signature().getDeclClassType().toString());
@@ -54,23 +57,36 @@ public final class MybatisPlusExtension implements MybatisExtension {
         }
         @Override public Optional<SqlDefinition> definition(MapperMethodContext context) {
             if (!supports(context)) return Optional.empty();
-            var entity = mapping(context).orElseThrow();
-            var issues = new ArrayList<>(entity.issues());
+            var mappedEntity = mapping(context).orElseThrow();
+            var issues = new ArrayList<>(mappedEntity.issues());
             issues.addAll(configuration.issues());
             String version = versions.computeIfAbsent(context.view(), PlusFrameworkVersion::read);
-            if (!version.equals("3.5.16")) issues.add("Unsupported MyBatis-Plus version: " + version + "; supported version is 3.5.16");
+            if (!PlusFrameworkVersion.is3x(version)) issues.add("Unsupported MyBatis-Plus version: " + version + "; supported major version is 3.x");
             String pluginVersion=pluginVersion(context,version);
-            if(!plugins.plugins().isEmpty()&&!pluginVersion.equals("3.5.16"))issues.add("Unsupported or inconsistent MyBatis-Plus plugin component versions: "+pluginVersion);
+            if(!plugins.plugins().isEmpty()&&!pluginVersion.equals(version))issues.add("Inconsistent MyBatis-Plus plugin component versions: "+pluginVersion);
             String operation = context.method().getName();
             var custom=injected(context);
             if(custom.isPresent()) {
                 var model=injector.orElseThrow();var method=custom.get();
-                if(!model.frameworkVersion().equals(version)||!version.equals("3.5.16"))issues.add("Injector model version does not match supported target version");
+                if(!model.frameworkVersion().equals(version))issues.add("Injector model version does not match target version");
                 var metadata=new LinkedHashMap<>(configuration.metadata());metadata.putAll(Map.of("framework","mybatis-plus-injector","frameworkVersion",version,"injectorType",model.injectorType(),"configurationSource.injector","caller","method",context.signature().toString(),"command",method.command(),"pluginFrameworkVersion",pluginVersion));
-                var definition=MybatisSqlTemplates.definition(entity.mapperType()+"."+method.name(),new SourceLocation(URI.create("java:"+model.injectorType()),method.name()+" [injected model]"),issues.isEmpty()?method.script():"${unresolvedInjectorSql}",mybatisOptions,metadata,issues);
+                var definition=MybatisSqlTemplates.definition(mappedEntity.mapperType()+"."+method.name(),new SourceLocation(URI.create("java:"+model.injectorType()),method.name()+" [injected model]"),issues.isEmpty()?method.script():"${unresolvedInjectorSql}",mybatisOptions,metadata,issues);
                 return Optional.of(plugins.plugins().isEmpty()?definition:definition.withTransform(new PlusSqlTransform(plugins,Optional.empty(),false,false)));
             }
             if(injector.filter(model->!model.includesDefaultMethods()).isPresent())issues.add("Configured injector model does not include default methods: "+operation);
+            var defaults = sqlDefaults.computeIfAbsent(context.view(), PlusSqlDefaults::read);
+            var paging = plugins.plugins().stream().anyMatch(plugin -> plugin instanceof PlusPluginConfig.Pagination)
+                    ? paginationDefaults.computeIfAbsent(context.view(), PlusPaginationDefaults::read) : Optional.<Map<String,String>>empty();
+            if (plugins.plugins().stream().anyMatch(plugin -> plugin instanceof PlusPluginConfig.Pagination)
+                    && context.method().getParameterTypes().stream().anyMatch(type -> type.toString().equals("com.baomidou.mybatisplus.core.metadata.IPage"))
+                    && paging.isEmpty()) issues.add("MyBatis-Plus pagination protocol is unavailable in target framework");
+            var entity = generatedEntity(mappedEntity, defaults, operation);
+            entity.issues().stream().filter(issue -> !issues.contains(issue)).forEach(issues::add);
+            if (operation.equals("selectCount") && defaults.count().isEmpty()) issues.add("MyBatis-Plus count SQL defaults are unavailable in target framework");
+            if (operation.equals("insert") && entity.primaryKey().filter(field -> field.idType().equals("AUTO")).isPresent()
+                    && defaults.conditionalAutoIdInsert().isEmpty()) issues.add("MyBatis-Plus AUTO ID insert capabilities are unavailable in target framework");
+            if (abstractPaginationOverride(context))
+                issues.add("MyBatis-Plus default pagination method was redeclared abstract without an injected SQL statement: " + context.signature());
             var arguments = context.method().getParameterTypes().stream().map(Object::toString).toList();
             boolean wrapper = PlusWrapperParameters.method(operation, arguments);
             if (entity.primaryKey().isEmpty() && !operation.equals("insert") && !wrapper) issues.add("MyBatis-Plus entity primary key is unavailable: " + entity.entityType());
@@ -87,7 +103,7 @@ public final class MybatisPlusExtension implements MybatisExtension {
             if (issues.isEmpty() && !entity.table().isBlank() && wrapper) {
                 sql = PlusWrapperParameters.skeleton(entity, operation);
             } else if (issues.isEmpty() && !entity.table().isBlank() && Set.of("insert", "updateById").contains(operation)) {
-                sql = PlusCrudTemplates.build(entity, operation, issues,plugins.plugins().stream().anyMatch(plugin->plugin instanceof PlusPluginConfig.OptimisticLock));
+                sql = PlusCrudTemplates.build(entity, operation, issues,plugins.plugins().stream().anyMatch(plugin->plugin instanceof PlusPluginConfig.OptimisticLock),defaults.conditionalAutoIdInsert().orElse(false));
             } else if (issues.isEmpty() && !entity.table().isBlank() && entity.primaryKey().isPresent()) {
                 var key = entity.primaryKey().get();
                 String binding = "#{" + key.property() + ",javaType=" + key.type() + "}";
@@ -115,11 +131,31 @@ public final class MybatisPlusExtension implements MybatisExtension {
                             : operation.startsWith("update") || entity.logicDelete().isPresent() ? "update" : "delete"));
             var versionFields=entity.fields().stream().filter(EntityMapping.Field::version).toList();
             metadata.putAll(configuration.metadata());
+            paging.ifPresent(metadata::putAll);
+            metadata.put("frameworkCompatibility", PlusFrameworkVersion.is3x(version) ? "3.x" : "unsupported");
+            defaults.defaultLogicDelete().ifPresent(logical -> metadata.put("defaultLogicDelete", Boolean.toString(logical)));
+            defaults.wrapperGrouped().ifPresent(grouped -> metadata.put("wrapperGrouped", Boolean.toString(grouped)));
+            if (operation.equals("selectCount")) defaults.count().ifPresent(count -> {
+                metadata.put("countExpression", count.expression());
+                metadata.put("countSuffix", count.suffix());
+                metadata.put("countSelectColumns", Boolean.toString(count.selectedColumns()));
+            });
+            if (operation.equals("insert")) metadata.put("conditionalAutoIdInsert",
+                    defaults.conditionalAutoIdInsert().map(Object::toString).orElse("unknown"));
             metadata.put("pluginFrameworkVersion",pluginVersion);
             metadata.put("configurationSource.plugins",plugins.plugins().isEmpty()?"default:none":"caller");
-            if(versionFields.size()==1){metadata.put("versionColumn",versionFields.getFirst().column());metadata.put("versionProperty",versionFields.getFirst().property());}
+            if(versionFields.size()==1){
+                var field=versionFields.getFirst();metadata.put("versionColumn",field.column());metadata.put("versionProperty",field.property());
+                if(operation.equals("updateById")&&field.updateStrategy().equals("NEVER")
+                        &&plugins.plugins().stream().anyMatch(plugin->plugin instanceof PlusPluginConfig.OptimisticLock)) {
+                    String name="__jsqlint_original_version";
+                    var properties=entity.fields().stream().map(EntityMapping.Field::property).toList();
+                    while(properties.contains(name))name+="_";
+                    metadata.put("originalVersionInput",name);metadata.put("originalVersionType",field.type());
+                }
+            }
             entity.logicDelete().ifPresent(field->metadata.put("logicDeleteColumn",field.column()));
-            String statement=operation.equals("selectPage")?"selectList":operation.equals("selectMapsPage")?"selectMaps":operation;
+            String statement=pageAlias(context).orElse(operation);
             var definition=MybatisSqlTemplates.definition(entity.mapperType() + "." + statement, location, sql,mybatisOptions, metadata, issues);
             return Optional.of(plugins.plugins().isEmpty()?definition:definition.withTransform(new PlusSqlTransform(plugins,Optional.empty(),false,false)));
         }
@@ -128,11 +164,24 @@ public final class MybatisPlusExtension implements MybatisExtension {
         }
         @Override public Optional<String> statementAlias(MapperMethodContext context) {
             if(!context.method().getDeclClassType().toString().equals(BASE_MAPPER))return Optional.empty();
+            return pageAlias(context);
+        }
+        private static Optional<String> pageAlias(MapperMethodContext context) {
+            // 旧3.x的分页方法直接映射自己的语句；新默认方法委托到selectList/selectMaps。
+            if (context.method().isAbstract()) return Optional.empty();
             return switch(context.method().getName()) {
                 case "selectPage" -> Optional.of("selectList");
                 case "selectMapsPage" -> Optional.of("selectMaps");
                 default -> Optional.empty();
             };
+        }
+        private static boolean abstractPaginationOverride(MapperMethodContext context) {
+            if (!context.method().isAbstract() || context.method().getDeclClassType().toString().equals(BASE_MAPPER)
+                    || !Set.of("selectPage", "selectMapsPage").contains(context.method().getName())) return false;
+            return context.view().getClass(context.view().getIdentifierFactory().getClassType(BASE_MAPPER)).stream()
+                    .flatMap(type -> type.getMethods().stream())
+                    .anyMatch(method -> method.getName().equals(context.method().getName())
+                            && method.getParameterTypes().equals(context.method().getParameterTypes()) && !method.isAbstract());
         }
         @Override public List<SqlTraceSource> postprocess(MapperMethodContext context,List<SqlTraceSource> sources,FlowPoint point,DataFlowAnalysis flow) {
             if(plugins.plugins().isEmpty())return sources;
@@ -171,8 +220,26 @@ public final class MybatisPlusExtension implements MybatisExtension {
         }
         private String pluginVersion(MapperMethodContext context,String coreVersion) {
             if(plugins.plugins().isEmpty())return coreVersion;
-            String extension=PlusFrameworkVersion.read(context.view(),"com.baomidou.mybatisplus.extension.plugins.pagination.Page");
-            return coreVersion.equals(extension)?coreVersion:coreVersion+"/extension:"+extension;
+            var anchors=new ArrayList<>(List.of("com.baomidou.mybatisplus.extension.plugins.pagination.Page",
+                    "com.baomidou.mybatisplus.extension.service.IService", "com.baomidou.mybatisplus.extension.service.impl.ServiceImpl"));
+            if(plugins.plugins().stream().anyMatch(plugin->plugin instanceof PlusPluginConfig.Pagination))
+                anchors.addAll(List.of("com.baomidou.mybatisplus.extension.plugins.inner.PaginationInnerInterceptor",
+                        "com.baomidou.mybatisplus.extension.plugins.PaginationInterceptor"));
+            if(plugins.plugins().stream().anyMatch(plugin->plugin instanceof PlusPluginConfig.OptimisticLock))
+                anchors.addAll(List.of("com.baomidou.mybatisplus.extension.plugins.inner.OptimisticLockerInnerInterceptor",
+                        "com.baomidou.mybatisplus.extension.plugins.OptimisticLockerInterceptor"));
+            if(plugins.plugins().stream().anyMatch(plugin->plugin instanceof PlusPluginConfig.Tenant))
+                anchors.addAll(List.of("com.baomidou.mybatisplus.extension.plugins.inner.TenantLineInnerInterceptor",
+                        "com.baomidou.mybatisplus.extension.plugins.tenant.TenantSqlParser"));
+            if(plugins.plugins().stream().anyMatch(plugin->plugin instanceof PlusPluginConfig.DynamicTables))
+                anchors.addAll(List.of("com.baomidou.mybatisplus.extension.plugins.inner.DynamicTableNameInnerInterceptor",
+                        "com.baomidou.mybatisplus.extension.parsers.DynamicTableNameParser"));
+            for (String anchor : anchors) {
+                if (context.view().getClass(context.view().getIdentifierFactory().getClassType(anchor)).isEmpty()) continue;
+                String extension = PlusFrameworkVersion.read(context.view(), anchor);
+                if (!coreVersion.equals(extension)) return coreVersion + "/component("+anchor+"):" + extension;
+            }
+            return coreVersion;
         }
         @Override public Optional<SqlTraceSource> parameters(MapperMethodContext context, SqlDefinition definition,
                                                              FlowPoint point, DataFlowAnalysis flow) {
@@ -182,6 +249,8 @@ public final class MybatisPlusExtension implements MybatisExtension {
                 FlowPoint point, DataFlowAnalysis flow, List<? extends sootup.core.jimple.common.Value> arguments) {
             if(injected(context).isPresent())return Optional.empty();
             var entity = mapping(context).orElseThrow();
+            if (definition.metadata().getOrDefault("framework", "").equals("mybatis-plus"))
+                entity = generatedEntity(entity, sqlDefaults.computeIfAbsent(context.view(), PlusSqlDefaults::read), context.method().getName());
             var site = point.invocation(context.view()).orElseThrow();
             if (context.method().getParameterTypes().stream().anyMatch(type->type.toString().equals("com.baomidou.mybatisplus.core.conditions.Wrapper")))
                 return Optional.of(new PlusWrapperParameters(flow, mybatisOptions).resolve(entity, context.method().getName(), definition, point, context, arguments));
@@ -189,8 +258,18 @@ public final class MybatisPlusExtension implements MybatisExtension {
                 return Optional.of(SqlTraceSource.template(new TemplateSqlInput(definition, Map.of(), Optional.empty()), List.of()));
             var actual = arguments.getFirst();
             var value = point.value(actual);
-            if (PlusEntityParameters.isEntity(value, entity, flow))
-                return Optional.of(PlusEntityParameters.resolve(value, entity, definition, flow, mybatisOptions));
+            if (PlusEntityParameters.isEntity(value, entity, flow)) {
+                var source=PlusEntityParameters.resolve(value, entity, definition, flow, mybatisOptions);
+                String originalVersion=definition.metadata().get("originalVersionInput");
+                if(originalVersion!=null) {
+                    var field=entity.fields().stream().filter(EntityMapping.Field::version).findFirst().orElseThrow();
+                    var input=source.templateInput().orElseThrow();var render=new LinkedHashMap<>(input.renderParameters());
+                    render.put(originalVersion,new TemplateSqlInput.Parameter(flow.traceProperty(value,field.property(),field.type(),PropertyAccess.FIELD),field.type()));
+                    var adapted=new TemplateSqlInput(input.definition(),input.parameters(),input.fallback(),input.parameterMapName(),input.constants(),input.sqlSource(),render);
+                    source=new SqlTraceSource(source.sql(),source.bindings(),source.batchEntry(),source.issues(),source.controlFlowPaths(),Optional.of(adapted));
+                }
+                return Optional.of(source);
+            }
             String type = actual.getType().toString();
             String property = entity.primaryKey().map(EntityMapping.Field::property).orElse("id");
             String keyType = type;
@@ -215,6 +294,17 @@ public final class MybatisPlusExtension implements MybatisExtension {
             if (Set.of("java.lang.String", "java.lang.StringBuilder", "java.lang.StringBuffer", "java.lang.CharSequence").contains(type) && !value.equalsIgnoreCase("null"))
                 return "'" + value + "'";
             return value;
+        }
+        private static EntityMapping generatedEntity(EntityMapping entity, PlusSqlDefaults defaults, String operation) {
+            if (operation.equals("insert")) return entity;
+            if (entity.logicDelete().isEmpty() || defaults.defaultLogicDelete().filter(Boolean::booleanValue).isPresent()) return entity;
+            if (defaults.defaultLogicDelete().isPresent())
+                return new EntityMapping(entity.mapperType(), entity.entityType(), entity.table(), entity.fields(),
+                        entity.primaryKey(), Optional.empty(), entity.issues());
+            var issues = new ArrayList<>(entity.issues());
+            issues.add("MyBatis-Plus default logical delete capabilities are unavailable in target framework");
+            return new EntityMapping(entity.mapperType(), entity.entityType(), entity.table(), entity.fields(),
+                    entity.primaryKey(), entity.logicDelete(), issues);
         }
     }
 }

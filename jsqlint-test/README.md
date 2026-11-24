@@ -98,8 +98,13 @@ MySQL 回归覆盖 CASE/END、LIMIT/OFFSET、VALUE、锁定子句、窗口边界
 从仓库根目录执行，`-am` 会一并构建被测模块：
 
 ```powershell
-.\mvnw.cmd -pl jsqlint-test -am '-Dmaven.test.skip=false' '-DskipTests=false' test
+.\mvnw.cmd -pl jsqlint-test -am `
+  '-Djsqlint.plus.oracle.javaHome.3.3.2=D:/Jdk/hotspot/jdk8u392-b08' `
+  '-Dmaven.test.skip=false' '-DskipTests=false' test
 ```
+
+完整测试包含真实 3.3.2 的运行时 Oracle；上述 JDK8 路径按本机安装位置调整，分析器使用 Java21。
+矩阵的逐版本 JDK 设置和原因见下方 MyBatis-Plus 版本矩阵说明。
 
 本地 DPM Mapper 用例 `MySQLDetailMapperProjectAnalysisTest` 默认禁用，显式启用后分析
 `D:/workspaces/SHSNC/snc-dpm-rebuild/snc-dpm-biz` 中的
@@ -134,6 +139,25 @@ MySQL 回归覆盖 CASE/END、LIMIT/OFFSET、VALUE、锁定子句、窗口边界
   '-Dmaven.test.skip=false' '-DskipTests=false' test
 ```
 
+`NodeConnConfigServiceProjectAnalysisTest` 位于 MyBatis-Plus 测试包，使用同一 DPM 项目和私服配置，
+显式启用 `MybatisPlusExtension` 并读取项目资源配置，分析
+`NodeConnConfigServiceImpl#get(long)` 到 `NodeConnConfigMapper#selectList(Wrapper)` 的调用。
+该用例校验精确入口、具体 Mapper、common 模块中的 `NodeConnConfig` 实体及表名
+`snc_node_conn_config`，报告写入 `target/node-conn-config-service-get-long-sql.txt`。
+目标项目使用 MyBatis-Plus 3.3.2 和旧 `id-type=id_worker`，3.x 模型读取并兼容该配置，
+用例要求恢复 `node_id = ?` 的查询 SQL，同时在 EXTRACT 模式保留未知的入口 `nodeId` 绑定。
+发现阶段保留 `lambdaQuery`、Lambda 引用及 `eq` 的三条 `METHOD_SCOPE_UNRESOLVED` 诊断；
+用例逐条校验这些具体调用，SQL 来源和文本需完整。
+该用例默认禁用，显式运行：
+
+```powershell
+.\mvnw.cmd -T 1 -pl jsqlint-test -am `
+  '-Dtest=NodeConnConfigServiceProjectAnalysisTest' `
+  '-Dsurefire.failIfNoSpecifiedTests=false' `
+  '-Djsqlint.dpm.test=true' `
+  '-Dmaven.test.skip=false' '-DskipTests=false' test
+```
+
 MyBatis-Plus 第一阶段测试 `MybatisPlusAnalysisTest` 使用真实 3.5.16 框架生成的 BoundSql，
 对照静态定义、继承 CRUD 调用、泛型实体、字段映射、逻辑删除、显式覆盖及会话隔离。
 第二阶段 `MybatisPlusEntityParameterTest` 验证实体构造/赋值/别名/getter、跨方法调用、分支绑定关联、
@@ -144,10 +168,62 @@ MyBatis-Plus 第一阶段测试 `MybatisPlusAnalysisTest` 使用真实 3.5.16 �
   '-Dsurefire.failIfNoSpecifiedTests=false' '-Dmaven.test.skip=false' '-DskipTests=false' test
 ```
 
+`BaseMapperSelectListAnalysisTest` 使用真实 3.5.16 依赖分析单参数 `BaseMapper#selectList(Wrapper)`，
+覆盖原始 BaseMapper 泛型入口、具体 Mapper 的继承定义及实际 Wrapper 调用三个场景。
+原始 BaseMapper 无法确定实体和表，返回带泛型诊断的 PARTIAL；具体 Mapper 可恢复完整动态定义，
+未提供 Wrapper 时样例 SQL 仍为未知。受控 `NodeConnConfigMapper` 的 null、空 Wrapper 和 Lambda
+`node_id=42L` 调用与真实框架 BoundSql 对照，验证列别名、SQL 文本及绑定。
+测试不依赖本地 DPM 项目或私服，报告分别写入 `target/base-mapper-select-list-generic.txt`、
+`target/base-mapper-select-list-definition.txt` 和 `target/base-mapper-select-list-sql.txt`。
+
+```powershell
+.\mvnw.cmd -T 1 -pl jsqlint-test -am '-Dtest=BaseMapperSelectListAnalysisTest' `
+  '-Dsurefire.failIfNoSpecifiedTests=false' '-Dmaven.test.skip=false' '-DskipTests=false' test
+```
+
+`MybatisPlusVersionMatrixTest` 使用真实发布依赖分别编译相同受控样例，并与对应版本的
+Mapper proxy/BoundSql 比较完整 SQL 和有序绑定。12 个实测版本为 `3.0-RELEASE`、`3.0.7`、
+`3.1.2`、`3.2.0`、`3.3.2`、`3.4.3.4`、`3.5.0`、`3.5.3.2`、`3.5.6`、`3.5.9`、
+`3.5.16`、`3.5.18.1`；每版 22 个普通/逻辑实体场景全部通过，共 264 个 SQL/绑定对照。
+场景包括 CRUD、null/String/Lambda Wrapper、计数默认/显式选列、selectObjs、AUTO ID、列别名和字段顺序。
+详细版本政策和独立 Service/插件验证范围见 [MyBatis-Plus 3.x 兼容性](../jsqlint-mybatis-plus/VERSION_COMPATIBILITY.md)。
+
+```powershell
+.\mvnw.cmd -T 1 -pl jsqlint-test -am '-Dtest=MybatisPlusVersionMatrixTest' `
+  '-Djsqlint.plus.oracle.javaHome.3.3.2=D:/Jdk/hotspot/jdk8u392-b08' `
+  '-Dsurefire.failIfNoSpecifiedTests=false' '-Dmaven.test.skip=false' '-DskipTests=false' test
+```
+
+JDK8 路径是验证机器的示例，可调整为本机路径。真实 3.3.2 的旧 Lambda 缓存在 JDK21 hidden lambda
+上发生 NPE，因此仅该版本的运行时 Oracle 使用 JDK8，分析器仍在 Java21 上运行。
+3.2.0 的字段顺序由 HashMap 迭代产生，本次 Oracle 与分析器使用同一 JDK21，不把全部 Oracle
+统一切换为 JDK8。每版报告记录实际 Java 版本/来源，用于固定 SQL/绑定对照的执行环境。
+
+Oracle JavaHome 依次取 `jsqlint.plus.oracle.javaHome.<version>`、全局
+`jsqlint.plus.oracle.javaHome`；均未配置时使用当前 JVM 的隔离 classloader。
+可用 `'-Djsqlint.plus.versions=3.0.7,3.3.2,3.5.16'` 分批运行，首次解析依赖需要访问 Maven Central。
+报告位于 `target/mybatis-plus-version-matrix/<version>.txt`，独立 JVM 日志为同目录
+`<version>-oracle.log`。单版本 JUnit 超时为 10 分钟、分析超时 3 分钟、独立 Oracle 超时 60 秒。
+
+`MybatisPlusLegacyServiceTest` 单独验证真实 3.3.2 的常用 IService/ServiceImpl 调用与组件混用边界；
+`MybatisPlusLegacyPluginTest` 对照真实 3.0.7/3.3.2 的 MySQL 分页和整数乐观锁协议，
+现代显式租户、动态表名、MySQL/PostgreSQL 分页与整数乐观锁由 3.5.16 插件回归覆盖。
+
+`MybatisPlusOptimisticNeverTest` 对照真实 3.3.2/3.5.16：版本字段的 `updateStrategy=NEVER`
+不影响版本 WHERE 条件，原值直接取字段，覆盖计算 getter、null 和 Integer.MAX_VALUE。
+未知值使用未建模的 native 返回来源；入口参数在 JOINT 中可能生成样例值，不用于代替未知来源。
+`MybatisPlusExtractWrapperTest` 补充 foreach item/index 与 Wrapper 槽位名称冲突，覆盖
+EXTRACT、PARAMETERS、JOINT；`PlusFrameworkArtifactMetadataTest` 验证拆分组件的 POM/Manifest
+优先级及版本混用诊断，元数据副本不用于证明跨版本 SQL 正确性。
+
+本次最终验证按测试类最新结果去重：45 类、429 个用例全部通过，无失败、错误或跳过。
+逐类验证日志索引为 `target/mybatis-plus-3x-validation.md`。
+
 全项目验证：
 
 ```powershell
-.\mvnw.cmd '-Dmaven.test.skip=false' '-DskipTests=false' clean verify
+.\mvnw.cmd '-Djsqlint.plus.oracle.javaHome.3.3.2=D:/Jdk/hotspot/jdk8u392-b08' `
+  '-Dmaven.test.skip=false' '-DskipTests=false' clean verify
 ```
 
 Linux / macOS 将命令替换为 `./mvnw`，参数相同。

@@ -10,6 +10,7 @@ import java.util.*;
 /**
  * 定义与调用实参的通用关联；业务参数、渲染槽位和 SQL 路径来源分别保存。
  * renderParameters 只进入模板求值环境，不属于 parameterMapName 指定的业务参数对象；
+ * constants 可为同名渲染槽位提供已恢复的SQL结构值，槽位仍保留Java来源。
  * sqlSource 参与联合求解和来源记录，不作为可见模板变量。
  * @author u80dc
  */
@@ -26,7 +27,7 @@ public record TemplateSqlInput(SqlDefinition definition, Map<String, Parameter> 
         Objects.requireNonNull(sqlSource);
         renderParameters = Collections.unmodifiableMap(new LinkedHashMap<>(renderParameters));
         for (String name : renderParameters.keySet())
-            if (parameters.containsKey(name) || constants.containsKey(name) || parameterMapName.filter(name::equals).isPresent())
+            if (parameters.containsKey(name) || parameterMapName.filter(name::equals).isPresent())
                 throw new IllegalArgumentException("Template render parameter conflicts with a business or reserved name: " + name);
     }
     @Override public Map<String, Object> constants() { return SqlValueSnapshots.parameters(constants); }

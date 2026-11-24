@@ -1,0 +1,53 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>org.u80dc.jsqlint.fixture</groupId>
+    <artifactId>mybatis-plus-version-matrix</artifactId>
+    <version>1.0</version>
+    <properties>
+        <plus.version>3.5.16</plus.version>
+        <maven.compiler.release>8</maven.compiler.release>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <matrix.build.directory>${project.basedir}/target</matrix.build.directory>
+    </properties>
+    <dependencies>
+        <dependency>
+            <groupId>com.baomidou</groupId>
+            <artifactId>mybatis-plus-core</artifactId>
+            <version>${plus.version}</version>
+        </dependency>
+        <!-- 部分3.x将通用泛型解析委托给可选Spring core；仅用于隔离Oracle，不启动Spring。 -->
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-core</artifactId>
+            <version>5.3.39</version>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework</groupId>
+            <artifactId>spring-aop</artifactId>
+            <version>5.3.39</version>
+        </dependency>
+        <!-- 目标框架可选的日志API；隔离Oracle不能从分析器继承此依赖。 -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+            <version>1.7.36</version>
+        </dependency>
+    </dependencies>
+    <build>
+        <directory>${matrix.build.directory}</directory>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-resources-plugin</artifactId>
+                <version>3.4.0</version>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.15.0</version>
+                <configuration><parameters>true</parameters><proc>none</proc></configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

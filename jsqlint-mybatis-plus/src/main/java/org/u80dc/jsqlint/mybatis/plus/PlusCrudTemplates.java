@@ -10,6 +10,9 @@ final class PlusCrudTemplates {
         return build(entity,operation,issues,false);
     }
     static String build(EntityMapping entity,String operation,List<String> issues,boolean optimistic) {
+        return build(entity, operation, issues, optimistic, true);
+    }
+    static String build(EntityMapping entity,String operation,List<String> issues,boolean optimistic,boolean conditionalAutoIdInsert) {
         boolean insert = operation.equals("insert");
         var fields = new ArrayList<EntityMapping.Field>();
         if (insert) entity.primaryKey().ifPresent(fields::add);
@@ -18,6 +21,7 @@ final class PlusCrudTemplates {
         var columns = new StringBuilder(); var values = new StringBuilder();
         for (var field : fields) {
             boolean key = entity.primaryKey().filter(field::equals).isPresent();
+            if (insert && key && field.idType().equals("AUTO") && !conditionalAutoIdInsert) continue;
             if (insert && key && field.keySequence()) issues.add("MyBatis-Plus sequence key generation is not modeled: " + field.property());
             String strategy = insert ? field.insertStrategy() : field.updateStrategy();
             if (key) strategy = field.idType().equals("AUTO") ? "NOT_NULL" : "ALWAYS";
@@ -33,7 +37,7 @@ final class PlusCrudTemplates {
             }
             String condition = condition(field, strategy);
             columns.append(wrap(field.column() + ",", condition));
-            if (insert && key && Set.of("NONE", "ASSIGN_ID", "ASSIGN_UUID").contains(field.idType())) {
+            if (insert && key && Set.of("ASSIGN_ID", "ASSIGN_UUID").contains(field.idType())) {
                 String missing = field.property() + " == null" + (field.type().equals("java.lang.String") ? " or " + field.property() + " == ''" : "");
                 values.append("<choose><when test=\"").append(xml(missing))
                         .append("\">#{").append(generatedKeyName(entity)).append("},</when><otherwise>").append(xml(expression + ","))

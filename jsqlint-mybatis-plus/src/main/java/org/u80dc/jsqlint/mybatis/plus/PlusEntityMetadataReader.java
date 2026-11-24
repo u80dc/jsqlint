@@ -1,10 +1,11 @@
 package org.u80dc.jsqlint.mybatis.plus;
 
-import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.*;
 import sootup.java.core.views.JavaView;
 
 import java.io.IOException;
 import java.util.*;
+import java.util.stream.Collectors;
 
 import static org.u80dc.jsqlint.mybatis.plus.PlusClassMetadata.GenericType;
 
@@ -16,6 +17,9 @@ final class PlusEntityMetadataReader {
     private final MybatisPlusOptions options;
     private final Map<String, PlusClassMetadata> classes = new HashMap<>();
     private final Map<String, Optional<EntityMapping>> mappings = new HashMap<>();
+    private AnnotationDefaults tableFieldDefaults;
+    private FieldCollection fieldCollection;
+    private List<String> fieldCollectionIssues = List.of();
 
     PlusEntityMetadataReader(JavaView view, MybatisPlusOptions options) {
         this.view = view;
@@ -57,14 +61,16 @@ final class PlusEntityMetadataReader {
         List<String> selected = strings(tableName.get("properties"));
         Set<String> excluded = new HashSet<>(strings(tableName.get("excludeProperty")));
         var candidates = new LinkedHashMap<String, BoundField>();
-        // 子类同名字段遮蔽父字段，包括被排除的字段，保持实际反射字段选择边界。
-        Set<String> visitedFields = new HashSet<>();
-        for (BoundClass bound : lineage) for (PlusClassMetadata.Field field : bound.metadata().fields()) {
-            if (!visitedFields.add(field.name())) continue;
-            if ((field.access() & (Opcodes.ACC_STATIC | Opcodes.ACC_TRANSIENT | Opcodes.ACC_SYNTHETIC)) != 0) continue;
+        // 先按目标ReflectionKit完成反射字段收集，再应用数据库字段筛选；排除字段也会影响旧HashMap顺序。
+        for (BoundField bound : reflectedFields(lineage, issues)) {
+            var field = bound.field();
             if (!selected.isEmpty() ? !selected.contains(field.name()) : excluded.contains(field.name())) continue;
             if (!bool(field.annotations().getOrDefault(ANNOTATIONS + "TableField", Map.of()), "exist", true)) continue;
-            candidates.put(field.name(), new BoundField(field, bound.bindings()));
+            if ((field.access() & Opcodes.ACC_SYNTHETIC) != 0) {
+                issues.add("MyBatis-Plus instance synthetic field is not supported: " + entityType + "." + field.name());
+                continue;
+            }
+            candidates.put(field.name(), bound);
         }
         var annotatedKeys = candidates.values().stream().filter(field -> field.field().annotations().containsKey(ANNOTATIONS + "TableId")).toList();
         var keys = annotatedKeys.isEmpty() ? candidates.values().stream().filter(field -> field.field().name().equalsIgnoreCase("id")).toList() : annotatedKeys;
@@ -80,7 +86,7 @@ final class PlusEntityMetadataReader {
         EntityMapping.Field primaryKey = null, logicDelete = null;
         for (BoundField bound : candidates.values()) {
             var field = bound.field();
-            var tableField = field.annotations().getOrDefault(ANNOTATIONS + "TableField", Map.of());
+            var tableField = fieldAnnotation(field, issues);
             var tableId = field.annotations().getOrDefault(ANNOTATIONS + "TableId", Map.of());
             boolean key = field.name().equals(keyName);
             String column = string(key ? tableId : tableField, "value", "");
@@ -91,7 +97,13 @@ final class PlusEntityMetadataReader {
             if (column.contains("${")) issues.add("MyBatis-Plus column contains unresolved configuration variables: " + column);
             String property = field.name();
             if (!string(tableField, "property", "").isBlank()) issues.add("MyBatis-Plus TableField.property override is not supported: " + field.name());
+            String legacyExpression = string(tableField, "el", "");
+            if (!legacyExpression.isBlank() && !legacyExpression.split(",", 2)[0].strip().equals(property))
+                issues.add("MyBatis-Plus TableField.el property override is not supported: " + field.name());
+            if (column.contains(";")) issues.add("MyBatis-Plus multi-column field mapping is not supported: " + field.name());
             if (!string(tableField, "typeHandler", "org.apache.ibatis.type.UnknownTypeHandler").equals("org.apache.ibatis.type.UnknownTypeHandler"))
+                issues.add("MyBatis-Plus custom type handler is not supported: " + field.name());
+            if (legacyExpression.contains("typeHandler=") && !legacyExpression.contains("typeHandler=org.apache.ibatis.type.UnknownTypeHandler"))
                 issues.add("MyBatis-Plus custom type handler is not supported: " + field.name());
             String type = field.genericType().map(value -> value.substitute(bound.bindings())).filter(GenericType::concrete)
                     .map(GenericType::name).orElse(field.type());
@@ -104,8 +116,8 @@ final class PlusEntityMetadataReader {
             String selectColumn = related && !resultMap && !autoResultMap ? column + " AS " + property : column;
             var mapped = new EntityMapping.Field(property, column, selectColumn, type, key || bool(tableField, "select", true),
                     notDeleted, deleted, string(tableField, "fill", "DEFAULT"), field.annotations().containsKey(ANNOTATIONS + "Version"),
-                    strategy(tableId, "type", "NONE", options.idType()), strategy(tableField, "insertStrategy", "DEFAULT", options.insertStrategy()),
-                    strategy(tableField, "updateStrategy", "DEFAULT", options.updateStrategy()), string(tableField, "update", ""),
+                    idStrategy(tableId, issues), fieldStrategy(tableField, "insertStrategy", options.insertStrategy(), issues),
+                    fieldStrategy(tableField, "updateStrategy", options.updateStrategy(), issues), string(tableField, "update", ""),
                     bindingOptions(tableField), key && lineage.stream().anyMatch(value -> value.metadata().annotations().containsKey(ANNOTATIONS + "KeySequence")));
             fields.add(mapped);
             if (key) primaryKey = mapped;
@@ -153,6 +165,126 @@ final class PlusEntityMetadataReader {
         classes.put(type, loaded);
         return loaded;
     }
+
+    private List<BoundField> reflectedFields(List<BoundClass> lineage, List<String> issues) {
+        if (fieldCollection == null) {
+            var failures = new ArrayList<String>();fieldCollection = fieldCollection(failures);
+            fieldCollectionIssues = List.copyOf(failures);
+        }
+        issues.addAll(fieldCollectionIssues);
+        if (fieldCollection == FieldCollection.FILTERED_LIST) {
+            var result = new ArrayList<BoundField>();var names = new HashSet<String>();
+            for (BoundClass bound : lineage) for (var field : bound.metadata().fields()) {
+                if (instanceField(field) && names.add(field.name())) result.add(new BoundField(field, bound.bindings()));
+            }
+            return result;
+        }
+        if (fieldCollection == FieldCollection.HASH_MAP) {
+            List<BoundField> inherited = List.of();
+            for (int index = lineage.size() - 1; index >= 0; index--) {
+                BoundClass bound = lineage.get(index);
+                // 与目标Collectors.toMap两参数一致：先包含本类所有声明字段，再追加父类已过滤字段。
+                Map<String, BoundField> fields = bound.metadata().fields().stream().collect(Collectors.toMap(
+                        PlusClassMetadata.Field::name, field -> new BoundField(field, bound.bindings())));
+                for (BoundField parent : inherited) if (!fields.containsKey(parent.field().name())) fields.put(parent.field().name(), parent);
+                inherited = fields.values().stream().filter(field -> instanceField(field.field())).toList();
+            }
+            return inherited;
+        }
+        var result = new ArrayList<BoundField>();var names = new HashSet<String>();
+        for (BoundClass bound : lineage) for (var field : bound.metadata().fields()) {
+            if (names.add(field.name()) && instanceField(field)) result.add(new BoundField(field, bound.bindings()));
+        }
+        return result;
+    }
+
+    private FieldCollection fieldCollection(List<String> issues) {
+        var profiles = new LinkedHashMap<String, FieldCollection>();var calls = new LinkedHashSet<String>();
+        String owner = "com/baomidou/mybatisplus/core/toolkit/ReflectionKit";
+        try {
+            new ClassReader(PlusClassMetadata.classBytes(owner.replace('/', '.'), view)).accept(new ClassVisitor(Opcodes.ASM9) {
+                @Override public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+                    boolean merging = name.equals("excludeOverrideSuperField");
+                    boolean collecting = name.contains("getFieldList") || name.contains("GetFieldList");
+                    if (!merging && !collecting) return null;
+                    if (merging && Type.getReturnType(descriptor).getClassName().equals("java.util.List"))
+                        profiles.put(descriptor, FieldCollection.FILTERED_LIST);
+                    return new MethodVisitor(Opcodes.ASM9) {
+                        @Override public void visitMethodInsn(int opcode, String target, String method, String arguments, boolean isInterface) {
+                            if (collecting && target.equals(owner) && method.equals("excludeOverrideSuperField")) calls.add(arguments);
+                            if (merging && Type.getReturnType(descriptor).getClassName().equals("java.util.Map")
+                                    && target.equals("java/util/stream/Collectors") && method.equals("toMap") && Type.getArgumentTypes(arguments).length == 2)
+                                profiles.put(descriptor, FieldCollection.HASH_MAP);
+                        }
+                        @Override public void visitInvokeDynamicInsn(String method, String arguments, Handle bootstrap, Object... values) {
+                            if (!merging) return;
+                            for (Object value : values) if (value instanceof Handle handle && handle.getOwner().equals("java/util/LinkedHashMap"))
+                                profiles.put(descriptor, FieldCollection.LINKED_MAP);
+                        }
+                        @Override public void visitTypeInsn(int opcode, String target) {
+                            if (merging && opcode == Opcodes.NEW && target.equals("java/util/LinkedHashMap")) profiles.put(descriptor, FieldCollection.LINKED_MAP);
+                        }
+                    };
+                }
+            }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+            var selected = calls.stream().map(profiles::get).filter(Objects::nonNull).distinct().toList();
+            if (selected.size() == 1) return selected.getFirst();
+        } catch (IOException | RuntimeException failure) {
+            issues.add("MyBatis-Plus reflection field collection capabilities are unavailable: " + failure.getClass().getSimpleName());
+            return FieldCollection.LINKED_MAP;
+        }
+        issues.add("MyBatis-Plus reflection field collection strategy is not supported in target framework");
+        return FieldCollection.LINKED_MAP;
+    }
+
+    private static boolean instanceField(PlusClassMetadata.Field field) {
+        return (field.access() & (Opcodes.ACC_STATIC | Opcodes.ACC_TRANSIENT)) == 0;
+    }
+
+    private Map<String, Object> fieldAnnotation(PlusClassMetadata.Field field, List<String> issues) {
+        var declared = field.annotations().get(ANNOTATIONS + "TableField");
+        if (declared == null) return Map.of();
+        if (tableFieldDefaults == null) tableFieldDefaults = fieldAnnotationDefaults();
+        issues.addAll(tableFieldDefaults.issues());
+        var result = new LinkedHashMap<>(tableFieldDefaults.values());
+        result.putAll(declared);
+        return Map.copyOf(result);
+    }
+
+    private AnnotationDefaults fieldAnnotationDefaults() {
+        var result = new LinkedHashMap<String, Object>();
+        var issues = new ArrayList<String>();
+        try { result.putAll(metadata(ANNOTATIONS + "TableField").annotationDefaults()); }
+        catch (IOException | RuntimeException unavailable) {
+            // 完整Maven输入读取真实注解；只有core JAR的输入可由其实际字段策略能力恢复默认值。
+            try {
+                var configuration = metadata("com.baomidou.mybatisplus.core.config.GlobalConfig$DbConfig");
+                if (configuration.fields().stream().anyMatch(value -> value.name().equals("insertStrategy"))) {
+                    result.putAll(Map.of("insertStrategy", "DEFAULT", "updateStrategy", "DEFAULT", "whereStrategy", "DEFAULT"));
+                } else {
+                    boolean inherit = PlusClassMetadata.readsStaticField("com.baomidou.mybatisplus.core.metadata.TableFieldInfo",
+                            ANNOTATIONS + "FieldStrategy", "DEFAULT", view);
+                    result.put("strategy", inherit ? "DEFAULT" : "NOT_NULL");
+                }
+            } catch (IOException | RuntimeException failure) {
+                issues.add("MyBatis-Plus TableField annotation defaults are unavailable: " + failure.getClass().getSimpleName());
+            }
+        }
+        return new AnnotationDefaults(Map.copyOf(result), List.copyOf(issues));
+    }
+
+    private String idStrategy(Map<String, Object> annotation, List<String> issues) {
+        String value = strategy(annotation, "type", "NONE", options.idType());
+        try { return MybatisPlusOptions.normalizeIdType(value); }
+        catch (IllegalArgumentException failure) { issues.add(failure.getMessage()); return "INPUT"; }
+    }
+
+    private static String fieldStrategy(Map<String, Object> annotation, String name, String fallback, List<String> issues) {
+        String value = annotation.containsKey(name) ? strategy(annotation, name, "DEFAULT", fallback)
+                : strategy(annotation, "strategy", "DEFAULT", fallback);
+        try { return MybatisPlusOptions.normalizeFieldStrategy(value); }
+        catch (IllegalArgumentException failure) { issues.add(failure.getMessage()); return "NEVER"; }
+    }
     private static Map<String, GenericType> bindings(PlusClassMetadata metadata, GenericType type) {
         var result = new HashMap<String, GenericType>();
         for (int i = 0; i < Math.min(metadata.parameters().size(), type.arguments().size()); i++)
@@ -168,6 +300,9 @@ final class PlusEntityMetadataReader {
     }
     private static String bindingOptions(Map<String, Object> field) {
         var result = new StringBuilder();
+        String expression = string(field, "el", "");
+        int separator = expression.indexOf(',');
+        if (separator >= 0) result.append(',').append(expression.substring(separator + 1).strip());
         String jdbcType = string(field, "jdbcType", "UNDEFINED");
         if (!jdbcType.equals("UNDEFINED")) result.append(",jdbcType=").append(jdbcType);
         String scale = Objects.toString(field.getOrDefault("numericScale", ""));
@@ -195,4 +330,6 @@ final class PlusEntityMetadataReader {
     }
     private record BoundClass(PlusClassMetadata metadata, Map<String, GenericType> bindings) {}
     private record BoundField(PlusClassMetadata.Field field, Map<String, GenericType> bindings) {}
+    private record AnnotationDefaults(Map<String, Object> values, List<String> issues) {}
+    private enum FieldCollection { FILTERED_LIST, HASH_MAP, LINKED_MAP }
 }

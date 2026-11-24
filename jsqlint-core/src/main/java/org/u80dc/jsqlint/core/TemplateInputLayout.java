@@ -16,7 +16,7 @@ public record TemplateInputLayout(Map<String, String> aliases, Optional<String> 
         constants = SqlValueSnapshots.parameters(constants);
         renderAliases = Collections.unmodifiableMap(new LinkedHashMap<>(renderAliases));
         for (String name : renderAliases.keySet())
-            if (aliases.containsKey(name) || constants.containsKey(name) || parameterMapName.filter(name::equals).isPresent())
+            if (aliases.containsKey(name) || parameterMapName.filter(name::equals).isPresent())
                 throw new IllegalArgumentException("Template render alias conflicts with a business or reserved name: " + name);
     }
     @Override public Map<String, Object> constants() { return SqlValueSnapshots.parameters(constants); }
@@ -29,8 +29,9 @@ public record TemplateInputLayout(Map<String, String> aliases, Optional<String> 
         var activity = new HashMap<String, Object>();
         aliases.forEach((alias, key) -> values.put(alias, value(model, key, activity)));
         parameterMapName.ifPresent(name -> values.put(name, Collections.unmodifiableMap(new LinkedHashMap<>(values))));
-        values.putAll(constants());
         renderAliases.forEach((alias, key) -> values.put(alias, value(model, key, activity)));
+        // 已恢复的结构常量优先，渲染别名继续保存其Java来源；两者均不进入业务参数Map。
+        values.putAll(constants());
         if (fallback.isEmpty()) return Collections.unmodifiableMap(values);
         Object single = value(model, fallback.get(), activity);
         return Collections.unmodifiableMap(new AbstractMap<>() {

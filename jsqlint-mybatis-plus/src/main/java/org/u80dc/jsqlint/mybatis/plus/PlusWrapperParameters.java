@@ -23,10 +23,13 @@ final class PlusWrapperParameters {
     private final DataFlowAnalysis flow;
     private final MybatisOptions options;
     private final Map<String,TemplateSqlInput.Parameter> parameters=new LinkedHashMap<>();
+    private final Map<String,Object> structuralConstants=new LinkedHashMap<>();
     private final List<String> issues=new ArrayList<>();
     private final Set<String> reserved=new HashSet<>();
     private int names;
     private EntityMapping entity;
+    private String operation;
+    private Map<String, String> metadata = Map.of();
     private record Step(FlowPoint point, AbstractInstanceInvokeExpr invocation) {}
     private record History(List<Step> steps,List<String> issues) {
         History { steps=List.copyOf(steps); issues=List.copyOf(issues); }
@@ -49,6 +52,8 @@ final class PlusWrapperParameters {
     SqlTraceSource resolve(EntityMapping entity,String operation,SqlDefinition original,FlowPoint point,
             org.u80dc.jsqlint.mybatis.spi.MapperMethodContext context,List<? extends sootup.core.jimple.common.Value> arguments) {
         this.entity=entity;
+        this.operation=operation;
+        this.metadata=original.metadata();
         issues.addAll(original.issues());
         if(!original.complete())return SqlTraceSource.template(new TemplateSqlInput(original,Map.of(),Optional.empty()),issues);
         entity.fields().forEach(field->reserved.add(field.property()));
@@ -73,13 +78,17 @@ final class PlusWrapperParameters {
         if (operation.equals("delete") && entity.logicDelete().isPresent()) {
             var logic=entity.logicDelete().get(); set=xml(logic.column()+"="+literal(logic.logicDeleted(),logic.type())+",");
         }
-        String columns=parts.columns().isEmpty()?columns(entity,operation):parts.columns();
+        String columns=operation.equals("selectCount") ? countColumns(parts.columns())
+                : parts.columns().isEmpty()?columns(entity,operation):parts.columns();
         String where=parts.where();
+        boolean grouped=Boolean.parseBoolean(original.metadata().getOrDefault("wrapperGrouped","true"));
         if(entity.logicDelete().isPresent()) {
             var logic=entity.logicDelete().get();
             where=xml(logic.column()+(logic.logicNotDeleted().equalsIgnoreCase("null")?" IS NULL":"="+literal(logic.logicNotDeleted(),logic.type())))
-                    +"<trim prefix=' AND (' suffix=')' prefixOverrides='AND |OR ' suffixOverrides='AND |OR '>"+where+"</trim>";
-        } else where="<trim prefix='(' suffix=')' prefixOverrides='AND |OR ' suffixOverrides='AND |OR '>"+where+"</trim>";
+                    +"<trim prefix='"+(grouped?" AND (":" AND ")+"' suffix='"+(grouped?")":"")
+                    +"' prefixOverrides='AND |OR ' suffixOverrides='AND |OR '>"+where+"</trim>";
+        } else where="<trim prefix='"+(grouped?"(":"")+"' suffix='"+(grouped?")":"")
+                +"' prefixOverrides='AND |OR ' suffixOverrides='AND |OR '>"+where+"</trim>";
         String sql="<script>"+head(entity,operation,columns)
                 +(operation.equals("update")||operation.equals("delete")&&entity.logicDelete().isPresent()?" <set>"+set+"</set>":"")
                 +" <where>"+where+"</where> "+parts.order()+"</script>";
@@ -90,7 +99,7 @@ final class PlusWrapperParameters {
             parameters.put("et",entitySource.templateInput().orElseThrow().parameters().get("_parameter"));
             issues.addAll(entitySource.issues());
         }
-        return SqlTraceSource.template(new TemplateSqlInput(definition,parameters,Optional.empty()),issues.stream().distinct().toList());
+        return SqlTraceSource.template(new TemplateSqlInput(definition,parameters,Optional.empty(),Optional.empty(),structuralConstants),issues.stream().distinct().toList());
     }
     private SqlTraceSource explicit(SqlDefinition original,FlowPoint point,org.u80dc.jsqlint.mybatis.spi.MapperMethodContext context,
                                    List<? extends sootup.core.jimple.common.Value> arguments) {
@@ -111,6 +120,9 @@ final class PlusWrapperParameters {
         while(!pending.isEmpty()&&++count<=10000) {
             flow.checkpoint();var node=pending.removeLast();
             if(node instanceof org.u80dc.jsqlint.core.node.BindSqlNode bind)reserved.add(bind.name());
+            if(node instanceof org.u80dc.jsqlint.core.node.ForEachSqlNode loop) {
+                reserved.add(loop.item());reserved.add(loop.index());
+            }
             pending.addAll(org.u80dc.jsqlint.core.node.SqlNodeGraphs.children(node));
         }
         var parts=parts(input,flow,false,0);var replacements=new HashMap<String,org.u80dc.jsqlint.core.node.SqlNode>();
@@ -124,7 +136,8 @@ final class PlusWrapperParameters {
         try{template=new PlusTemplateSegments(replacements,flow::checkpoint).replace(template);}catch(IllegalArgumentException failure){issues.add(failure.getMessage());}
         var definition=new SqlDefinition(original.id(),original.location(),template,original.evaluator(),original.metadata(),issues);
         issues.addAll(standard.issues());
-        return SqlTraceSource.template(new TemplateSqlInput(definition,base.parameters(),base.fallback(),base.parameterMapName(),base.constants(),base.sqlSource(),parameters),issues.stream().distinct().toList());
+        var constants=new LinkedHashMap<>(base.constants());constants.putAll(structuralConstants);
+        return SqlTraceSource.template(new TemplateSqlInput(definition,base.parameters(),base.fallback(),base.parameterMapName(),constants,base.sqlSource(),parameters),issues.stream().distinct().toList());
     }
     private org.u80dc.jsqlint.core.node.SqlNode segment(String text) {
         var definition=MybatisSqlTemplates.definition("wrapper-segment",new SourceLocation(java.net.URI.create("java:wrapper"),"segment"),"<script>"+text+"</script>",options,Map.of(),List.of());
@@ -243,6 +256,9 @@ final class PlusWrapperParameters {
                 String prefix=method.equals("or")?"OR":method.equals("and")?"AND":connector(pendingOr);
                 where.append(wrap(" "+prefix+" "+(method.equals("not")?"NOT ":"")+group(nested.where()),condition)); pendingOr=remainingOr(pendingOr,condition);continue;
             }
+            if(method.equals("select") && operation.equals("selectCount")
+                    && metadata.getOrDefault("framework", "").equals("mybatis-plus")
+                    && !Boolean.parseBoolean(metadata.getOrDefault("countSelectColumns", "true"))) continue;
             if(Set.of("orderByAsc","orderByDesc","groupBy","select").contains(method) && arguments.size()>offset) {
                 var expressions=new ArrayList<String>();
                 String suffix=method.equals("orderByAsc")?" ASC":method.equals("orderByDesc")?" DESC":"";
@@ -365,7 +381,11 @@ final class PlusWrapperParameters {
             },end->{if(end.end()!=End.FOUND||!end.issues().isEmpty())failures.add("Lambda column array history incomplete");});
             if(failures.isEmpty()&&sources.size()==1)return column(sources.getFirst(),analysis,select);
         }
-        if(value.value().getType().toString().equals("java.lang.String")) return slot(value,"java.lang.String",analysis);
+        if(value.value().getType().toString().equals("java.lang.String")) {
+            String name=slot(value,"java.lang.String",analysis);
+            literalColumn(value,analysis).ifPresent(column -> structuralConstants.put(name,column));
+            return name;
+        }
         var origins=analysis.origins(value,site->site.invocation() instanceof JDynamicInvokeExpr);
         if(origins.complete()&&origins.values().size()==1&&origins.values().getFirst().value() instanceof JDynamicInvokeExpr dynamic
                 && dynamic.getArgCount()==0 && dynamic.getBootstrapMethodSignature().getDeclClassType().toString().equals("java.lang.invoke.LambdaMetafactory")) {
@@ -386,15 +406,25 @@ final class PlusWrapperParameters {
                     }
                     if(field.isPresent()&&matches) {
                         var variable=value.snapshot(analysis.program()).withType("java.lang.String");String parameter=nextName();
+                        String column=select?field.get().selectColumn():field.get().column();
                         parameters.put(parameter,new TemplateSqlInput.Parameter(new ValueTrace(variable,value.point().context().snapshot(),
                                 new ValueTrace.Node(variable,ValueTrace.Kind.CONSTANT,"Lambda column: "+getter,List.of(),
-                                        new ValueTrace.Computation(ValueTrace.Operation.LITERAL,select?field.get().selectColumn():field.get().column()))),"java.lang.String"));
+                                        new ValueTrace.Computation(ValueTrace.Operation.LITERAL,column))),"java.lang.String"));
+                        structuralConstants.put(parameter,column);
                         return parameter;
                     }
                 }
             }
         }
         String reason="Lambda column method reference is unresolved or does not map to the entity: "+value.value();issues.add(reason);return unknown(reason,value);
+    }
+    private static Optional<String> literalColumn(ValuePoint value,DataFlowAnalysis analysis) {
+        if(value.value() instanceof StringConstant constant)return Optional.of(constant.getValue());
+        var origins=analysis.origins(value,ignored -> false);
+        if(!origins.complete()||origins.values().isEmpty()||origins.values().stream().anyMatch(input -> !(input.value() instanceof StringConstant)))
+            return Optional.empty();
+        var columns=origins.values().stream().map(input -> ((StringConstant)input.value()).getValue()).distinct().toList();
+        return columns.size()==1?Optional.of(columns.getFirst()):Optional.empty();
     }
     private Optional<List<ValuePoint>> elements(ValuePoint value,DataFlowAnalysis analysis,int depth) {
         analysis.checkpoint();if(depth>16)return Optional.empty();
@@ -427,11 +457,14 @@ final class PlusWrapperParameters {
         return operation.equals("delete")?"DELETE FROM "+xml(entity.table()):"SELECT "+columns+" FROM "+xml(entity.table());
     }
     private static String columns(EntityMapping entity,String operation) {
-        if(operation.equals("selectCount")) return "COUNT( * ) AS total";
         var fields=new ArrayList<EntityMapping.Field>();entity.primaryKey().ifPresent(fields::add);
         entity.fields().stream().filter(EntityMapping.Field::select).filter(field->!entity.primaryKey().filter(field::equals).isPresent()).forEach(fields::add);
-        if(operation.equals("selectObjs")) return fields.isEmpty()?"*":xml(fields.getFirst().selectColumn());
         return xml(String.join(",",fields.stream().map(EntityMapping.Field::selectColumn).toList()));
+    }
+    private String countColumns(String selected) {
+        boolean useSelection=Boolean.parseBoolean(metadata.getOrDefault("countSelectColumns", "false"));
+        String expression=useSelection&&!selected.isEmpty()?selected:xml(metadata.getOrDefault("countExpression", "*"));
+        return "COUNT( " + expression + " )" + xml(metadata.getOrDefault("countSuffix", ""));
     }
     private static String literal(String value,String type) { return type.equals("java.lang.String")&&!value.equalsIgnoreCase("null")?"'"+value+"'":value; }
     private static String xml(String text) { return text.replace("&","&amp;").replace("<","&lt;").replace("\"","&quot;"); }

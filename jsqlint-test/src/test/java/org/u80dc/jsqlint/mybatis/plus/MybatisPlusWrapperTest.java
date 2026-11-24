@@ -26,6 +26,10 @@ class MybatisPlusWrapperTest {
         verify("selectList",false,"boolean include=false;w.eq(\"id\",\"one\").or().eq(include,\"name\",\"ignored\").gt(\"age\",30);",true);
         verify("selectList",false,"boolean include=true;w.eq(\"id\",\"one\").or(include).gt(\"age\",30);",true);
     }
+    @Test void countSelectionAndObjectSelectionMatchFramework() throws Exception {
+        verify("selectCount",false,"w.select(\"name\").eq(\"age\",18);",true);
+        verify("selectObjs",false,"w.eq(\"age\",18);",true);
+    }
     @Test void nestedConsumerAndCapturedValueMatchFramework() throws Exception {
         verify("selectList",false,"String name=\"Alice\";w.eq(\"id\",\"one\").and(child->child.eq(\"name\",name).or().gt(\"age\",20)).or(child->child.isNull(\"name\").lt(\"age\",10));",true);
     }
