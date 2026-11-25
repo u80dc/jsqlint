@@ -4,6 +4,8 @@ import org.jspecify.annotations.Nullable;
 import org.u80dc.jsqlint.commons.compiler.GradleProjectCompiler;
 import org.u80dc.jsqlint.commons.compiler.JavaSourceFiles;
 import org.u80dc.jsqlint.commons.compiler.MavenProjectCompiler;
+import org.u80dc.jsqlint.commons.compiler.ProjectCompiler;
+import org.u80dc.jsqlint.core.spi.AnalysisInputPlan;
 import org.u80dc.jsqlint.core.resource.PathResourceSource;
 import org.u80dc.jsqlint.core.spi.AnalysisInputContext;
 import org.u80dc.jsqlint.core.spi.AnalysisInputOptions;
@@ -49,6 +51,26 @@ public final class AutoCompileInputResolver implements AnalysisInputResolver {
     }
 
     @Override
+    public boolean supports(Path source, @Nullable AnalysisInputOptions inputOptions) throws Exception {
+        if (inputOptions instanceof InputLocationOptions configured)
+            return configured.compiledProjectManifest() != null && Files.isDirectory(source) || supports(source);
+        return options.compiledProjectManifest() != null && inputOptions == null && Files.isDirectory(source) || supports(source);
+    }
+
+    @Override
+    public AnalysisInputPlan plan(Path source, @Nullable AnalysisInputOptions inputOptions,
+                                   AnalysisInputContext context) {
+        var effective = effective(inputOptions);
+        boolean managed = effective.buildPolicy() == BuildPolicy.ALWAYS;
+        return new AnalysisInputPlan() {
+            public boolean requiresManagedClassOutputDirectory() { return managed; }
+            public PreparedInput resolve(@Nullable Path output, AnalysisInputContext execution) {
+                return AutoCompileInputResolver.this.resolve(source, output, effective, execution);
+            }
+        };
+    }
+
+    @Override
     public PreparedInput resolve(Path source, Runnable checkpoint) {
         return resolve(source, null, checkpoint);
     }
@@ -70,11 +92,12 @@ public final class AutoCompileInputResolver implements AnalysisInputResolver {
     public PreparedInput resolve(Path source, @Nullable Path classOutputDirectory,
                                  @Nullable AnalysisInputOptions inputOptions, AnalysisInputContext context) {
         Objects.requireNonNull(context, "context").checkpoint().run();
-        if (inputOptions != null && !(inputOptions instanceof InputLocationOptions)) {
-            throw new IllegalArgumentException("AutoCompileInputResolver requires InputLocationOptions, got "
-                    + inputOptions.getClass().getName());
+        InputLocationOptions configured = effective(inputOptions);
+        if (configured.buildPolicy() != BuildPolicy.ALWAYS) {
+            var project = ProjectCompiler.compile(source, configured, context);
+            try { return ProjectInputs.open(project, false); }
+            catch (Exception e) { throw new AnalysisInputException("Cannot open compiled project: " + source, e); }
         }
-        InputLocationOptions configured = inputOptions == null ? options : (InputLocationOptions) inputOptions;
         // Analyzer 生成的输出路径优先，仓库、构建参数等输入配置随新选项完整保留。
         InputLocationOptions effectiveOptions = classOutputDirectory == null
                 ? configured : configured.withClassOutputDirectory(classOutputDirectory);
@@ -92,5 +115,12 @@ public final class AutoCompileInputResolver implements AnalysisInputResolver {
                     return false;
             return true;
         })));
+    }
+
+    private InputLocationOptions effective(@Nullable AnalysisInputOptions inputOptions) {
+        if (inputOptions != null && !(inputOptions instanceof InputLocationOptions))
+            throw new IllegalArgumentException("AutoCompileInputResolver requires InputLocationOptions, got "
+                    + inputOptions.getClass().getName());
+        return inputOptions == null ? options : (InputLocationOptions) inputOptions;
     }
 }

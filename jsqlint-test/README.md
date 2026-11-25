@@ -148,7 +148,7 @@ MySQL 回归覆盖 CASE/END、LIMIT/OFFSET、VALUE、锁定子句、窗口边界
 用例要求恢复 `node_id = ?` 的查询 SQL，同时在 EXTRACT 模式保留未知的入口 `nodeId` 绑定。
 发现阶段保留 `lambdaQuery`、Lambda 引用及 `eq` 的三条 `METHOD_SCOPE_UNRESOLVED` 诊断；
 用例逐条校验这些具体调用，SQL 来源和文本需完整。
-该用例默认禁用，显式运行：
+该用例默认禁用，启用后默认采用 AUTO 构建缓存；最简命令无需指定 `build-policy`：
 
 ```powershell
 .\mvnw.cmd -T 1 -pl jsqlint-test -am `
@@ -157,6 +157,39 @@ MySQL 回归覆盖 CASE/END、LIMIT/OFFSET、VALUE、锁定子句、窗口边界
   '-Djsqlint.dpm.test=true' `
   '-Dmaven.test.skip=false' '-DskipTests=false' test
 ```
+
+该用例还支持以下项目缓存参数，项目路径及私服继续通过 `jsqlint.dpm.project`、`jsqlint.dpm.repository` 配置：
+
+| 系统属性 | 默认值及作用 |
+| --- | --- |
+| `jsqlint.dpm.build-policy` | `AUTO`；可选 `ALWAYS`、`AUTO`、`REUSE`，忽略大小写及前后空白。ALWAYS 每次构建，AUTO 校验并复用缓存，REUSE 读取配置匹配的历史快照 |
+| `jsqlint.dpm.cache-directory` | `${java.io.tmpdir}/.jsqlint-project-cache`；未设置或为空白时使用默认值。建议给跨进程运行指定同一绝对缓存根目录 |
+
+AUTO 是该测试的默认策略；commons 的 `InputLocationOptions.defaults()` 仍使用 `BuildPolicy.ALWAYS`。
+
+用完全相同的 AUTO 参数连续运行两次，可以检查目标项目的冷构建及热缓存复用：
+
+```powershell
+.\mvnw.cmd -T 1 -pl jsqlint-test -am `
+  '-Dtest=NodeConnConfigServiceProjectAnalysisTest' `
+  '-Djsqlint.dpm.test=true' `
+  '-Djsqlint.dpm.cache-directory=D:/JavaProjects/jsqlint/target/dpm-project-cache' `
+  '-Dsurefire.failIfNoSpecifiedTests=false' `
+  '-Dmaven.test.skip=false' '-DskipTests=false' test
+```
+
+首次缓存缺失时构建；再次按原样执行，输入、依赖、构建配置未变化且未超过 TTL 时复用。
+报告包含本次 Analyzer 请求的阶段统计和缓存计数：冷构建产生 `COMPILATION` 与 `project.cache.miss`，
+热复用产生 `project.cache.hit`、`project.outputs.reused`，不执行目标项目的 `COMPILATION`。
+外层运行测试的 jsqlint Maven 构建时间不计入该报告；复用后仍重新创建分析视图并执行 SQL 分析。
+
+REUSE 跳过当前源码新鲜度和 TTL 校验，缺失或损坏的缓存明确失败。
+上面的 AUTO 命令建立快照后，添加 `'-Djsqlint.dpm.build-policy=REUSE'` 即可读取同一配置下的历史产物。
+测试控制属性在分析前已转换为输入选项，外层 Maven 启动命令不参与目标项目的构建身份。
+AUTO 的默认 TTL 为 24 小时；库 API 可用 `withCacheMaxAge(Duration.ZERO)` 取消时间过期，内容校验仍执行。
+插件的隐式项目外输入需通过 `withAdditionalBuildInputs(List<Path>)` 补充，该选项只扩展内容校验，
+不改变 Maven/Gradle 的源目录或依赖配置。直接打开产物、清单 REUSE、AUTO 缓存的三阶段示例见
+[commons 产物复用说明](../jsqlint-commons/README.md#复用已编译项目)。
 
 MyBatis-Plus 第一阶段测试 `MybatisPlusAnalysisTest` 使用真实 3.5.16 框架生成的 BoundSql，
 对照静态定义、继承 CRUD 调用、泛型实体、字段映射、逻辑删除、显式覆盖及会话隔离。
@@ -256,6 +289,10 @@ UNKNOWN 样例标明尚未证明可行，无解候选不生成模拟 SQL。未�
 Gradle 集成测试可以通过 `'-Djsqlint.test.gradle.home=C:\path\to\gradle'` 指定已有 Gradle 安装，
 否则使用 Tooling API 的默认发行版，首次运行可能下载。其余基于临时项目的 Maven 输出目录测试使用离线模式，
 依赖当前构建已解析的编译插件。详细输入行为见 [commons 使用说明](../jsqlint-commons/README.md)。
+
+`ProjectReuseIntegrationTest` 验证 Maven/Gradle 的冷构建、缓存命中及输入变更重建；其中 Gradle 用例需要上述本地安装参数。
+Maven 生成源码用例使用真实 `replacer:1.5.3` 插件，首次运行可能从 Maven Central 下载，
+并验证项目外模板、源码目录中的生成文件及普通源码的缓存边界。
 
 ## MyBatis 共享样例分析
 

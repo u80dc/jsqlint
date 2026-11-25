@@ -6,6 +6,22 @@ import java.util.concurrent.atomic.AtomicLong;
 import static org.junit.jupiter.api.Assertions.*;
 
 class StatisticsRecorderTest {
+    @Test void extensionMeasurementsAreRequestLocalAndFreezeWithTheSnapshot() {
+        var clock = new AtomicLong();
+        var recorder = new StatisticsRecorder(clock::get);
+        recorder.recordMeasurement("project.cache.hit", 1, AnalysisStatistics.Unit.COUNT, AnalysisStatistics.Scope.REQUEST);
+        clock.set(5);
+        var saved = recorder.snapshot().orElseThrow();
+        recorder.recordMeasurement("project.cache.hit", 2, AnalysisStatistics.Unit.COUNT, AnalysisStatistics.Scope.REQUEST);
+        assertEquals(new AnalysisStatistics.Measurement(1, AnalysisStatistics.Unit.COUNT, AnalysisStatistics.Scope.REQUEST),
+                saved.measurements().get("project.cache.hit"));
+        assertSame(saved, recorder.snapshot().orElseThrow());
+        var independent = new StatisticsRecorder(clock::get);
+        assertTrue(independent.snapshot().orElseThrow().measurements().isEmpty());
+        StatisticsRecorder.none().recordMeasurement("project.cache.hit", 1, AnalysisStatistics.Unit.COUNT, AnalysisStatistics.Scope.REQUEST);
+        assertTrue(StatisticsRecorder.none().snapshot().isEmpty());
+    }
+
     @Test void nestedCategoriesHaveExclusiveCostsAndUnmeasuredTimeIsAccounted() {
         var clock = new AtomicLong();
         var recorder = new StatisticsRecorder(clock::get);

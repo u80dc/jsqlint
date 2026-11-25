@@ -5,6 +5,7 @@ import org.gradle.tooling.GradleConnector;
 import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
 import org.u80dc.jsqlint.commons.location.AnalysisInputException;
+import org.u80dc.jsqlint.commons.location.BuildPolicy;
 import org.u80dc.jsqlint.commons.location.InputLocationOptions;
 import org.u80dc.jsqlint.commons.location.InputMode;
 import org.u80dc.jsqlint.core.statistics.StatisticsRecorder;
@@ -26,6 +27,7 @@ import java.util.stream.Stream;
 
 import static org.u80dc.jsqlint.core.AnalysisStatistics.Phase.COMPILATION;
 import static org.u80dc.jsqlint.core.AnalysisStatistics.Phase.CLEANUP;
+import static org.u80dc.jsqlint.core.AnalysisStatistics.Phase.PREPARATION;
 
 /**
  * 用临时 init script 读取 Gradle 实际 main source set 产物，不修改项目构建文件。
@@ -47,26 +49,48 @@ public final class GradleProjectCompiler {
     }
 
     public static CompiledProject compile(Path root, InputLocationOptions options, StatisticsRecorder statisticsRecorder) throws IOException {
+        if (options.buildPolicy() != BuildPolicy.ALWAYS)
+            return ProjectCompiler.compile(root, options.withInputMode(InputMode.GRADLE_PROJECT), statisticsRecorder);
+        return compileFresh(root, options, statisticsRecorder);
+    }
+
+    static CompiledProject compileFresh(Path root, InputLocationOptions options, StatisticsRecorder statisticsRecorder) throws IOException {
         Objects.requireNonNull(statisticsRecorder, "statisticsRecorder");
         if (!isProject(root)) throw new AnalysisInputException("No Gradle build files: " + root);
         Path temporary = Files.createTempDirectory("jsqlint-gradle-");
+        ProjectBuildObserver observer = ProjectCompiler.buildObserver();
         GradleConnector connector = GradleConnector.newConnector().forProjectDirectory(root.toFile());
         try {
+            if (observer != null) observer.observe(List.of(), List.of(temporary));
             if (options.gradleInstallation() != null) {
                 connector.useInstallation(options.gradleInstallation().toFile());
             } else {
                 connector.useBuildDistribution();
             }
             Path metadata = temporary.resolve("outputs.properties");
+            Path inputMetadata = observer == null ? null : temporary.resolve("inputs.properties");
             Path script = temporary.resolve("compile.gradle");
             String taskName = "jsqlintCompile_" + UUID.randomUUID().toString().replace("-", "");
-            Files.writeString(script, initScript(taskName, metadata, options.classOutputDirectory()), StandardCharsets.UTF_8);
+            Files.writeString(script, initScript(taskName, metadata, options.classOutputDirectory(), inputMetadata), StandardCharsets.UTF_8);
             var arguments = new ArrayList<>(options.buildArguments());
             arguments.addAll(List.of("--init-script", script.toString(), "--console=plain", "--no-configuration-cache"));
             var output = new BuildLog();
             try {
                 var connection = connector.connect();
                 try (var closeConnection = measuredClose(connection, statisticsRecorder)) {
+                    if (observer != null) {
+                        try (var preparation = statisticsRecorder.measure(PREPARATION)) {
+                            connection.newBuild().forTasks(":" + taskName + "Inputs").withArguments(arguments.toArray(String[]::new))
+                                    .setStandardOutput(output).setStandardError(output).run();
+                            if (!Files.isRegularFile(inputMetadata))
+                                throw new AnalysisInputException("Gradle did not report its build inputs: " + root);
+                            var inputProperties = new Properties();
+                            try (var reader = Files.newBufferedReader(inputMetadata, StandardCharsets.UTF_8)) {
+                                inputProperties.load(reader);
+                            }
+                            observer.observe(paths(inputProperties, "input"), paths(inputProperties, "output"));
+                        }
+                    }
                     var build = connection.newBuild().forTasks(":" + taskName).withArguments(arguments.toArray(String[]::new))
                             .setStandardOutput(output).setStandardError(output);
                     try (var compilation = statisticsRecorder.measure(COMPILATION)) {
@@ -86,7 +110,8 @@ public final class GradleProjectCompiler {
             }
             var dependencies = new ArrayList<>(options.classpath());
             dependencies.addAll(paths(properties, "dependency"));
-            return CompiledProject.fromOutputs(root, InputMode.GRADLE_PROJECT, paths(properties, "classes"), dependencies);
+            return CompiledProject.fromOutputs(root, InputMode.GRADLE_PROJECT, paths(properties, "classes"), dependencies,
+                    paths(properties, "resource"));
         } finally {
             try (var cleanup = statisticsRecorder.measure(CLEANUP)) {
                 connector.disconnect();
@@ -139,7 +164,7 @@ public final class GradleProjectCompiler {
                 .replace("\r", "\\r").replace("\n", "\\n") + "'";
     }
 
-    private static String initScript(String taskName, Path metadata, Path classOutputDirectory) {
+    private static String initScript(String taskName, Path metadata, Path classOutputDirectory, Path inputMetadata) {
         return """
                 gradle.projectsEvaluated {
                     def mainSets = gradle.rootProject.allprojects.collect { p ->
@@ -167,16 +192,21 @@ public final class GradleProjectCompiler {
                             entry.sourceSet.output.classesDirs.builtBy(compilers)
                         }
                     }
+                    %s
                     gradle.rootProject.tasks.register('%s') {
                         dependsOn mainSets.collect { it.project.tasks.named(it.sourceSet.classesTaskName) }
                         dependsOn mainSets.collect { it.sourceSet.compileClasspath }
                         dependsOn mainSets.collect { it.sourceSet.runtimeClasspath }
                         doLast {
                             def classes = new LinkedHashSet<File>()
+                            def resources = new LinkedHashSet<File>()
                             def dependencies = new LinkedHashSet<File>()
                             def ownOutputs = new LinkedHashSet<File>()
                             mainSets.each { entry ->
                                 classes.addAll(entry.sourceSet.output.classesDirs.files)
+                                resources.addAll(entry.sourceSet.output.classesDirs.files)
+                                def resourceOutput = entry.sourceSet.output.resourcesDir
+                                if (resourceOutput != null) resources.add(resourceOutput)
                                 ownOutputs.addAll(entry.sourceSet.output.files)
                                 def jar = entry.project.tasks.findByName('jar')
                                 if (jar instanceof org.gradle.api.tasks.bundling.Jar) ownOutputs.add(jar.archiveFile.get().asFile)
@@ -186,14 +216,78 @@ public final class GradleProjectCompiler {
                             dependencies.removeAll(ownOutputs)
                             def properties = new Properties()
                             properties.setProperty('classes.count', classes.size().toString())
+                            properties.setProperty('resource.count', resources.size().toString())
                             properties.setProperty('dependency.count', dependencies.size().toString())
                             classes.eachWithIndex { file, i -> properties.setProperty('classes.' + i, file.absolutePath) }
+                            resources.eachWithIndex { file, i -> properties.setProperty('resource.' + i, file.absolutePath) }
                             dependencies.eachWithIndex { file, i -> properties.setProperty('dependency.' + i, file.absolutePath) }
                             new File(%s).withWriter('UTF-8') { writer -> properties.store(writer, 'JSQLint main outputs') }
                         }
                     }
                 }
                 """.formatted(classOutputDirectory == null ? "null" : groovyString(classOutputDirectory),
-                        taskName, groovyString(metadata));
+                        inputProbe(taskName, inputMetadata), taskName, groovyString(metadata));
+    }
+
+    private static String inputProbe(String taskName, Path metadata) {
+        if (metadata == null) return "";
+        return """
+                gradle.rootProject.tasks.register('%s') {
+                    doLast {
+                        def inputs = new LinkedHashSet<File>()
+                        def outputs = new LinkedHashSet<File>()
+                        gradle.rootProject.allprojects.each { project ->
+                            inputs.add(project.projectDir)
+                            inputs.add(project.buildFile)
+                            outputs.add(project.layout.buildDirectory.get().asFile)
+                        }
+                        mainSets.each { entry ->
+                            inputs.addAll(entry.sourceSet.allSource.srcDirs)
+                            outputs.addAll(entry.sourceSet.output.classesDirs.files)
+                            outputs.addAll(entry.sourceSet.output.files)
+                            def resourceOutput = entry.sourceSet.output.resourcesDir
+                            if (resourceOutput != null) outputs.add(resourceOutput)
+                            def jar = entry.project.tasks.findByName('jar')
+                            if (jar instanceof org.gradle.api.tasks.bundling.Jar) outputs.add(jar.archiveFile.get().asFile)
+                        }
+                        def external = { files ->
+                            files.each { file ->
+                                def path = file.toPath().toAbsolutePath().normalize()
+                                if (file.exists() && !outputs.any { path.startsWith(it.toPath().toAbsolutePath().normalize()) })
+                                    inputs.add(file)
+                            }
+                        }
+                        def configurationFiles = { configuration ->
+                            if (configuration != null) {
+                                def view = configuration.incoming.artifactView {
+                                    componentFilter { id -> !(id instanceof org.gradle.api.artifacts.component.ProjectComponentIdentifier) }
+                                }
+                                external(view.files.files)
+                            }
+                        }
+                        gradle.rootProject.allprojects.each { project ->
+                            configurationFiles(project.buildscript.configurations.findByName('classpath'))
+                        }
+                        mainSets.each { entry ->
+                            if (entry.sourceSet.hasProperty('annotationProcessorPath')) {
+                                def processors = entry.sourceSet.annotationProcessorPath
+                                if (processors instanceof org.gradle.api.artifacts.Configuration)
+                                    configurationFiles(processors)
+                                else if (processors != null) external(processors.files)
+                            }
+                        }
+                        inputs.removeAll { file ->
+                            def path = file.toPath().toAbsolutePath().normalize()
+                            outputs.any { path.startsWith(it.toPath().toAbsolutePath().normalize()) }
+                        }
+                        def properties = new Properties()
+                        properties.setProperty('input.count', inputs.size().toString())
+                        properties.setProperty('output.count', outputs.size().toString())
+                        inputs.eachWithIndex { file, i -> properties.setProperty('input.' + i, file.absolutePath) }
+                        outputs.eachWithIndex { file, i -> properties.setProperty('output.' + i, file.absolutePath) }
+                        new File(%s).withWriter('UTF-8') { writer -> properties.store(writer, 'JSQLint build inputs') }
+                    }
+                }
+                """.formatted(taskName + "Inputs", groovyString(metadata));
     }
 }

@@ -6,6 +6,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.u80dc.jsqlint.commons.compiler.CompiledProject;
+import org.u80dc.jsqlint.commons.compiler.GradleProjectCompiler;
+import org.u80dc.jsqlint.commons.compiler.MavenProjectCompiler;
 import org.u80dc.jsqlint.commons.compiler.ProjectCompiler;
 import org.u80dc.jsqlint.core.AnalysisStatistics;
 import org.u80dc.jsqlint.core.AnalysisStatisticsOptions;
@@ -34,6 +37,32 @@ import static org.u80dc.jsqlint.commons.location.AutoCompileAnalysisInputLocatio
  */
 class AutoCompileAnalysisInputLocationTest {
     @TempDir Path temporary;
+
+    @Test
+    void compiledProjectKeepsIndependentResourceOutputsAndLegacyConstructor() throws Exception {
+        Path classes = fixture("compiled-metadata", "Example.java", "public class Example {}");
+        Path library = jar(fixture("metadata-library", "Helper.java", "public class Helper {}"));
+        Path first = Files.createDirectories(temporary.resolve("first-resources"));
+        Path second = Files.createDirectories(temporary.resolve("second-resources"));
+        var classDirectories = new ArrayList<>(List.of(classes));
+        var dependencies = new ArrayList<>(List.of(library));
+        var resourceRoots = new ArrayList<>(List.of(first, second));
+        var legacy = new CompiledProject(temporary, InputMode.MAVEN_PROJECT, classDirectories, dependencies);
+        var explicit = new CompiledProject(temporary, InputMode.MAVEN_PROJECT, classDirectories, dependencies, resourceRoots);
+        classDirectories.clear(); dependencies.clear(); resourceRoots.clear();
+        assertEquals(List.of(classes), legacy.classDirectories());
+        assertEquals(legacy.classDirectories(), legacy.resourceRoots());
+        assertEquals(List.of(library), explicit.dependencies());
+        assertEquals(List.of(first, second), explicit.resourceRoots());
+        assertThrows(UnsupportedOperationException.class, () -> explicit.resourceRoots().clear());
+
+        var normalized = CompiledProject.fromOutputs(temporary, InputMode.MAVEN_PROJECT, List.of(classes), List.of(library),
+                List.of(second, temporary.resolve("missing-resources"), first, second.resolve("..").resolve("second-resources")));
+        assertEquals(List.of(classes), normalized.classDirectories());
+        assertEquals(List.of(second, first), normalized.resourceRoots());
+        assertEquals(List.of(classes), CompiledProject.fromOutputs(temporary, InputMode.MAVEN_PROJECT,
+                List.of(classes), List.of(library)).resourceRoots());
+    }
 
     @Test
     void sourceDirectoryCompilesMainSourcesIntoTemporaryOutput() throws Exception {
@@ -390,6 +419,67 @@ class AutoCompileAnalysisInputLocationTest {
             assertTrue(view.getClass(view.getIdentifierFactory().getClassType("dep.Helper"))
                     .orElseThrow().isLibraryClass());
         }
+    }
+
+    @Test
+    @Tag("integration")
+    void mavenReportsFilteredResourcesFromModulesWithoutClasses() throws Exception {
+        Path root = temporary.resolve("maven-resource-modules");
+        String parent = mavenRoot("<modules><module>sql-only</module><module>app</module></modules>")
+                .replace("<properties>", "<properties><tableName>filtered_users</tableName>");
+        write(root, "pom.xml", parent);
+        write(root, "sql-only/pom.xml", mavenChild("sql-only", """
+                <build><resources><resource><directory>src/main/resources</directory>
+                <filtering>true</filtering></resource></resources></build>
+                """));
+        write(root, "app/pom.xml", mavenChild("app", ""));
+        write(root, "app/src/main/java/Example.java", "public class Example { public int value() { return 17; } }");
+        String xml = "<mapper namespace='sample.Mapper'><select id='find'>SELECT * FROM ${tableName}</select></mapper>";
+        write(root, "sql-only/src/main/resources/mapper.xml", xml);
+        write(root, "sql-only/src/test/resources/test-only.xml", "<mapper/>");
+        Path output = temporary.resolve("maven-resource-output");
+        var compiled = MavenProjectCompiler.compile(root, mavenOptions().withClassOutputDirectory(output));
+        Path appOutput = output.resolve("group-sample/module-app");
+        Path resourceOutput = output.resolve("group-sample/module-sql-only");
+        assertEquals(List.of(appOutput), compiled.classDirectories());
+        assertTrue(compiled.resourceRoots().contains(appOutput));
+        assertTrue(compiled.resourceRoots().contains(resourceOutput));
+        assertEquals(xml.replace("${tableName}", "filtered_users"), Files.readString(resourceOutput.resolve("mapper.xml")));
+        assertEquals(xml, Files.readString(root.resolve("sql-only/src/main/resources/mapper.xml")));
+        assertFalse(compiled.resourceRoots().contains(root.resolve("sql-only/src/main/resources")));
+        assertTrue(compiled.resourceRoots().stream().allMatch(path -> !Files.exists(path.resolve("test-only.xml"))));
+    }
+
+    @Test
+    @Tag("integration")
+    void gradleReportsMainAndGeneratedResourcesFromActualOutputs() throws Exception {
+        Path root = temporary.resolve("gradle-resource-modules");
+        write(root, "settings.gradle", "rootProject.name = 'sample'\ninclude 'sql-only', 'app'\n");
+        write(root, "build.gradle", """
+                subprojects { apply plugin: 'java-library'; layout.buildDirectory = file('custom-build') }
+                project(':sql-only') { tasks.named('processResources') { expand(tableName: 'filtered_users') } }
+                project(':app') {
+                    tasks.named('compileJava') {
+                        doLast { new File(destinationDirectory.get().asFile, 'generated.xml').text = '<mapper/>' }
+                    }
+                }
+                """);
+        write(root, "app/src/main/java/Example.java", "public class Example { public int value() { return 19; } }");
+        String xml = "<mapper namespace='sample.Mapper'><select id='find'>SELECT * FROM ${tableName}</select></mapper>";
+        write(root, "sql-only/src/main/resources/mapper.xml", xml);
+        write(root, "sql-only/src/test/resources/test-only.xml", "<mapper/>");
+        Path output = temporary.resolve("gradle-resource-output");
+        var compiled = GradleProjectCompiler.compile(root, gradleOptions().withClassOutputDirectory(output));
+        Path appOutput = output.resolve("project-%3Aapp");
+        Path resourceOutput = root.resolve("sql-only/custom-build/resources/main");
+        assertEquals(List.of(appOutput), compiled.classDirectories());
+        assertTrue(compiled.resourceRoots().contains(appOutput));
+        assertTrue(compiled.resourceRoots().contains(resourceOutput));
+        assertEquals("<mapper/>", Files.readString(appOutput.resolve("generated.xml")));
+        assertEquals(xml.replace("${tableName}", "filtered_users"), Files.readString(resourceOutput.resolve("mapper.xml")));
+        assertEquals(xml, Files.readString(root.resolve("sql-only/src/main/resources/mapper.xml")));
+        assertFalse(compiled.resourceRoots().contains(root.resolve("sql-only/src/main/resources")));
+        assertTrue(compiled.resourceRoots().stream().allMatch(path -> !Files.exists(path.resolve("test-only.xml"))));
     }
 
     private static InputLocationOptions mavenOptions() {

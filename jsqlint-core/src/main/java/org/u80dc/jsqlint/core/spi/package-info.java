@@ -1,6 +1,9 @@
 /**
  * 输入准备和 SQL 分析模块的扩展协议，以及协议交换的来源、调用点与 SQL 输入数据。
  * 输入解析器将路径转换为 {@link org.u80dc.jsqlint.core.spi.PreparedInput}；
+ * 可通过 {@link org.u80dc.jsqlint.core.spi.AnalysisInputPlan} 在输出预清理之前决定
+ * 是否申请分析器管理的编译目录。已有产物或扩展缓存只借用输入句柄，
+ * 不将产物删除所有权交给本次分析；旧解析器仍按原编译声明及 resolve 协议兼容。
  * SQL 模块通过 {@link org.u80dc.jsqlint.core.spi.DiscoveryRegistry} 注册发现规则，
  * 并通过提取回调使用 core 提供的数据流能力。
  * 本协议明确使用 SootUp 和 core 分析引擎，扩展模块须遵守这些能力的执行期契约。
@@ -18,6 +21,9 @@
  *
  * <p>发现、提取及输入准备的执行对象只在约定的分析期内使用。
  * SQL 框架特有的资源解释、调用识别与参数定位由扩展模块实现；
+ * 项目缓存策略、产物清单和构建工具留在输入扩展，core 不解释其实现。
+ * 计划只在本次准备期使用，返回后的输入由 PreparedInput 管理；
+ * 清单可以保存路径和模式等描述，不能保存活动 JavaView、分析状态或认证信息。
  * 本包定义共享协议和交换数据，不承担这些框架算法。</p>
  *
  * @author u80dc

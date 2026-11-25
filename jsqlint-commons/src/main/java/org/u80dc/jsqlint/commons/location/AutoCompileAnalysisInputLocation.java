@@ -30,14 +30,14 @@ import java.util.stream.Stream;
 /**
  * 统一接收字节码、普通 Java 源码或 Maven/Gradle 项目的 SootUp 输入。
  *
- * <p>构造时完成必要的编译；读取方法体时由 SootUp 惰性转换为 Jimple。
+ * <p>构造时按策略完成编译或加载项目快照；读取方法体时由 SootUp 惰性转换为 Jimple。
  * 自动识别优先级为项目构建文件、Java 源码、字节码。多路径输入可以是多个源码文件/目录，
  * 或多个字节码目录/JAR；Maven/Gradle 项目应单独传入根目录。
  *
  * <p>目标代码默认为 Application，构建工具解析的依赖及额外 classpath 为 Library。
  * {@code new JavaView(input)} 即可解析目标代码及这些依赖；{@link #createView()} 还会加入当前 JDK。
  *
- * <p>编译输出目录由 {@link InputLocationOptions#classOutputDirectory()} 指定；未指定时，
+ * <p>普通源码/ALWAYS 的编译输出由 {@link InputLocationOptions#classOutputDirectory()} 指定；未指定时，
  * 在 {@code java.io.tmpdir} 下为本次编译分配随机子目录。
  * 普通源码使用 JDK 编译器写入该目录，沿用 OTF 的当前 JVM 编译 classpath 和默认参数；
  * Maven/Gradle 调整本次构建的输出配置，多模块产物分目录保存。
@@ -59,7 +59,7 @@ public final class AutoCompileAnalysisInputLocation implements AnalysisInputLoca
     @Getter
     private final List<Path> dependencies;
 
-    /** 实际使用的编译输出根目录；已有字节码输入不执行编译，返回 null。 */
+    /** 本次普通源码/ALWAYS 的编译输出根目录；字节码或缓存/复用输入返回 null。 */
     @Getter
     private final @Nullable Path classOutputDirectory;
 
@@ -130,8 +130,11 @@ public final class AutoCompileAnalysisInputLocation implements AnalysisInputLoca
             if (inputType == InputType.MAVEN_PROJECT && options.gradleInstallation() != null) {
                 throw new IllegalArgumentException("Gradle installation does not apply to a Maven project");
             }
-            Path output = options.classOutputDirectory();
-            if (inputType != InputType.BYTECODE && output == null) {
+            boolean cachedProject = isProject(inputType) && options.buildPolicy() != BuildPolicy.ALWAYS;
+            if (!isProject(inputType) && inputType != InputType.BYTECODE && options.buildPolicy() != BuildPolicy.ALWAYS)
+                throw new IllegalArgumentException("Project build reuse applies to Maven/Gradle projects");
+            Path output = cachedProject ? null : options.classOutputDirectory();
+            if (inputType != InputType.BYTECODE && output == null && !cachedProject) {
                 output = createTemporaryOutputDirectory();
             }
             classOutputDirectory = output;
@@ -145,7 +148,8 @@ public final class AutoCompileAnalysisInputLocation implements AnalysisInputLoca
             List<Path> paths = resolved.stream().flatMap(input -> input.paths().stream()).distinct().toList();
             List<Path> libraries = options.classpath();
             if (isProject(inputType)) {
-                CompiledProject compiled = ProjectCompiler.compile(this.inputs.getFirst(), options.withClassOutputDirectory(output), statisticsRecorder);
+                CompiledProject compiled = ProjectCompiler.compile(this.inputs.getFirst(),
+                        cachedProject ? options : options.withClassOutputDirectory(output), statisticsRecorder);
                 paths = compiled.classDirectories();
                 libraries = compiled.dependencies();
             } else if (inputType == InputType.JAVA_SOURCE) {

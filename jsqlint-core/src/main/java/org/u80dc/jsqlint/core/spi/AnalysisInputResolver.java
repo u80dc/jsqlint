@@ -14,11 +14,27 @@ public interface AnalysisInputResolver {
     default int priority() { return 0; }
     /** 只做输入识别；统一入口传入已经归一化的绝对路径。 */
     boolean supports(Path source) throws Exception;
+    /** 配置感知的只读输入识别，默认保持原解析器分派。 */
+    default boolean supports(Path source, @Nullable AnalysisInputOptions options) throws Exception {
+        return supports(source);
+    }
     /**
-     * 当前输入是否需要编译。编译扩展返回 true，由 Analyzer 管理输出目录的预清理及结束清理。
+     * 原解析器的输出管理声明。默认 plan 用它决定是否由 Analyzer 分配、预清理及结束清理目录。
+     * 已有产物或自主管理共享缓存的扩展可以覆盖 plan；实际编译由该计划决定。
      * 默认不编译，避免已有字节码或其他只读输入触发输出目录删除；本方法不应修改文件。
      */
     default boolean requiresCompilation(Path source) throws Exception { return false; }
+    /** 在输出目录预清理前作一次决定；默认完整转发原 requiresCompilation/resolve 协议。 */
+    default AnalysisInputPlan plan(Path source, @Nullable AnalysisInputOptions options,
+                                   AnalysisInputContext context) throws Exception {
+        boolean managed = requiresCompilation(source);
+        return new AnalysisInputPlan() {
+            public boolean requiresManagedClassOutputDirectory() { return managed; }
+            public PreparedInput resolve(@Nullable Path output, AnalysisInputContext execution) throws Exception {
+                return AnalysisInputResolver.this.resolve(source, output, options, execution);
+            }
+        };
+    }
     /**
      * 准备代码及资源输入，并通过返回值转交所有权。
      * 耗时步骤之间应调用 checkpoint；其抛出的停止信号应向上传播，不应被吞掉。

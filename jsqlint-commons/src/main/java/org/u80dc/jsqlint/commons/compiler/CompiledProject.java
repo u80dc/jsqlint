@@ -16,15 +16,25 @@ import java.util.List;
  * @author u80dc
  */
 public record CompiledProject(Path directory, InputMode inputMode, List<Path> classDirectories,
-                              List<Path> dependencies) {
+                              List<Path> dependencies, List<Path> resourceRoots) {
     public CompiledProject {
         classDirectories = List.copyOf(classDirectories);
         dependencies = List.copyOf(dependencies);
+        resourceRoots = List.copyOf(resourceRoots);
+    }
+
+    public CompiledProject(Path directory, InputMode inputMode, List<Path> classDirectories, List<Path> dependencies) {
+        this(directory, inputMode, classDirectories, dependencies, classDirectories);
     }
 
     /** 统一校验构建产物、规范化路径并排除重复依赖，供各编译后端共用。 */
     public static CompiledProject fromOutputs(Path root, InputMode mode, Collection<Path> outputs,
                                               Collection<Path> dependencies) throws IOException {
+        return fromOutputs(root, mode, outputs, dependencies, outputs);
+    }
+
+    public static CompiledProject fromOutputs(Path root, InputMode mode, Collection<Path> outputs,
+                                              Collection<Path> dependencies, Collection<Path> resourceRoots) throws IOException {
         List<Path> classDirectories = new ArrayList<>();
         for (Path output : outputs) {
             Path path = output.toAbsolutePath().normalize();
@@ -46,6 +56,8 @@ public record CompiledProject(Path directory, InputMode inputMode, List<Path> cl
                 throw new AnalysisInputException("Missing analysis dependency after " + mode + " compilation: " + library);
             }
         }
-        return new CompiledProject(root, mode, classDirectories.stream().distinct().toList(), libraries);
+        List<Path> resources = resourceRoots.stream().map(path -> path.toAbsolutePath().normalize())
+                .filter(path -> Files.isDirectory(path) || Files.isRegularFile(path)).distinct().toList();
+        return new CompiledProject(root, mode, classDirectories.stream().distinct().toList(), libraries, resources);
     }
 }

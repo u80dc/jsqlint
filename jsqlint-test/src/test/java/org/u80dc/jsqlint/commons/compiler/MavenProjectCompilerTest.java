@@ -36,19 +36,37 @@ import static org.junit.jupiter.api.Assertions.*;
 /** 使用本地 HTTP 私服验证认证、父 POM、插件和依赖下载，以及仓库配置的调用隔离。 @author u80dc */
 @Isolated("Maven Embedder 和临时目录属性属于进程共享资源")
 class MavenProjectCompilerTest {
+    private static final String COMMAND_PROPERTY = "jsqlint.test.maven.commandProperty";
+    private static final String CONFIG_PROPERTY = "jsqlint.test.maven.configProperty";
+    private static final String GUICE_CLASS_LOADING_PROPERTY = "guice_custom_class_loading";
+    private static final String GUICE_ANNOTATION_CHECK_PROPERTY = "guice.disable.misplaced.annotation.check";
     @TempDir Path temporary;
     private String previousTemporary;
+    private String previousSkipTests;
+    private String previousCommandProperty;
+    private String previousConfigProperty;
+    private String previousGuiceClassLoading;
+    private String previousGuiceAnnotationCheck;
 
     @BeforeEach
     void useOwnTemporaryDirectory() throws IOException {
         previousTemporary = System.getProperty("java.io.tmpdir");
+        previousSkipTests = System.getProperty("skipTests");
+        previousCommandProperty = System.getProperty(COMMAND_PROPERTY);
+        previousConfigProperty = System.getProperty(CONFIG_PROPERTY);
+        previousGuiceClassLoading = System.getProperty(GUICE_CLASS_LOADING_PROPERTY);
+        previousGuiceAnnotationCheck = System.getProperty(GUICE_ANNOTATION_CHECK_PROPERTY);
         System.setProperty("java.io.tmpdir", Files.createDirectories(temporary.resolve("tmp")).toString());
     }
 
     @AfterEach
-    void restoreTemporaryDirectory() {
-        if (previousTemporary == null) System.clearProperty("java.io.tmpdir");
-        else System.setProperty("java.io.tmpdir", previousTemporary);
+    void restoreSystemProperties() {
+        restoreProperty("java.io.tmpdir", previousTemporary);
+        restoreProperty("skipTests", previousSkipTests);
+        restoreProperty(COMMAND_PROPERTY, previousCommandProperty);
+        restoreProperty(CONFIG_PROPERTY, previousConfigProperty);
+        restoreProperty(GUICE_CLASS_LOADING_PROPERTY, previousGuiceClassLoading);
+        restoreProperty(GUICE_ANNOTATION_CHECK_PROPERTY, previousGuiceAnnotationCheck);
     }
 
     @Test
@@ -176,9 +194,17 @@ class MavenProjectCompilerTest {
                     public void query(java.sql.Connection connection) throws Exception { connection.prepareStatement("SELECT 1"); }
                 }
                 """);
+        Path mavenConfig = Files.createDirectories(project.resolve(".mvn")).resolve("maven.config");
+        Files.writeString(mavenConfig, "-D" + CONFIG_PROPERTY + "=config-value\n");
         var options = InputLocationOptions.defaults().withMavenRepositories(repositories)
+                .withBuildArguments(List.of("-D" + COMMAND_PROPERTY + "=command-value"))
                 .withClassOutputDirectory(temporary.resolve("compiled"));
         try {
+            System.setProperty("skipTests", "false");
+            System.setProperty(COMMAND_PROPERTY, "host-value");
+            System.clearProperty(CONFIG_PROPERTY);
+            System.clearProperty(GUICE_CLASS_LOADING_PROPERTY);
+            System.setProperty(GUICE_ANNOTATION_CHECK_PROPERTY, "false");
             List<String> sql = new ArrayList<>();
             List<String> diagnostics = new ArrayList<>();
             var listener = new AnalysisListener() {
@@ -193,6 +219,11 @@ class MavenProjectCompilerTest {
                     .withListener(listener).withStatistics(true));
             assertEquals(AnalysisResult.Status.SUCCESS, result.status(), () -> String.join("\n", diagnostics));
             assertCompilationAccounting(result.statistics().orElseThrow());
+            assertEquals("false", System.getProperty("skipTests"), "后端强制跳过测试的参数不能泄漏到宿主 JVM");
+            assertEquals("host-value", System.getProperty(COMMAND_PROPERTY), "命令行 -D 必须还原已有宿主属性");
+            assertNull(System.getProperty(CONFIG_PROPERTY), ".mvn/maven.config 的 -D 不能新增宿主属性");
+            assertNull(System.getProperty(GUICE_CLASS_LOADING_PROPERTY), "Guice 默认类加载策略不能新增宿主属性");
+            assertEquals("false", System.getProperty(GUICE_ANNOTATION_CHECK_PROPERTY), "Guice 初始化必须保留已有宿主属性");
             assertEquals(List.of("SELECT 1"), sql);
             assertTrue(Files.isRegularFile(temporary.resolve("tmp/.jsqlint/maven-project/Example.class")));
             assertFalse(Files.exists(options.classOutputDirectory()));
@@ -348,6 +379,11 @@ class MavenProjectCompilerTest {
 
     private static Settings read(Path path) throws Exception {
         try (var reader = Files.newBufferedReader(path)) { return new SettingsXpp3Reader().read(reader); }
+    }
+
+    private static void restoreProperty(String name, String value) {
+        if (value == null) System.clearProperty(name);
+        else System.setProperty(name, value);
     }
 
     private void assertNoTemporarySettings() throws IOException {

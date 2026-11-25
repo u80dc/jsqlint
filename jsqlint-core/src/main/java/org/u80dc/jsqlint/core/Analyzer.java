@@ -236,7 +236,7 @@ public final class Analyzer {
                 for (var resolver : resolvers) {
                     session.checkpoint();
                     if (selected != null && resolver.priority() < selected.priority()) break;
-                    if (!resolver.supports(input)) continue;
+                    if (!resolver.supports(input, effectiveConfig.inputOptions())) continue;
                     if (selected != null) throw new IllegalArgumentException("Ambiguous input resolvers for " + input);
                     selected = resolver;
                 }
@@ -246,14 +246,17 @@ public final class Analyzer {
                 String outputId = options.classOutputId() == null ? UUID.randomUUID().toString() : options.classOutputId();
                 Path output = Path.of(System.getProperty("java.io.tmpdir"), ".jsqlint", outputId)
                         .toAbsolutePath().normalize();
-                if (selected.requiresCompilation(input)) {
-                    classOutput = ClassOutputDirectory.prepare(output, input, library,
-                            options.classOutputId() != null, effectiveConfig.cleanupClassOutput());
+                var context = new AnalysisInputContext(session::checkpoint, session.statisticsRecorder());
+                PreparedInput prepared;
+                try (var plan = selected.plan(input, effectiveConfig.inputOptions(), context)) {
+                    if (plan.requiresManagedClassOutputDirectory()) {
+                        classOutput = ClassOutputDirectory.prepare(output, input, library,
+                                options.classOutputId() != null, effectiveConfig.cleanupClassOutput());
+                    }
+                    prepared = plan.resolve(output, context);
+                    // 先接管输入再关闭计划/检查取消，确保准备期间收到停止信号时也释放新输入。
+                    owned.addAll(prepared.locations());
                 }
-                PreparedInput prepared = selected.resolve(input, output, effectiveConfig.inputOptions(),
-                        new AnalysisInputContext(session::checkpoint, session.statisticsRecorder()));
-                // 先接管输入再检查取消，确保编译期间收到取消信号时也能释放新创建的输入。
-                owned.addAll(prepared.locations());
                 session.checkpoint();
                 for (Path path : libraries)
                     owned.add(new JavaClassPathAnalysisInputLocation(path.toString(), SourceType.Library));

@@ -5,12 +5,14 @@
 编译产物交回 core 分析，core 无需反向依赖 commons。用户可在调用前构造 InputLocationOptions，
 通过 `AnalyzerConfig.withInputOptions(inputLocationOptions)` 交给 Analyzer，继续使用自动发现的解析器和 SQL 模块。
 通过 `AnalysisOptions.withClassOutputId(...)` 为本次 Analyzer 分析指定输出标识。
+普通源码或采用默认 `BuildPolicy.ALWAYS` 的项目编译使用本次受管理输出目录。
 Analyzer 生成 `${java.io.tmpdir}/.jsqlint/<指定标识>/`，未指定时生成
 `${java.io.tmpdir}/.jsqlint/<随机标识>/`，并通过解析器将完整路径传给 `AutoCompileAnalysisInputLocation`。
-直接构造自动编译输入时，仍可传入完整路径，未传入则使用 `${java.io.tmpdir}/<随机标识>/`。
-Analyzer 默认在分析结束后保留目录；可通过 `AnalyzerConfig.withCleanupClassOutput(true)`
+直接构造普通源码/ALWAYS 自动编译输入时，仍可传入完整路径，未传入则使用 `${java.io.tmpdir}/<随机标识>/`。
+Analyzer 默认在分析结束后保留受管理目录；可通过 `AnalyzerConfig.withCleanupClassOutput(true)`
 设置实例默认清理策略，也可通过 `AnalysisOptions.withCleanupClassOutput(...)` 覆盖单次策略。
-复用指定标识时，无论是否开启结束清理，Analyzer 都会先清空对应输出目录。
+复用指定标识的受管理输出时，无论是否开启结束清理，Analyzer 都会先清空对应输出目录。
+AUTO/REUSE 项目输入只借用构建快照，不申请或清理该临时输出目录。
 统一入口、输入所有权及取消机制见 [分析器说明](../jsqlint-core/ANALYSIS.md)。
 
 公共基础模块，包路径为 `org.u80dc.jsqlint.commons`。`location` 包提供统一输入入口
@@ -31,7 +33,7 @@ Analyzer 默认在分析结束后保留目录；可通过 `AnalyzerConfig.withCl
 | Maven | `pom.xml` | Maven Embedder 执行 `compile`，通过有效 reactor 模型读取各模块输出目录及依赖 |
 | Gradle | `build.gradle(.kts)` 或 `settings.gradle(.kts)` | Tooling API 执行 main source set 的 classes 任务，通过临时 init script 收集输出目录和 classpath |
 
-自动识别优先检查传入目录的构建文件，因此项目已经有编译产物时仍会执行构建。
+自动识别优先检查传入目录的构建文件；默认 `BuildPolicy.ALWAYS` 下，项目已经有编译产物时仍会执行构建。
 普通目录优先查找源码；同时存在 `.java` 和旧 `.class` 时重新编译源码。
 源码目录依次选择 `src/main/java`、`src`、传入目录，递归收集 `.java`；选择项目的 `src` 时排除 `src/test`。
 显式传入源码目录时，`build`、`out`、`test` 等合法包名不会被过滤。
@@ -48,6 +50,114 @@ Maven/Gradle 的 stdout 与 stderr 共用本次构建的有界日志，最多保
 嵌入式 Maven 同时引入同版本的 `maven-compat`，向旧插件提供 `ArtifactCollector` 等兼容 API 及组件。
 路径解析器分别交付 Application 与 Library 输入；core 枚举应用代码时不遍历依赖 JAR，
 依赖类型仍可通过同一 JavaView 按需解析。直接使用自动编译输入位置时仍可枚举全部类。
+
+## 复用已编译项目
+
+`InputMode.AUTO` 负责识别输入类型，`BuildPolicy.AUTO` 负责判断项目构建快照是否可复用。
+项目策略通过 `InputLocationOptions.withBuildPolicy(...)` 选择，旧构造器和默认选项继续使用 `ALWAYS`：
+
+| 策略 | 行为 |
+| --- | --- |
+| `ALWAYS` | 每次执行项目构建，沿用原有输出管理方式 |
+| `AUTO` | 校验已记录输入和产物，命中时复用；缺失、损坏、内容变更或到期时构建新快照 |
+| `REUSE` | 只读调用方选择的历史快照；不检查当前源码新鲜度和 TTL，缺失或损坏明确失败 |
+
+可按以下三个阶段接入。示例需要引入对应的 SQL 模块；其中产物、清单和插件输入路径应替换为实际路径。
+
+### 第一阶段：直接打开已有产物
+
+已有产物可直接描述并打开，不必从源码目录触发构建。同一组输入可顺序分析多个入口，全部结束后关闭：
+
+```java
+var analyzer = new Analyzer();
+var entry = "<example.Service: void query(java.sql.Connection)>";
+var compiled = new CompiledProject(Path.of("project"), InputMode.MAVEN_PROJECT,
+        List.of(Path.of("project/app/target/classes"), Path.of("project/common/target/classes")),
+        List.of(Path.of("libraries/dependency.jar")),
+        List.of(Path.of("project/app/target/classes"), Path.of("project/common/target/classes")));
+try (var inputs = ProjectInputs.open(compiled)) {
+    var request = new AnalysisRequest(inputs.locations(), inputs.resources(), AnalysisOptions.defaults());
+    var first = analyzer.analyze(request, entry);
+    var again = analyzer.analyze(request, entry);
+}
+```
+
+`CompiledProject` 保存来源目录、输入模式、保序的应用产物、第三方依赖和资源根；旧四参数构造器默认以应用产物作为资源根。
+所有需要追踪方法体的自有模块均作为 Application，第三方依赖作为 Library；resource-only 模块保留资源而不加入应用类路径。
+`ProjectInputs.open` 自动加入当前 JDK，校验实际产物/依赖/资源，失败关闭已创建输入；返回的 `PreparedInput` 由调用方关闭。
+它不编译、不删除产物，也不要求原源码目录存在。目录、普通 JAR 和独立资源文件均可描述；依赖列表中的 JAR 需明确列出。
+选择编译后的 XML/配置可保留资源过滤结果，避免同时加入源码与编译资源副本造成重复定义。
+Boot fat JAR 需要先展开 `BOOT-INF/classes` 和内嵌依赖 JAR，当前不自动展开完整 Boot 类路径。
+
+### 第二阶段：保存清单并显式复用
+
+将上一阶段的描述保存到清单，后续进程可以 read/open，或在项目 Path 入口指定清单：
+
+```java
+var manifest = Path.of("project-inputs.properties");
+CompiledProjectManifest.write(manifest, compiled);
+var saved = CompiledProjectManifest.read(manifest);
+try (var inputs = ProjectInputs.open(saved)) {
+    var request = new AnalysisRequest(inputs.locations(), inputs.resources(), AnalysisOptions.defaults());
+    var result = analyzer.analyze(request, entry);
+}
+
+var reuseOptions = InputLocationOptions.defaults().withCompiledProjectManifest(manifest);
+var reuseAnalyzer = new Analyzer(AnalyzerConfig.defaults().withInputOptions(reuseOptions));
+var reused = reuseAnalyzer.bind(compiled.directory()).analyze(entry);
+```
+
+清单为 schema 1 的 UTF-8 Properties，内部路径保存为绝对路径，保留模块/依赖/资源顺序，不保存认证信息或活动 JavaView。
+write 在同目录临时写入后原子替换；read 只解析描述，不编译、不修改目录，实际 I/O 校验由 open 负责。
+当前清单上限为 1 MiB、8192 条路径，重复/未知字段、缺项、非法类型或版本明确报错。
+`withCompiledProjectManifest(path)` 同时选择 REUSE，Path 入口要求来源目录及构建模式与清单相符；
+原源码目录已经不存在时使用上面的 read/open/AnalysisRequest 方式。
+普通外部清单只描述路径，不复制产物或保存缓存状态摘要；显式 REUSE 校验描述、项目身份及实际 I/O，
+不比较源码新鲜度和产物内容摘要。调用方需要保留这些路径及其内容，才能把清单用作固定的历史输入。
+
+### 第三阶段：由 AUTO 管理构建缓存
+
+项目仍从源码 Path 进入时，AUTO 在首次或失效时构建，并复用已发布的完整快照：
+
+```java
+var autoOptions = InputLocationOptions.defaults()
+        .withBuildPolicy(BuildPolicy.AUTO)
+        .withProjectCacheDirectory(Path.of("cache/jsqlint-projects"))
+        .withCacheMaxAge(Duration.ofHours(24))
+        .withAdditionalBuildInputs(List.of(Path.of("build-inputs/schema.json")));
+var cachedAnalyzer = new Analyzer(AnalyzerConfig.defaults().withInputOptions(autoOptions));
+var bound = cachedAnalyzer.bind(Path.of("project"));
+var options = AnalysisOptions.defaults().withStatistics(true).withCleanupClassOutput(true);
+var first = bound.analyze(options, entry);
+var again = bound.analyze(options, entry);
+
+var reuseCached = new Analyzer(AnalyzerConfig.defaults()
+        .withInputOptions(autoOptions.withBuildPolicy(BuildPolicy.REUSE)));
+var historical = reuseCached.bind(Path.of("project")).analyze(entry);
+```
+
+未指定外部清单的 REUSE 读取当前配置键下最新成功 generation，跳过当前源码校验及 TTL，
+但仍校验缓存描述、产物和依赖的内容摘要；缺失或损坏明确失败。选择更早的 generation 时指定其产物清单。
+构建参数、classpath 路径、额外输入路径、工具链、仓库、继承的 JVM 属性及环境变化可能选择另一个配置键；
+项目来源和这些配置应一致，才能复用同一缓存。
+已知的启动/Surefire 临时元数据，以及宿主调用、会话标识和 IPC 地址不参与构建身份；真实构建环境仍参与校验。
+
+默认缓存根目录为 `${java.io.tmpdir}/.jsqlint-project-cache`，与本次分析的 `.jsqlint/<classOutputId>` 分开。
+成功构建以独立 generation 保存并发布当前指针；分析只借用产物，关闭输入不删除成功快照。
+`cleanupClassOutput=true`、固定输出标识以及输出目录覆盖都不会让 AUTO/REUSE 预清空或删除借用的缓存产物。
+过期意味着 AUTO 需要重建，不表示自动删除历史成功 generation；被引用的依赖目录/JAR 也必须继续保留。
+
+AUTO 默认最长复用 24 小时，可用 `withCacheMaxAge(Duration)` 调整；`Duration.ZERO` 仅取消时间过期，仍校验内容。
+到期重建在线刷新依赖；Maven `-U`、Gradle `--refresh-dependencies` 也会要求重新构建。
+`-o`/`--offline` 不刷新远程依赖；REUSE 不接受同时请求依赖刷新。
+缓存使用输入、构建选项和产物的内容摘要，保留自有模块、依赖及资源的区别。
+Maven 在任务开始前记录插件明确声明且可解析的 `outputFile`，精确排除生成文件及其父目录标记，
+并继续追踪插件的 `file` 输入；生成源码位于普通源码目录时也保留其他源文件的内容校验。
+主 class 输出迁移时，原输出根下的绝对资源 `targetPath` 同步迁移，保留相对后缀及 Maven 资源过滤结果。
+目前不能自动跟踪任意插件的全部隐式输入或网络状态；项目外文件/目录可通过
+`withAdditionalBuildInputs(List<Path>)` 补充，AUTO 同样对其内容进行校验。
+该选项只增加校验范围，不向 Maven/Gradle 注入源目录或依赖；相对路径以调用进程工作目录为基准。
+缓存模式并不缓存分析器的 JavaView、索引或数据流结果，每次分析仍创建独立执行状态。
 
 ## 使用
 
@@ -78,7 +188,8 @@ try (var input = new AutoCompileAnalysisInputLocation(
 JDK 的运行时类。完整构造器可自定义目标 `SourceType` 与 body interceptors。
 `getInputType()` 返回实际识别的 `InputType`：`BYTECODE`、`JAVA_SOURCE`、`MAVEN_PROJECT` 或 `GRADLE_PROJECT`，
 不包含 `AUTO`。`getDependencies()` 返回接入的依赖路径。
-`getClassOutputDirectory()` 返回实际使用的编译输出根目录；已有字节码输入返回 `null`。
+`getClassOutputDirectory()` 提供普通源码/ALWAYS 的编译输出根目录；已有字节码输入返回 `null`。
+缓存模块的实际产物路径以 `CompiledProject.classDirectories()` 为准。
 
 `InputLocationOptions(inputMode, classpath, buildArguments, gradleInstallation)` 可设置额外分析依赖、
 Maven/Gradle 构建参数及显式 Gradle 安装目录。`classpath` **仅用于分析**；Maven/Gradle 的编译依赖
@@ -179,14 +290,14 @@ try (var input = new AutoCompileAnalysisInputLocation(Path.of("/path/to/project"
 也可以使用五参数构造器
 `InputLocationOptions(inputMode, classpath, buildArguments, gradleInstallation, classOutputDirectory)`。
 原四参数构造器继续可用。Analyzer 的输出标识必须是单个非空目录名，不能是路径、`.` 或 `..`；
-同一标识复用同一路径，每次编译前先递归清空目录内容，避免保留已删除源码对应的旧 class。
-未指定标识时每次调用生成随机标识。并发调用应使用不同标识或默认随机标识。
-Analyzer 始终传入自己生成的完整路径，覆盖本次调用中解析器的输出配置，但不修改解析器实例。
-`withCleanupClassOutput(true)` 在分析结束、关闭输入后删除本次输出目录，失败、取消及超时也执行；
+普通源码/ALWAYS 的受管理输出标识复用同一路径，每次编译前先递归清空目录内容，避免保留已删除源码对应的旧 class；AUTO/REUSE 借用缓存不走此预清理。
+受管理输出未指定标识时每次调用生成随机标识。并发调用应使用不同标识或默认随机标识。
+在普通源码/ALWAYS 的受管理输出计划中，Analyzer 传入自己生成的完整路径，覆盖本次调用中解析器的输出配置，但不修改解析器实例。
+`withCleanupClassOutput(true)` 在分析结束、关闭输入后删除本次受管理输出目录，失败、取消及超时也执行；
 系统默认值为 false。单次选项未设置（null）时继承 AnalyzerConfig；显式 false 覆盖实例的清理策略，
 `withCleanupClassOutput(null)` 恢复继承。清理失败会报告诊断并返回 FAILED。
-扩展解析器通过 `AnalysisInputResolver.requiresCompilation(source)` 声明是否需要编译，
-只有返回 true 时 Analyzer 才管理编译输出的预清理及结束清理。
+扩展解析器通过 `AnalysisInputPlan` 在预清理之前决定是否需要 Analyzer 管理临时输出目录。
+旧解析器默认仍根据 `requiresCompilation(source)` 决定，保持原 resolve/构造器契约；复用计划不转交产物删除所有权。
 直接使用解析器或自动编译输入时，`InputLocationOptions.classOutputDirectory` 仍接受完整路径。
 
 该路径是**编译输出目录**，不是单个 `.class` 文件路径，也不是额外的分析 classpath。
@@ -206,9 +317,9 @@ Analyzer 的字节码入口由 core 解析器处理，会忽略编译输出选�
 
 Maven/Gradle 的配置调整仅在本次构建内生效，不修改目标项目的构建文件。
 此选项仅指定 class 产物位置，不迁移整个 `target`/`build` 目录或构建缓存。
-直接使用解析器或 `AutoCompileAnalysisInputLocation` 时，输出目录不会自动清空，
-`close()` 也不删除目录；调用方自行管理其生命周期。通过 Analyzer 使用时执行上述预清理和可选结束清理。
-编译失败会抛出异常，不使用已有 class 继续分析；未开启结束清理时可能留下部分产物。
+直接使用解析器或 `AutoCompileAnalysisInputLocation` 编译普通源码/ALWAYS 项目时，输出目录不会自动清空，
+`close()` 也不删除目录；调用方自行管理其生命周期。Analyzer 仅对受管理输出执行上述预清理和可选结束清理。
+编译失败会抛出异常，不使用已有 class 继续分析；普通源码/ALWAYS 未开启结束清理时可能留下部分产物。
 
 Maven、Gradle 后端支持自定义输出目录，分析范围为主代码。
 Gradle 后端要求项目提供标准 main source set，Android 等不同构建模型需要额外适配。
@@ -321,6 +432,18 @@ Oracle 字面量规则参考 [Oracle SQL Language Reference](https://docs.oracle
 .\mvnw.cmd -pl jsqlint-test -am '-Dmaven.test.skip=false' '-DskipTests=false' test
 ```
 
-Gradle 集成测试默认使用 Tooling API 的默认发行版，首次运行可能下载 Gradle。
+项目产物复用回归覆盖 Maven 多模块及 Gradle 外部 source set：
+
+```powershell
+.\mvnw.cmd -T 1 -pl jsqlint-test -am '-Dtest=ProjectReuseIntegrationTest' `
+  '-Djsqlint.test.gradle.home=D:/gradle-8.4' '-Dsurefire.failIfNoSpecifiedTests=false' `
+  '-Dmaven.test.skip=false' '-DskipTests=false' test
+```
+
+该回归的 Gradle 用例仅在配置有效的 `jsqlint.test.gradle.home` 时执行；可替换为本地安装路径。
+测试分别采集编译器调用与 Analyzer 请求的统计，验证 warm/REUSE 不产生 `COMPILATION` 阶段，
+不将请求之前的构建时间计入 AnalysisResult，也不使用性能阈值判断复用。
+
+`AutoCompileAnalysisInputLocationTest` 的 Gradle 用例默认使用 Tooling API 的默认发行版，首次运行可能下载 Gradle。
 可以添加 `'-Djsqlint.test.gradle.home=C:\path\to\gradle'` 使用已有安装；测试使用的 Gradle
 须支持在当前 JDK 上运行。Maven 测试使用离线模式，依赖当前构建已解析的编译插件。

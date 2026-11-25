@@ -17,15 +17,17 @@ public final class StatisticsRecorder {
     private final long started;
     private final Deque<Frame> stack;
     private final EnumMap<AnalysisStatistics.Phase, Cost> costs;
+    private final Map<String, AnalysisStatistics.Measurement> measurements;
     private Optional<AnalysisStatistics> finished;
     private long droppedScopes;
 
     private StatisticsRecorder() {
-        clock = null; owner = null; started = 0; stack = null; costs = null;
+        clock = null; owner = null; started = 0; stack = null; costs = null; measurements = null;
     }
     StatisticsRecorder(LongSupplier clock) {
         this.clock = Objects.requireNonNull(clock); owner = Thread.currentThread(); started = clock.getAsLong();
         stack = new ArrayDeque<>(); costs = new EnumMap<>(AnalysisStatistics.Phase.class);
+        measurements = new LinkedHashMap<>();
     }
     public static StatisticsRecorder none() { return NONE; }
     public static StatisticsRecorder create(AnalysisStatisticsOptions options) {
@@ -34,6 +36,18 @@ public final class StatisticsRecorder {
                 ? new StatisticsRecorder(System::nanoTime) : NONE;
     }
     public boolean enabled() { return clock != null; }
+
+    /** 请求级扩展测量；关闭收集或已经冻结时不保存，也不创建新的测量对象。 */
+    public void recordMeasurement(String name, long value, AnalysisStatistics.Unit unit, AnalysisStatistics.Scope scope) {
+        if (!enabled() || finished != null || Thread.currentThread() != owner) return;
+        recordMeasurement(name, new AnalysisStatistics.Measurement(value, unit, scope));
+    }
+
+    public void recordMeasurement(String name, AnalysisStatistics.Measurement measurement) {
+        if (!enabled() || finished != null || Thread.currentThread() != owner) return;
+        if (name == null || name.isBlank()) throw new IllegalArgumentException("Measurement name must not be blank");
+        measurements.put(name, Objects.requireNonNull(measurement));
+    }
 
     public Scope measure(AnalysisStatistics.Phase phase) {
         if (!enabled() || finished != null) return NOOP_SCOPE;
@@ -65,10 +79,10 @@ public final class StatisticsRecorder {
                     : new AnalysisStatistics.PhaseCost(other.invocations() + 1, other.totalNanos() + remaining,
                         other.selfNanos() + remaining, Math.max(other.maxNanos(), remaining)));
         }
-        Map<String, AnalysisStatistics.Measurement> measurements = droppedScopes == 0 ? Map.of()
-                : Map.of("statistics.unclosedScopes", new AnalysisStatistics.Measurement(droppedScopes,
-                    AnalysisStatistics.Unit.COUNT, AnalysisStatistics.Scope.REQUEST));
-        finished = Optional.of(new AnalysisStatistics(elapsed, phases, measurements));
+        var values = new LinkedHashMap<>(measurements);
+        if (droppedScopes != 0) values.put("statistics.unclosedScopes", new AnalysisStatistics.Measurement(droppedScopes,
+                AnalysisStatistics.Unit.COUNT, AnalysisStatistics.Scope.REQUEST));
+        finished = Optional.of(new AnalysisStatistics(elapsed, phases, values));
         return finished;
     }
 

@@ -53,6 +53,8 @@ final class MavenBuildSettings implements AutoCloseable {
                 : Files.createTempDirectory(temporary, "jsqlint-maven-");
         var result = new MavenBuildSettings(directory, local, statisticsRecorder);
         try {
+            var observer = ProjectCompiler.buildObserver();
+            if (observer != null) observer.observe(List.of(), List.of(directory));
             var settings = new Settings();
             settings.setLocalRepository(local.toString());
             var profile = new Profile();

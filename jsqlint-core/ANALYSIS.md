@@ -85,11 +85,12 @@ AnalysisResult compiledResult = analyzer.analyze(Path.of("project"), options);
 - core 内置字节码目录、JAR、单个 class 文件支持。单个 class 从字节码读取实际类名。
 - commons 提供 `AnalysisInputResolver`，使用已有的 `AutoCompileAnalysisInputLocation`。
   高优先级解析器优先，同级冲突明确报错；编译失败不回退到陈旧字节码。
-  可通过 `AnalysisOptions.withClassOutputId(...)` 指定输出标识，Analyzer 生成
+  普通源码或 ALWAYS 项目编译可通过 `AnalysisOptions.withClassOutputId(...)` 指定输出标识，Analyzer 生成
   `${java.io.tmpdir}/.jsqlint/<指定标识>/`；未指定时生成 `${java.io.tmpdir}/.jsqlint/<随机标识>/`。
-  Analyzer 始终将完整路径传给解析器，再传入 `AutoCompileAnalysisInputLocation`，不回退到解析器配置的路径。
-  标识必须是单个非空目录名；同一标识复用同一路径，每次编译前递归清空该目录中的原有内容。
-  默认在分析结束后保留产物；`withCleanupClassOutput(true)` 在关闭输入后删除本次输出目录，
+  对申请受管理输出的计划，Analyzer 将完整路径传给解析器，再传入 `AutoCompileAnalysisInputLocation`，覆盖解析器配置的路径。
+  标识必须是单个非空目录名；ALWAYS/普通源码的受管理输出复用同一路径，每次编译前递归清空原有内容。
+  输入计划在预清理之前决定是否申请该目录；AUTO/REUSE 缓存产物为借用输入，不预清空指定标识已有目录。
+  默认在分析结束后保留受管理产物；`withCleanupClassOutput(true)` 在关闭输入后删除本次受管理输出目录，
   成功、失败、取消或超时均执行。清理失败会报告诊断并返回 FAILED。
   同一标识用于顺序复用；并发分析应使用不同标识或默认的随机标识。
   清理不越过输出目录，不允许输出目录包含源码或依赖，也不允许输出根目录通过链接重定向。
@@ -112,8 +113,38 @@ AnalysisResult result = analyzer.analyze(request);
 允许仅分析资源，但代码和资源不能同时为空。资源来源接口也支持自定义内存、归档或远程资源，
 不要求存在本地 Path。远程访问策略由资源实现控制。
 
-commons 的项目资源默认扫描项目目录，排除 src/test、target、build、.git、.gradle、.idea；
+commons 默认构建路径的项目资源扫描排除 src/test、target、build、.git、.gradle、.idea；
+缓存/显式产物描述保留编译后的资源根，包括不含应用 class 的资源模块。
 特殊资源目录、构建生成资源或依赖中的资源可通过 AnalysisRequest 显式提供。
+
+### 已编译项目与构建缓存
+
+已有字节码可以直接使用 AnalysisRequest，不调用项目编译器：自有模块均作为 Application，
+第三方依赖作为 Library，JDK 运行时及 MyBatis XML/application 配置资源由调用方明确提供。
+同一组输入可顺序分析多个入口，全部结束后由调用方关闭；即使请求开启输出清理，也不删除这些已有产物。
+
+添加 commons 后，`CompiledProject` 描述来源、应用产物、依赖及资源根，
+`ProjectInputs.open(project)` 转换为 PreparedInput 并补充当前 JDK；
+`CompiledProjectManifest.write/read` 通过版本化 Properties 保存/读取该描述，不保存活动视图或认证信息。
+原源码目录不存在时仍可 read/open 后交给 AnalysisRequest；打开时验证产物、依赖和资源实际可读。
+Boot fat JAR 的类根和内嵌依赖需要先展开，不能将普通 JAR 支持视为完整 Boot 包支持。
+
+项目 Path 入口可通过 commons 的 `InputLocationOptions.withBuildPolicy(...)` 选择：
+默认 ALWAYS 每次构建；AUTO 校验缓存并在缺失、损坏、输入变更或到期时重建；
+REUSE 只读调用方选择的历史快照，不要求当前源码最新，不校验 TTL，缺失/损坏明确失败。
+`InputMode.AUTO` 是输入类型识别，与 `BuildPolicy.AUTO` 分开。
+`withCompiledProjectManifest(path)` 同时选择 REUSE；缓存配置和示例见 [commons 产物复用](../jsqlint-commons/README.md#复用已编译项目)。
+可逐步采用直接打开 CompiledProject、保存清单并 REUSE、AUTO 管理构建缓存三个阶段，
+代码示例由 commons 文档集中维护。普通外部清单只有路径描述，不复制产物或保存缓存状态摘要；
+历史输入的目录和内容由调用方保留。缓存 REUSE 则校验缓存状态及产物/依赖的内容摘要。
+未指定清单的 REUSE 选择当前配置键下最新成功代；更早历史代需明确指定清单。
+项目、构建参数、工具链、仓库以及继承的 JVM 属性/环境等配置变化可能改变缓存键。
+
+缓存默认位于 `${java.io.tmpdir}/.jsqlint-project-cache`，成功 generation 不归单次请求删除。
+AUTO 默认最长复用 24 小时，零仅取消时间过期；在线到期重建刷新依赖，离线不刷新远程。
+显式依赖刷新也要求 AUTO 重建。任意插件的全部隐式输入不能自动保证，
+可用 `withAdditionalBuildInputs` 补充项目外文件/目录的内容校验，它不改变构建工具的源目录或依赖。
+复用产物仍新建分析会话、视图和索引。
 
 ## 路径绑定入口
 
@@ -137,7 +168,8 @@ AnalysisResult selectedWithOptions = withDependencies.analyze(AnalysisOptions.de
 
 四个 `analyze` 方法全部委托原入口，沿用同一个结果契约、两种完整方法签名格式、默认配置和单次选项规则。
 绑定对象不保存监听器、取消信号或方法范围；切换目标时创建另一绑定对象，原 Analyzer 仍可分析其他输入。
-每次分析读取当时的程序内容，重新准备输入并创建独立会话、程序视图和索引。
+每次分析读取本次策略选择的输入，重新准备输入并创建独立会话、程序视图和索引；
+REUSE 读取选定的历史构建快照，AUTO 根据输入校验决定是否重建。
 输入关闭、输出清理及并发约定沿用原入口；绑定对象不持有活动输入，无需关闭。
 
 ## 指定方法及下游 SQL
@@ -381,7 +413,7 @@ OTHER 的补足时间作为一次合并项记账，其次数和最大值不表�
 | --- | --- |
 | `PREPARATION` | 路径识别、输出准备、输入解析及请求组装 |
 | `COMPILATION` | JDK 编译任务、即时编译输入构造、Maven/Gradle 实际构建调用 |
-| `WAITING` | 等待进程内 Maven 构建锁，与拿锁后的编译时间分开 |
+| `WAITING` | 等待项目缓存锁或进程内 Maven 构建锁，与拿锁后的编译时间分开 |
 | `DISCOVERY` | 资源、定义、方法元数据及调用点发现 |
 | `INDEXING` | 调用、字段写入、语句位置及到达定义索引构建，方法与分派解析；直接返回缓存的分支不计构建成本 |
 | `TRACING` | SQL/参数来源查询、逆向路径查询及提取处理 |
@@ -407,7 +439,8 @@ OTHER 的补足时间作为一次合并项记账，其次数和最大值不表�
 Unit（NANOSECONDS/BYTES/COUNT/RATIO）和 Scope（REQUEST/ANALYSIS_THREAD/JVM_PROCESS）。
 例如线程 CPU 时间可使用 ANALYSIS_THREAD，JVM 堆快照和 GC 增量使用 JVM_PROCESS；
 测量名应明确快照时点或增量口径。不可用或未启用的测量不发布，不用零冒充未采集。
-当前仅启用 TIMINGS，measurements 通常为空；作用域未正常关闭时保留
+当前仅启用 TIMINGS，使用项目缓存时也可附带 `project.cache.hit`、`project.cache.miss`、`project.outputs.reused` 等请求级计数；未使用缓存时 measurements 通常为空。
+作用域未正常关闭时保留
 `statistics.unclosedScopes` 计数，不改变 SQL 结果或终态。
 
 ### 统一获取 SQL 样例
@@ -975,6 +1008,9 @@ SQL 字符串来自先前的 `prepareStatement(sql)`；JDBC 的过程间提取�
 `new Analyzer(config, modules, resolvers)`，只启用传入扩展；
 core 的字节码解析器始终存在。通过 `config.withInputOptions(...)` 可以保留自动发现行为；
 原有显式传入 `new AutoCompileInputResolver(inputLocationOptions)` 的方式仍可使用。
+输入解析器可通过 AnalysisInputPlan 在输出预清理前选择受管理编译或借用已有产物，
+计划只在本次准备期内使用，关闭临时句柄不转交借用产物的删除所有权。
+旧解析器默认按 requiresCompilation 和原 resolve 协议创建计划，不需要立即迁移。
 输入解析器在 `resolve(source, classOutputDirectory, inputOptions, context)` 中读取支持的配置类型，
 AnalysisInputContext 传递本次检查点和统计计时器；默认实现转发到原 Runnable checkpoint 重载。
 未指定配置时默认实现兼容旧的 resolve 重载；编译解析器不支持传入配置时应报错，避免静默忽略配置。
