@@ -51,6 +51,83 @@ Maven/Gradle 的 stdout 与 stderr 共用本次构建的有界日志，最多保
 路径解析器分别交付 Application 与 Library 输入；core 枚举应用代码时不遍历依赖 JAR，
 依赖类型仍可通过同一 JavaView 按需解析。直接使用自动编译输入位置时仍可枚举全部类。
 
+## 运行 JDK 与目标编译 JDK
+
+jsqlint 的分析进程需要 **JDK 21 或更高版本**，目标项目可以使用 JDK 8/11 的源码级别和字节码。
+读取已经编译的 class 目录或 JAR 时不运行目标项目，也不启动它的 JDK。
+分析器的运行 JDK、构建工具的运行 JDK，以及实际执行 javac 的 JDK 应分别配置。
+
+| 输入方式 | 编译器选择与目标版本 |
+| --- | --- |
+| Maven 项目 | Maven Embedder 在分析器的宿主 JVM 中运行；默认编译器来自该 JDK，遵循目标 POM 的 `source`、`target`、`release` 及工具链配置 |
+| Gradle 项目 | Tooling API 客户端在分析器 JVM 中运行；Gradle daemon 的 JDK 与 Java toolchain 的编译 JDK 由目标项目配置 |
+| 普通 Java 源码 | 使用宿主 JDK 的 `JavaCompiler` 和默认编译参数，默认生成宿主版本字节码；当前没有 `javacOptions` 或编译 JDK 选择选项 |
+| 已编译产物或 REUSE | 读取既有字节码、依赖与资源，不调用 javac；分析进程仍使用 JDK 21+ |
+
+### Maven 项目
+
+默认情况下，宿主 JDK 21 可以通过目标 POM 中支持 `release` 的 compiler 插件生成 Java 8/11 字节码。例如：
+
+```xml
+<properties>
+    <maven.compiler.release>8</maven.compiler.release>
+</properties>
+```
+
+目标为 Java 11 时将值改为 `11`。`release=8/11` 同时约束语言、字节码和可用的 JDK API，
+实际 javac 仍可来自 JDK 21；这不等于使用真实 JDK 8/11 构建。
+`source`/`target` 只控制语言级别和字节码，不能替代 `release` 对旧 JDK API 的约束。
+
+项目已有的 Maven Toolchains、compiler 插件 `fork`/`executable` 配置会保留，
+可据此选择真实 JDK 8/11 的 javac；jsqlint 不按 `source`/`target`/`release` 自动切换 JDK。
+已在 POM 配置 Toolchains 的项目，也可以显式指定包含实际 JDK 路径的工具链文件：
+
+```java
+var inputOptions = InputLocationOptions.defaults()
+        .withInputMode(InputMode.MAVEN_PROJECT)
+        .withBuildArguments(List.of("-t", "D:/maven/toolchains.xml"));
+var analyzer = new Analyzer(AnalyzerConfig.defaults().withInputOptions(inputOptions));
+var result = analyzer.analyze(Path.of("project"));
+```
+
+工具链或外部 javac 只改变编译任务使用的 JDK，Maven 及其进程内插件仍在宿主 JDK 21+ 上运行。
+目标 compiler 插件和编译选项还需兼容选定的 javac；例如 JDK 8 的 javac 本身没有 `--release` 参数。
+
+### Gradle 项目
+
+本模块的 `gradle-tooling-api:9.8.2` 是调用 SDK，实际 Gradle 发行版由目标 Wrapper 或
+`InputLocationOptions.gradleInstallation` 选择。未另选 daemon JDK 时，默认会使用分析器的 JDK。
+可在目标项目的 `gradle.properties` 中选择 Gradle daemon 的 JDK，例如：
+
+```properties
+org.gradle.java.home=D:/Jdk/jdk17
+```
+
+再通过目标 `build.gradle` 的 Java toolchain 选择实际编译 JDK：
+
+```groovy
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(8)
+    }
+}
+```
+
+将 `8` 改为 `11` 即选择 JDK 11 工具链；机器需有匹配 JDK，或由项目已配置的工具链解析器提供。
+目标项目已有的 toolchain、任务 `javaCompiler` 及 fork 配置会保留；`sourceCompatibility`/`targetCompatibility` 不会切换 javac。
+Gradle 的 `options.release` 也只设置目标版本；未指定 toolchain 时，默认编译器来自 Gradle daemon 的 JDK。
+Gradle 版本必须支持所选 daemon JDK；旧 Wrapper 还受当前后端使用的
+`--no-configuration-cache`、`destinationDirectory`、任务注册及产物 API 限制，需要使用兼容发行版或先独立构建产物。
+
+### 必须使用旧 JDK 完成整个构建时
+
+如果旧插件或构建流程要求 Maven/Gradle 构建进程本身运行在 JDK 8/11，
+可以先用所需 JDK 在独立进程完成项目构建，再由 JDK 21+ 的分析器打开产物。
+使用 `CompiledProject` 描述全部应用模块、依赖和资源，交给 `ProjectInputs.open(compiled)`；
+也可以保存 `CompiledProjectManifest`，在项目 Path 入口通过 `withCompiledProjectManifest(path)` 选择 REUSE。
+普通源码入口需要指定旧目标版本时，同样应使用配置好的 Maven/Gradle 项目或已有字节码。
+完整示例及输入所有权见 [复用已编译项目](#复用已编译项目)。
+
 ## 复用已编译项目
 
 `InputMode.AUTO` 负责识别输入类型，`BuildPolicy.AUTO` 负责判断项目构建快照是否可复用。
